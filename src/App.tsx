@@ -439,27 +439,25 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
 function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: (page: Page) => void }) {
   return (
     <main className="hub-page">
-      <section className="hub-hero">
+      <section className="home-sidebar" aria-label="Home navigation">
         <div>
           <p className="eyebrow">Welcome back, {profile.name}</p>
-          <h1>Build decks, crack packs, and queue into a match.</h1>
-          <p>Mirrors the Memetic Masters flow: home hub, profile deckbuilder, matchmaking, boosters, then a boardgame.io match.</p>
+          <h1>Choose your next adventure.</h1>
         </div>
-        <button className="primary-cta" onClick={() => onNavigate('matchmaking')}>Play now</button>
-      </section>
-      <section className="hub-grid">
-        <button className="hub-tile" onClick={() => onNavigate('matchmaking')}>
-          <strong>Matchmaking</strong>
-          <span>Create an online match or accept an open challenge.</span>
-        </button>
-        <button className="hub-tile" onClick={() => onNavigate('profile')}>
-          <strong>Profile + Deckbuilder</strong>
-          <span>Manage your wallet profile and custom 60-card deck.</span>
-        </button>
-        <button className="hub-tile" onClick={() => onNavigate('boosters')}>
-          <strong>Boosters</strong>
-          <span>Buy packs for {PACK_PRICE_SOL} SOL and add pulls to your collection.</span>
-        </button>
+        <div className="home-button-stack">
+          <button className="home-menu-button primary-cta" onClick={() => onNavigate('matchmaking')}>
+            <strong>Matchmaking</strong>
+            <span>Create an online match or accept an open challenge.</span>
+          </button>
+          <button className="home-menu-button" onClick={() => onNavigate('profile')}>
+            <strong>Profile + Deckbuilder</strong>
+            <span>Manage your profile and custom deck library.</span>
+          </button>
+          <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
+            <strong>Boosters</strong>
+            <span>Open packs for {PACK_PRICE_SOL} SOL and grow your collection.</span>
+          </button>
+        </div>
       </section>
     </main>
   );

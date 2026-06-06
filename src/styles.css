@@ -196,6 +196,91 @@ button:disabled {
   padding: 28px;
 }
 
+.hub-page {
+  align-items: center;
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.68), rgba(15, 23, 42, 0.14) 42%, rgba(15, 23, 42, 0.02)),
+    url('/home-background.png') center / cover no-repeat;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: flex-start;
+  margin: 0;
+  max-width: none;
+  min-height: calc(100vh - 58px);
+  padding: clamp(20px, 4vw, 64px);
+}
+
+.home-sidebar {
+  backdrop-filter: blur(5px);
+  background: rgba(15, 23, 42, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 28px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.34);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 380px;
+  padding: clamp(18px, 3vw, 30px);
+  width: min(380px, 100%);
+}
+
+.home-sidebar .eyebrow {
+  color: #fde68a;
+}
+
+.home-sidebar h1 {
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  line-height: 0.95;
+  margin: 8px 0 0;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.38);
+}
+
+.home-button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.home-menu-button {
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.92);
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.24);
+  color: #111827;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  text-align: left;
+  width: 100%;
+}
+
+.home-menu-button:hover {
+  background: white;
+  transform: translateX(6px);
+}
+
+.home-menu-button.primary-cta {
+  background: linear-gradient(90deg, #f97316, #facc15);
+  border-color: rgba(255, 255, 255, 0.88);
+}
+
+.home-menu-button.primary-cta:hover {
+  background: linear-gradient(90deg, #fb923c, #fde047);
+}
+
+.home-menu-button strong {
+  font-size: 1.12rem;
+}
+
+.home-menu-button span {
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
 .hub-hero h1,
 .signin-card h1,
 .content-page h1 {
