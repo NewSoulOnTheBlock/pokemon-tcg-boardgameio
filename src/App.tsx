@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LobbyAPI } from 'boardgame.io';
 import { LobbyClient } from 'boardgame.io/client';
+import type { BoardProps } from 'boardgame.io/react';
 import { Client } from 'boardgame.io/react';
 import { SocketIO } from 'boardgame.io/multiplayer';
 import {
@@ -11,8 +12,17 @@ import {
   type StarterEnergyType,
 } from './game/cards';
 import { PokemonTCG } from './game/PokemonTCG';
-import type { Card, PlayerID, PokemonTCGSetupData } from './game/types';
+import type { Card, PlayerID, PokemonTCGSetupData, PokemonTCGState } from './game/types';
 import { PokemonBoard } from './PokemonBoard';
+import {
+  addCardsToCollection,
+  collectionFromCards,
+  collectionSize,
+  maxCollections,
+  type MatchRecord,
+  type PackPurchase,
+  type ProfileState,
+} from './shared/profile';
 import {
   connectEvm,
   connectSolana,
@@ -23,20 +33,6 @@ import {
 } from './wallet';
 
 type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'match';
-
-interface ProfileState {
-  name: string;
-  wallet: ConnectedWallet | null;
-  activeDeckName: string;
-  customDeck: string[];
-  ownedCards: Record<string, number>;
-  packsOpened: number;
-  packPurchases: Array<{
-    signature: string;
-    openedAt: string;
-    cardIds: string[];
-  }>;
-}
 
 interface MatchConfig {
   matchID: string;
@@ -72,6 +68,7 @@ const DEFAULT_PROFILE: ProfileState = {
   ownedCards: STARTER_COLLECTION,
   packsOpened: 0,
   packPurchases: [],
+  matchRecords: [],
 };
 
 const CANONICAL_CARDS = Object.values(CARD_LIBRARY)
@@ -105,6 +102,7 @@ function loadProfile(): ProfileState {
       customDeck,
       ownedCards: maxCollections(STARTER_COLLECTION, parsed.ownedCards ?? {}, collectionFromCards(customDeck)),
       packPurchases: Array.isArray(parsed.packPurchases) ? parsed.packPurchases : [],
+      matchRecords: Array.isArray(parsed.matchRecords) ? parsed.matchRecords : [],
     };
   } catch {
     return { ...DEFAULT_PROFILE, ownedCards: { ...DEFAULT_PROFILE.ownedCards }, customDeck: [...DEFAULT_PROFILE.customDeck] };
@@ -115,39 +113,69 @@ function saveProfile(profile: ProfileState): void {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
+async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(`${MULTIPLAYER_SERVER}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...init.headers,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json() as Promise<T>;
+}
+
+async function loginProfile(profile: ProfileState): Promise<ProfileState> {
+  const saved = await apiRequest<ProfileState>('/api/login', {
+    method: 'POST',
+    body: JSON.stringify({ profile }),
+  });
+  saveProfile(saved);
+  return saved;
+}
+
+async function persistProfile(profile: ProfileState): Promise<ProfileState> {
+  if (!profile.userId) {
+    throw new Error('Sign in again before saving your profile.');
+  }
+  const saved = await apiRequest<ProfileState>(`/api/profiles/${profile.userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile }),
+  });
+  saveProfile(saved);
+  return saved;
+}
+
+async function persistPackPurchase(profile: ProfileState, purchase: PackPurchase): Promise<ProfileState> {
+  if (!profile.userId) {
+    throw new Error('Sign in again before opening booster packs.');
+  }
+  const saved = await apiRequest<ProfileState>(`/api/profiles/${profile.userId}/packs`, {
+    method: 'POST',
+    body: JSON.stringify({ profile, purchase }),
+  });
+  saveProfile(saved);
+  return saved;
+}
+
+async function persistMatchRecord(profile: ProfileState, record: MatchRecord): Promise<ProfileState> {
+  if (!profile.userId) {
+    throw new Error('Sign in again before recording matches.');
+  }
+  const saved = await apiRequest<ProfileState>(`/api/profiles/${profile.userId}/matches`, {
+    method: 'POST',
+    body: JSON.stringify({ record }),
+  });
+  saveProfile(saved);
+  return saved;
+}
+
 function cardLabel(card: Card): string {
   if (card.kind === 'pokemon') return `${card.name} - ${card.stage} ${card.pokemonType}`;
   if (card.kind === 'energy') return `${card.name} - ${card.energyType}`;
   return `${card.name} - ${card.trainerType}`;
-}
-
-function collectionFromCards(cards: string[]): Record<string, number> {
-  return cards.reduce<Record<string, number>>((counts, cardId) => {
-    counts[cardId] = (counts[cardId] ?? 0) + 1;
-    return counts;
-  }, {});
-}
-
-function addCardsToCollection(collection: Record<string, number>, cardIds: string[]): Record<string, number> {
-  const next = { ...collection };
-  for (const cardId of cardIds) {
-    next[cardId] = (next[cardId] ?? 0) + 1;
-  }
-  return next;
-}
-
-function maxCollections(...collections: Array<Record<string, number>>): Record<string, number> {
-  const next: Record<string, number> = {};
-  for (const collection of collections) {
-    for (const [cardId, count] of Object.entries(collection)) {
-      next[cardId] = Math.max(next[cardId] ?? 0, count);
-    }
-  }
-  return next;
-}
-
-function collectionSize(collection: Record<string, number>): number {
-  return Object.values(collection).reduce((total, count) => total + count, 0);
 }
 
 function DeckbuilderCardArt({ card }: { card: Card }) {
@@ -327,6 +355,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   const [name, setName] = useState(() => loadProfile().name || 'PokemonTrainer');
   const [wallet, setWallet] = useState<ConnectedWallet | null>(() => loadProfile().wallet);
   const [error, setError] = useState('');
+  const [signingIn, setSigningIn] = useState(false);
   const solanaWallets = detectSolanaWallets();
 
   async function connect(kind: 'evm' | 'solana') {
@@ -338,10 +367,17 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
     }
   }
 
-  function finish() {
+  async function finish() {
+    setError('');
+    setSigningIn(true);
     const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: name.trim() || 'PokemonTrainer', wallet };
-    saveProfile(profile);
-    onSignIn(profile);
+    try {
+      onSignIn(await loginProfile(profile));
+    } catch (err) {
+      setError(`Could not load stored profile: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSigningIn(false);
+    }
   }
 
   return (
@@ -349,7 +385,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
       <section className="signin-card">
         <p className="eyebrow">Local wallet profile</p>
         <h1>Pokemon TCG Arena</h1>
-        <p>Connect a browser wallet or continue with a trainer name. The profile, deckbuilder, packs, and selected decks are stored locally.</p>
+        <p>Connect a browser wallet or continue with a trainer name. Your profile, collection, pack history, and match records are loaded from the game server.</p>
         <label>
           Trainer name
           <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -365,7 +401,9 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
         </div>
         {wallet && <p className="success">Connected {wallet.chain}: {shortAddr(wallet.address)}</p>}
         {error && <p className="error">{error}</p>}
-        <button className="primary-cta" onClick={finish}>Enter Arena</button>
+        <button className="primary-cta" disabled={signingIn} onClick={finish}>
+          {signingIn ? 'Loading profile...' : 'Enter Arena'}
+        </button>
       </section>
     </main>
   );
@@ -405,6 +443,8 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
   const [deckName, setDeckName] = useState(profile.activeDeckName);
   const [deck, setDeck] = useState(profile.customDeck);
   const [filter, setFilter] = useState<StarterEnergyType | 'all'>('all');
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
   const issues = validateDeck(deck);
   const counts = deckCounts(deck);
   const visibleCards = BUILDABLE_CARDS.filter((card) =>
@@ -430,10 +470,17 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
     setFilter(type);
   }
 
-  function save() {
+  async function save() {
+    setStatus('');
+    setError('');
     const next = { ...profile, name: name.trim() || profile.name, activeDeckName: deckName.trim() || 'Custom Deck', customDeck: deck };
-    saveProfile(next);
-    onProfileChange(next);
+    try {
+      const saved = await persistProfile(next);
+      onProfileChange(saved);
+      setStatus('Profile saved to storage.');
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+    }
   }
 
   return (
@@ -448,6 +495,8 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
           Display name
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
+        {status && <p className="success">{status}</p>}
+        {error && <p className="error">{error}</p>}
       </section>
 
       <section className="panel">
@@ -527,14 +576,41 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
         </div>
         <button className="primary-cta" onClick={save} disabled={issues.length > 0}>Save active deck</button>
       </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Match records</p>
+            <h2>{profile.matchRecords.length} saved match{profile.matchRecords.length === 1 ? '' : 'es'}</h2>
+          </div>
+        </div>
+        {profile.matchRecords.length === 0 ? (
+          <p>No matches recorded yet.</p>
+        ) : (
+          <div className="match-list">
+            {[...profile.matchRecords].reverse().map((record) => (
+              <article className="match-card" key={`${record.matchID}-${record.playerID}`}>
+                <div>
+                  <strong>{record.result.replace('_', ' ').toUpperCase()} - Match {record.matchID}</strong>
+                  <span>Player {record.playerID}: {record.playerDeckLabel} vs {record.opponentDeckLabel}</span>
+                  <span>{record.completedAt ? `Completed ${new Date(record.completedAt).toLocaleString()}` : `Started ${new Date(record.startedAt).toLocaleString()}`}</span>
+                  {record.reason && <span>{record.reason}</span>}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
 
 function MatchmakingPage({
+  onProfileChange,
   profile,
   onStartMatch,
 }: {
+  onProfileChange: (profile: ProfileState) => void;
   profile: ProfileState;
   onStartMatch: (config: MatchConfig) => void;
 }) {
@@ -563,6 +639,18 @@ function MatchmakingPage({
   useEffect(() => {
     void refreshMatches();
   }, []);
+
+  async function recordStartedMatch(config: MatchConfig): Promise<void> {
+    const record: MatchRecord = {
+      matchID: config.matchID,
+      playerID: config.playerID,
+      playerDeckLabel: config.playerDeckLabel,
+      opponentDeckLabel: config.opponentDeckLabel,
+      result: 'in_progress',
+      startedAt: new Date().toISOString(),
+    };
+    onProfileChange(await persistMatchRecord(profile, record));
+  }
 
   async function createMatch() {
     const playerDeck = useCustomDeck ? profile.customDeck : STARTER_DECKS[playerDeckType];
@@ -593,14 +681,16 @@ function MatchmakingPage({
         data: { deckLabel: playerDeckLabel },
       });
       const playerID = asPlayerID(joined.playerID);
-      onStartMatch({
+      const config = {
         matchID,
         playerID,
         credentials: joined.playerCredentials,
         playerDeckLabel: deckLabels[playerID],
         opponentDeckLabel: deckLabels[opponentID(playerID)],
         server: MULTIPLAYER_SERVER,
-      });
+      };
+      await recordStartedMatch(config);
+      onStartMatch(config);
     } catch (err) {
       setError(`Could not create match: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -624,14 +714,16 @@ function MatchmakingPage({
         data: { deckLabel: deckLabelForMatch(match, seat) },
       });
       const playerID = asPlayerID(joined.playerID);
-      onStartMatch({
+      const config = {
         matchID: match.matchID,
         playerID,
         credentials: joined.playerCredentials,
         playerDeckLabel: deckLabelForMatch(match, playerID),
         opponentDeckLabel: deckLabelForMatch(match, opponentID(playerID)),
         server: MULTIPLAYER_SERVER,
-      });
+      };
+      await recordStartedMatch(config);
+      onStartMatch(config);
     } catch (err) {
       setError(`Could not join match: ${err instanceof Error ? err.message : String(err)}`);
       await refreshMatches();
@@ -760,17 +852,18 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       });
       const next = makeBoosterPack();
       const cardIds = next.map(({ card }) => card.id);
+      const purchase = { signature, openedAt: new Date().toISOString(), cardIds };
       const updated = {
         ...profile,
         ownedCards: addCardsToCollection(profile.ownedCards, cardIds),
         packsOpened: profile.packsOpened + 1,
         packPurchases: [
           ...profile.packPurchases,
-          { signature, openedAt: new Date().toISOString(), cardIds },
+          purchase,
         ],
       };
-      saveProfile(updated);
-      onProfileChange(updated);
+      const saved = await persistPackPurchase(updated, purchase);
+      onProfileChange(saved);
       setPack(next);
       setStatus(`Pack opened and ${cardIds.length} cards added to your collection. Signature: ${signature.slice(0, 8)}...${signature.slice(-8)}`);
     } catch (err) {
@@ -812,17 +905,59 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
   );
 }
 
-function MatchClient({ config, onExit }: { config: MatchConfig; onExit: () => void }) {
+function MatchClient({
+  config,
+  onExit,
+  onProfileChange,
+  profile,
+}: {
+  config: MatchConfig;
+  onExit: () => void;
+  onProfileChange: (profile: ProfileState) => void;
+  profile: ProfileState;
+}) {
+  const [recordedGameover, setRecordedGameover] = useState(false);
+  const recordMatchCompletion = useCallback(async ({ reason, winner }: { reason?: string; winner?: PlayerID }) => {
+    if (recordedGameover) {
+      return;
+    }
+    setRecordedGameover(true);
+    const result = winner === undefined
+      ? 'draw'
+      : winner === config.playerID
+        ? 'win'
+        : 'loss';
+    const startedRecord = profile.matchRecords.find((record) => record.matchID === config.matchID && record.playerID === config.playerID);
+    const record: MatchRecord = {
+      matchID: config.matchID,
+      playerID: config.playerID,
+      playerDeckLabel: config.playerDeckLabel,
+      opponentDeckLabel: config.opponentDeckLabel,
+      result,
+      winner,
+      reason,
+      startedAt: startedRecord?.startedAt ?? new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    onProfileChange(await persistMatchRecord(profile, record));
+  }, [config.matchID, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, onProfileChange, profile, recordedGameover]);
+
+  const MatchBoard = useMemo(() => (
+    function MatchBoard(props: BoardProps<PokemonTCGState>) {
+      return <PokemonBoard {...props} onMatchComplete={recordMatchCompletion} />;
+    }
+  ), [recordMatchCompletion]);
+
   const PokemonClient = useMemo(() => {
     return Client({
       game: PokemonTCG,
-      board: PokemonBoard,
+      board: MatchBoard,
       numPlayers: 2,
       multiplayer: SocketIO({ server: config.server }),
       loading: () => <div className="match-loading">Connecting to multiplayer match...</div>,
       debug: false,
     });
-  }, [config.server]);
+  }, [MatchBoard, config.server]);
 
   return (
     <div className="match-screen">
@@ -831,7 +966,11 @@ function MatchClient({ config, onExit }: { config: MatchConfig; onExit: () => vo
         <span>Match {config.matchID}</span>
         <span>You are Player {config.playerID}: {config.playerDeckLabel} vs {config.opponentDeckLabel}</span>
       </div>
-      <PokemonClient credentials={config.credentials} playerID={config.playerID} matchID={config.matchID} />
+      <PokemonClient
+        credentials={config.credentials}
+        matchID={config.matchID}
+        playerID={config.playerID}
+      />
     </div>
   );
 }
@@ -858,7 +997,14 @@ export default function App() {
   }
 
   if (page === 'match' && matchConfig) {
-    return <MatchClient config={matchConfig} onExit={() => { setMatchConfig(null); setPage('home'); }} />;
+    return (
+      <MatchClient
+        config={matchConfig}
+        onExit={() => { setMatchConfig(null); setPage('home'); }}
+        onProfileChange={updateProfile}
+        profile={profile}
+      />
+    );
   }
 
   return (
@@ -866,6 +1012,7 @@ export default function App() {
       {page === 'profile' && <ProfilePage profile={profile} onProfileChange={updateProfile} />}
       {page === 'matchmaking' && (
         <MatchmakingPage
+          onProfileChange={updateProfile}
           profile={profile}
           onStartMatch={(config) => {
             setMatchConfig(config);

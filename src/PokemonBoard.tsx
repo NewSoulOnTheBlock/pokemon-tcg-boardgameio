@@ -1,9 +1,10 @@
-import { type CSSProperties, useState } from 'react';
+import { type CSSProperties, useEffect, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
 
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
+  onMatchComplete?: (payload: { reason?: string; winner?: PlayerID }) => void | Promise<void>;
   playerID: string | null;
 }
 
@@ -242,7 +243,7 @@ function PlayerSummary({ id, player }: { id: PlayerID; player: PlayerState }) {
   );
 }
 
-export function PokemonBoard({ G, ctx, moves, playerID }: PokemonBoardProps) {
+export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: PokemonBoardProps) {
   const actingPlayer = (playerID === '1' ? '1' : '0') as PlayerID;
   const player = G.players[actingPlayer];
   const isCurrent = ctx.currentPlayer === actingPlayer;
@@ -251,6 +252,12 @@ export function PokemonBoard({ G, ctx, moves, playerID }: PokemonBoardProps) {
   const [openingActiveIndex, setOpeningActiveIndex] = useState<number | null>(null);
   const [openingBenchIndexes, setOpeningBenchIndexes] = useState<number[]>([]);
   const playmatImage = PLAYMAT_IMAGE_BY_ID[G.playmatId];
+
+  useEffect(() => {
+    if (gameover) {
+      void onMatchComplete?.({ reason: gameover.reason, winner: gameover.winner });
+    }
+  }, [gameover?.reason, gameover?.winner, onMatchComplete]);
 
   const toggleOpeningBench = (index: number) => {
     setOpeningBenchIndexes((current) => {

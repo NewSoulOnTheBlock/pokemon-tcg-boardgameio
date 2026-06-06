@@ -22,6 +22,15 @@ Run `npm run dev:server` in one terminal and `npm run dev` in another for online
 
 The multiplayer server uses PostgreSQL when `DATABASE_URL` is set, otherwise it falls back to local FlatFile storage in `./storage` unless `BGIO_STORAGE_DIR` is set. On Render, add your Postgres database's Internal Database URL as `DATABASE_URL` on the web service. If your database URL requires SSL, set `PGSSLMODE=require`; use `PGSSLMODE=no-verify` only for providers with self-signed certificates.
 
+When `DATABASE_URL` is configured, the same Postgres database stores:
+
+- boardgame.io match state in `bgio_matches`
+- profile/login records in `app_profiles`
+- opened booster pack history and pulled card IDs in `app_pack_purchases`
+- per-user match records in `app_match_records`
+
+The app signs users in by wallet address when a wallet is connected, or by trainer name otherwise. LocalStorage is kept only as a browser cache/session handoff; the server profile is the source of truth after sign-in.
+
 ## Paid boosters
 
 Booster packs cost `0.1 SOL` and require a connected Solana wallet. Set the recipient address before running the Vite app:
