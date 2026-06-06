@@ -24,6 +24,7 @@ function normalizeProfile(profile: ProfileState): ProfileState {
     ...profile,
     name: profile.name.trim() || 'PokemonTrainer',
     customDeck: Array.isArray(profile.customDeck) ? profile.customDeck : [],
+    deckLibrary: Array.isArray(profile.deckLibrary) ? profile.deckLibrary : [],
     ownedCards: profile.ownedCards ?? {},
     packsOpened: Number.isFinite(profile.packsOpened) ? profile.packsOpened : 0,
     packPurchases: Array.isArray(profile.packPurchases) ? profile.packPurchases : [],
@@ -42,6 +43,10 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
   for (const record of normalized.matchRecords) {
     matches.set(`${record.matchID}:${record.playerID}`, record);
   }
+  const deckLibrary = new Map(existing.deckLibrary.map((deck) => [deck.id, deck]));
+  for (const deck of normalized.deckLibrary) {
+    deckLibrary.set(deck.id, deck);
+  }
 
   return {
     ...existing,
@@ -49,6 +54,7 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
     wallet: normalized.wallet,
     activeDeckName: normalized.activeDeckName || existing.activeDeckName,
     customDeck: normalized.customDeck.length > 0 ? normalized.customDeck : existing.customDeck,
+    deckLibrary: [...deckLibrary.values()],
     ownedCards: maxCollections(existing.ownedCards, normalized.ownedCards),
     packsOpened: Math.max(existing.packsOpened, normalized.packsOpened, purchases.size),
     packPurchases: [...purchases.values()],
@@ -62,6 +68,7 @@ function storedProfileFromRow(row: {
   active_deck_name: string;
   created_at: string;
   custom_deck: string[];
+  deck_library: ProfileState['deckLibrary'] | null;
   last_login_at: string;
   login_key: string;
   match_records: MatchRecord[] | null;
@@ -80,6 +87,7 @@ function storedProfileFromRow(row: {
     wallet: row.wallet,
     activeDeckName: row.active_deck_name,
     customDeck: row.custom_deck,
+    deckLibrary: row.deck_library ?? [],
     ownedCards: row.owned_cards,
     packsOpened: row.packs_opened,
     packPurchases: row.pack_purchases ?? [],
@@ -106,6 +114,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         wallet JSONB,
         active_deck_name TEXT NOT NULL,
         custom_deck JSONB NOT NULL,
+        deck_library JSONB NOT NULL DEFAULT '[]'::jsonb,
         owned_cards JSONB NOT NULL,
         packs_opened INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL,
@@ -113,6 +122,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         last_login_at TIMESTAMPTZ NOT NULL
       )
     `);
+    await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS deck_library JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${PACKS_TABLE} (
         id BIGSERIAL PRIMARY KEY,
@@ -241,15 +251,16 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(
       `
         INSERT INTO ${PROFILES_TABLE}
-          (user_id, login_key, name, wallet, active_deck_name, custom_deck, owned_cards, packs_opened, created_at, updated_at, last_login_at)
+          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, owned_cards, packs_opened, created_at, updated_at, last_login_at)
         VALUES
-          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
+          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12)
         ON CONFLICT (user_id)
         DO UPDATE SET
           name = EXCLUDED.name,
           wallet = EXCLUDED.wallet,
           active_deck_name = EXCLUDED.active_deck_name,
           custom_deck = EXCLUDED.custom_deck,
+          deck_library = EXCLUDED.deck_library,
           owned_cards = EXCLUDED.owned_cards,
           packs_opened = EXCLUDED.packs_opened,
           updated_at = EXCLUDED.updated_at,
@@ -262,6 +273,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         normalized.wallet ? JSON.stringify(normalized.wallet) : null,
         normalized.activeDeckName,
         JSON.stringify(normalized.customDeck),
+        JSON.stringify(normalized.deckLibrary),
         JSON.stringify(normalized.ownedCards),
         normalized.packsOpened,
         profile.createdAt,

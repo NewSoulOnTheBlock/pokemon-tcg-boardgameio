@@ -256,6 +256,57 @@ button:disabled {
   padding: 8px 0 0;
 }
 
+.deck-library-section {
+  border: 1px solid #d8dfeb;
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.deck-library-heading {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.deck-library-heading h3,
+.deck-list h3 {
+  margin: 0;
+}
+
+.deck-library {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.deck-library-card {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #d8dfeb;
+  border-radius: 14px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.deck-library-card-active {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+}
+
+.deck-library-card div {
+  display: grid;
+  gap: 3px;
+}
+
+.deck-library-card span {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
 .profile-panel,
 .section-heading {
   align-items: center;

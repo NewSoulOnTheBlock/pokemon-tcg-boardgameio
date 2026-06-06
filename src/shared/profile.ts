@@ -19,12 +19,21 @@ export interface MatchRecord {
   winner?: PlayerID;
 }
 
+export interface CustomDeck {
+  cardIds: string[];
+  createdAt: string;
+  id: string;
+  name: string;
+  updatedAt: string;
+}
+
 export interface ProfileState {
   userId?: string;
   name: string;
   wallet: ConnectedWallet | null;
   activeDeckName: string;
   customDeck: string[];
+  deckLibrary: CustomDeck[];
   ownedCards: Record<string, number>;
   packsOpened: number;
   packPurchases: PackPurchase[];

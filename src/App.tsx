@@ -18,6 +18,7 @@ import {
   addCardsToCollection,
   collectionFromCards,
   collectionSize,
+  type CustomDeck,
   maxCollections,
   type MatchRecord,
   type PackPurchase,
@@ -63,13 +64,15 @@ const STARTER_COLLECTION = collectionFromCards(Object.values(STARTER_DECKS).flat
 const DEFAULT_PROFILE: ProfileState = {
   name: '',
   wallet: null,
-  activeDeckName: 'Grass Starter',
-  customDeck: STARTER_DECKS.Grass,
+  activeDeckName: 'No Custom Deck',
+  customDeck: [],
+  deckLibrary: [],
   ownedCards: STARTER_COLLECTION,
   packsOpened: 0,
   packPurchases: [],
   matchRecords: [],
 };
+const STARTER_DECK_NAMES = new Set(STARTER_ENERGY_TYPES.map((type) => `${type} Starter`));
 
 const CANONICAL_CARDS = Object.values(CARD_LIBRARY)
   .filter((card) => card.id === (card.sourceId ?? card.id))
@@ -91,22 +94,46 @@ function loadProfile(): ProfileState {
   try {
     const stored = localStorage.getItem(PROFILE_KEY);
     if (!stored) {
-      return { ...DEFAULT_PROFILE, ownedCards: { ...DEFAULT_PROFILE.ownedCards }, customDeck: [...DEFAULT_PROFILE.customDeck] };
+      return { ...DEFAULT_PROFILE, ownedCards: { ...DEFAULT_PROFILE.ownedCards }, customDeck: [], deckLibrary: [] };
     }
 
     const parsed = JSON.parse(stored) as Partial<ProfileState>;
-    const customDeck = Array.isArray(parsed.customDeck) ? parsed.customDeck : DEFAULT_PROFILE.customDeck;
+    const legacyCustomDeck = Array.isArray(parsed.customDeck) ? parsed.customDeck : [];
+    const deckLibrary = Array.isArray(parsed.deckLibrary)
+      ? parsed.deckLibrary
+      : legacyCustomDeck.length > 0 && parsed.activeDeckName && !STARTER_DECK_NAMES.has(parsed.activeDeckName)
+        ? [makeCustomDeck(parsed.activeDeckName, legacyCustomDeck)]
+        : [];
+    const activeDeck = deckLibrary.find((deck) => deck.name === parsed.activeDeckName) ?? deckLibrary[0];
+    const customDeck = activeDeck?.cardIds ?? [];
     return {
       ...DEFAULT_PROFILE,
       ...parsed,
+      activeDeckName: activeDeck?.name ?? 'No Custom Deck',
       customDeck,
-      ownedCards: maxCollections(STARTER_COLLECTION, parsed.ownedCards ?? {}, collectionFromCards(customDeck)),
+      deckLibrary,
+      ownedCards: maxCollections(STARTER_COLLECTION, parsed.ownedCards ?? {}, collectionFromCards(customDeck), ...deckLibrary.map((deck) => collectionFromCards(deck.cardIds))),
       packPurchases: Array.isArray(parsed.packPurchases) ? parsed.packPurchases : [],
       matchRecords: Array.isArray(parsed.matchRecords) ? parsed.matchRecords : [],
     };
   } catch {
-    return { ...DEFAULT_PROFILE, ownedCards: { ...DEFAULT_PROFILE.ownedCards }, customDeck: [...DEFAULT_PROFILE.customDeck] };
+    return { ...DEFAULT_PROFILE, ownedCards: { ...DEFAULT_PROFILE.ownedCards }, customDeck: [], deckLibrary: [] };
   }
+}
+
+function makeDeckId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `deck-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function makeCustomDeck(name: string, cardIds: string[], id = makeDeckId()): CustomDeck {
+  const timestamp = new Date().toISOString();
+  return {
+    id,
+    name: name.trim() || 'Untitled Deck',
+    cardIds: [...cardIds],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 }
 
 function saveProfile(profile: ProfileState): void {
@@ -442,6 +469,10 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
   const [name, setName] = useState(profile.name);
   const [deckName, setDeckName] = useState(profile.activeDeckName);
   const [deck, setDeck] = useState(profile.customDeck);
+  const [deckLibrary, setDeckLibrary] = useState(profile.deckLibrary);
+  const [editingDeckId, setEditingDeckId] = useState<string | null>(
+    profile.deckLibrary.find((candidate) => candidate.name === profile.activeDeckName)?.id ?? null,
+  );
   const [filter, setFilter] = useState<StarterEnergyType | 'all'>('all');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -464,20 +495,53 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
     setDeck((current) => delta > 0 ? [...current, cardId] : current.filter((id, index) => id !== cardId || index !== current.indexOf(cardId)));
   }
 
-  function useStarter(type: StarterEnergyType) {
-    setDeck([...STARTER_DECKS[type]]);
-    setDeckName(`${type} Starter`);
-    setFilter(type);
+  function newDeck() {
+    setEditingDeckId(null);
+    setDeckName('New Custom Deck');
+    setDeck([]);
+    setStatus('Started a blank custom deck.');
+    setError('');
+  }
+
+  function loadDeck(deckEntry: CustomDeck) {
+    setEditingDeckId(deckEntry.id);
+    setDeckName(deckEntry.name);
+    setDeck([...deckEntry.cardIds]);
+    setStatus(`Loaded ${deckEntry.name}.`);
+    setError('');
   }
 
   async function save() {
     setStatus('');
     setError('');
-    const next = { ...profile, name: name.trim() || profile.name, activeDeckName: deckName.trim() || 'Custom Deck', customDeck: deck };
+    const timestamp = new Date().toISOString();
+    const existing = editingDeckId ? deckLibrary.find((candidate) => candidate.id === editingDeckId) : undefined;
+    const savedDeck: CustomDeck = existing
+      ? {
+        ...existing,
+        name: deckName.trim() || existing.name,
+        cardIds: [...deck],
+        updatedAt: timestamp,
+      }
+      : makeCustomDeck(deckName.trim() || 'Untitled Deck', deck);
+    const nextLibrary = existing
+      ? deckLibrary.map((candidate) => candidate.id === savedDeck.id ? savedDeck : candidate)
+      : [...deckLibrary, savedDeck];
+    const next = {
+      ...profile,
+      name: name.trim() || profile.name,
+      activeDeckName: savedDeck.name,
+      customDeck: savedDeck.cardIds,
+      deckLibrary: nextLibrary,
+    };
     try {
       const saved = await persistProfile(next);
       onProfileChange(saved);
-      setStatus('Profile saved to storage.');
+      setDeckLibrary(saved.deckLibrary);
+      setEditingDeckId(savedDeck.id);
+      setDeckName(savedDeck.name);
+      setDeck([...savedDeck.cardIds]);
+      setStatus(`${savedDeck.name} saved to your custom deck library.`);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     }
@@ -504,21 +568,42 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
           <div>
             <p className="eyebrow">Deckbuilder</p>
             <h2>{deckName}</h2>
-            <p className="section-subtitle">Collection: {collectionSize(profile.ownedCards)} cards / {Object.keys(profile.ownedCards).length} unique. Booster pulls unlock more usable cards here.</p>
+            <p className="section-subtitle">Collection: {collectionSize(profile.ownedCards)} cards / {Object.keys(profile.ownedCards).length} unique. Starter decks stay in matchmaking and cannot be edited here.</p>
           </div>
           <div className={issues.length === 0 ? 'deck-valid' : 'deck-invalid'}>{deck.length}/{DECK_SIZE}</div>
         </div>
+        <section className="deck-library-section">
+          <div className="deck-library-heading">
+            <div>
+              <h3>Custom deck library</h3>
+              <p className="section-subtitle">Load a saved custom deck, or start a new blank deck from 0 cards.</p>
+            </div>
+            <button className="primary-cta" onClick={newDeck}>New deck</button>
+          </div>
+          {deckLibrary.length === 0 ? (
+            <p className="action-hint">No custom decks saved yet. Click New deck, add cards, then save it to your library.</p>
+          ) : (
+            <div className="deck-library">
+              {deckLibrary.map((deckEntry) => {
+                const deckIssues = validateDeck(deckEntry.cardIds);
+                return (
+                  <article className={`deck-library-card ${editingDeckId === deckEntry.id ? 'deck-library-card-active' : ''}`} key={deckEntry.id}>
+                    <div>
+                      <strong>{deckEntry.name}</strong>
+                      <span>{deckEntry.cardIds.length}/{DECK_SIZE} cards</span>
+                      <span>{deckIssues.length === 0 ? 'Ready for matches' : `${deckIssues.length} issue${deckIssues.length === 1 ? '' : 's'}`}</span>
+                    </div>
+                    <button onClick={() => loadDeck(deckEntry)}>Load</button>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
         <label>
           Deck name
           <input value={deckName} onChange={(event) => setDeckName(event.target.value)} />
         </label>
-        <div className="starter-row">
-          {STARTER_ENERGY_TYPES.map((type) => (
-            <button key={type} onClick={() => useStarter(type)} style={{ '--energy': ENERGY_TYPE_META[type].hex } as React.CSSProperties}>
-              {type}
-            </button>
-          ))}
-        </div>
         {issues.length > 0 && (
           <ul className="issues">
             {issues.map((issue) => <li key={issue}>{issue}</li>)}
@@ -526,17 +611,22 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
         )}
         <div className="deckbuilder-layout">
           <aside className="deck-list">
-            {Object.entries(counts).map(([cardId, count]) => (
-              <div key={cardId}>
-                <span>
-                  {CARD_LIBRARY[cardId]?.images?.small && (
-                    <img alt="" className="deck-list-thumb" loading="lazy" src={CARD_LIBRARY[cardId].images.small} />
-                  )}
-                  {CARD_LIBRARY[cardId]?.name ?? cardId}
-                </span>
-                <strong>x{count}</strong>
-              </div>
-            ))}
+            <h3>Current custom deck</h3>
+            {Object.keys(counts).length === 0 ? (
+              <p className="action-hint">This deck starts from 0 cards.</p>
+            ) : (
+              Object.entries(counts).map(([cardId, count]) => (
+                <div key={cardId}>
+                  <span>
+                    {CARD_LIBRARY[cardId]?.images?.small && (
+                      <img alt="" className="deck-list-thumb" loading="lazy" src={CARD_LIBRARY[cardId].images.small} />
+                    )}
+                    {CARD_LIBRARY[cardId]?.name ?? cardId}
+                  </span>
+                  <strong>x{count}</strong>
+                </div>
+              ))
+            )}
           </aside>
           <div className="card-pool">
             <div className="filters">
@@ -574,7 +664,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
             </div>
           </div>
         </div>
-        <button className="primary-cta" onClick={save} disabled={issues.length > 0}>Save active deck</button>
+        <button className="primary-cta" onClick={save} disabled={!deckName.trim()}>Save deck to library</button>
       </section>
 
       <section className="panel">
