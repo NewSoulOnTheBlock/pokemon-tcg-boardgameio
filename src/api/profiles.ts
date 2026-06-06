@@ -86,10 +86,41 @@ export interface BoosterMintResponse {
   mints: Array<{ cardId: string; mintAddress: string; signature: string }>;
 }
 
-export async function mintBoosterNfts(recipient: string, cardIds: string[]): Promise<BoosterMintResponse> {
-  return request<BoosterMintResponse>('/api/boosters/mint', {
+export interface BoosterInvoice {
+  memo: string;
+  startTime: string;
+  endTime: string;
+  amount: string;
+  transactionBase64: string;
+  agentMint: string;
+  currencyMint: string;
+}
+
+export async function buildBoosterInvoice(walletAddress: string): Promise<BoosterInvoice> {
+  return request<BoosterInvoice>('/api/boosters/invoice', {
     method: 'POST',
-    body: JSON.stringify({ recipient, cardIds }),
+    body: JSON.stringify({ walletAddress }),
+  });
+}
+
+export interface BoosterRedeemResult {
+  treasury: string;
+  pack: Array<{ card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } }; slot: 'Common' | 'Uncommon' | 'Rare' }>;
+  mints: Array<{ cardId: string; mintAddress: string; signature: string }>;
+  invoice: { memo: string; startTime: string; endTime: string; walletAddress: string; setId: string; paymentSignature: string };
+}
+
+export async function redeemBoosterInvoice(input: {
+  walletAddress: string;
+  memo: string;
+  startTime: string;
+  endTime: string;
+  setId: string;
+  paymentSignature: string;
+}): Promise<BoosterRedeemResult> {
+  return request<BoosterRedeemResult>('/api/boosters/redeem', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 

@@ -6,12 +6,13 @@ import { Client } from 'boardgame.io/react';
 import { Local, SocketIO } from 'boardgame.io/multiplayer';
 import { RandomBot } from 'boardgame.io/ai';
 import {
+  buildBoosterInvoice,
   fetchLeaderboard,
   loginProfile,
-  mintBoosterNfts,
   persistMatchRecord,
   persistPackPurchase,
   persistProfile,
+  redeemBoosterInvoice,
   scanWalletForImports,
   type ImportCandidate,
 } from './api/profiles';
@@ -85,8 +86,7 @@ interface DeckOption {
 const PROFILE_KEY = 'pokemon-tcg-profile';
 const DECK_SIZE = 60;
 const MAX_CARD_COPIES = 4;
-const PACK_PRICE_SOL = 0.1;
-const PACK_PAYMENT_RECIPIENT = import.meta.env.VITE_PACK_PAYMENT_RECIPIENT?.trim() ?? '';
+const PACK_PRICE_LABEL = (import.meta.env.VITE_PACK_PRICE_LABEL?.trim() || '$6 USDC');
 const SOLANA_RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com';
 const GAME_NAME = PokemonTCG.name ?? 'pokemon-tcg';
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
@@ -607,7 +607,7 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
             <strong>Boosters</strong>
-            <span>Open packs for {PACK_PRICE_SOL} SOL and grow your collection.</span>
+            <span>Open packs for {PACK_PRICE_LABEL} and grow your collection.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import phygitals / Collector Crypt</strong>
@@ -1244,41 +1244,41 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       setError('Connect a Solana wallet on sign-in before buying booster packs.');
       return;
     }
-    if (!PACK_PAYMENT_RECIPIENT) {
-      setError('Pack payments are not configured. Set VITE_PACK_PAYMENT_RECIPIENT to the recipient Solana address.');
-      return;
-    }
+    const walletAddress = profile.wallet.address;
 
     setBuyingSetId(set.id);
     try {
-      const { sendSolPayment } = await import('./walletPayment');
-      const signature = await sendSolPayment({
-        payerAddress: profile.wallet.address,
-        recipientAddress: PACK_PAYMENT_RECIPIENT,
-        amountSol: PACK_PRICE_SOL,
+      // 1. Server builds an unsigned pump.fun payment transaction.
+      setStatus('Requesting invoice from the server...');
+      const invoice = await buildBoosterInvoice(walletAddress);
+
+      // 2. User signs + submits the transaction through their wallet.
+      const { signAndSendBase64Transaction } = await import('./walletPayment');
+      setStatus(`Approve the ${PACK_PRICE_LABEL} payment in your wallet...`);
+      const paymentSignature = await signAndSendBase64Transaction({
+        payerAddress: walletAddress,
         rpcUrl: SOLANA_RPC_URL,
+        transactionBase64: invoice.transactionBase64,
       });
-      const next = makeBoosterPackForSet(set);
-      const cardIds = next.map(({ card }) => card.id);
 
-      setStatus(`Payment confirmed. Minting ${cardIds.length} NFTs to ${shortAddr(profile.wallet.address)}...`);
-      let mints: Array<{ cardId: string; mintAddress: string; signature: string }> = [];
-      try {
-        const minted = await mintBoosterNfts(profile.wallet.address, cardIds);
-        mints = minted.mints;
-      } catch (mintErr) {
-        // Mint failure shouldn't lose the user's payment record — fall through
-        // with empty mints array and surface a warning. The card collection
-        // still updates locally so the user can deckbuild with their pulls.
-        console.warn('[mint] server-side mint failed', mintErr);
-        setError(`NFT mint failed but your cards were still added. ${mintErr instanceof Error ? mintErr.message : String(mintErr)}`);
-      }
+      // 3. Server verifies the on-chain payment, rolls pack contents
+      //    deterministically from the invoice memo, and mints NFTs.
+      setStatus('Payment sent. Confirming on-chain and minting NFTs...');
+      const redeemed = await redeemBoosterInvoice({
+        walletAddress,
+        memo: invoice.memo,
+        startTime: invoice.startTime,
+        endTime: invoice.endTime,
+        setId: set.id,
+        paymentSignature,
+      });
 
+      const cardIds = redeemed.pack.map((entry) => entry.card.id);
       const purchase: PackPurchase = {
-        signature,
+        signature: paymentSignature,
         openedAt: new Date().toISOString(),
         cardIds,
-        mints: mints.length > 0 ? mints : undefined,
+        mints: redeemed.mints.length > 0 ? redeemed.mints : undefined,
       };
       const updated = {
         ...profile,
@@ -1288,14 +1288,12 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       };
       const saved = await persistPackAndStore(updated, purchase);
       onProfileChange(saved);
-      setPack(next);
+      // Server-rolled pack uses a lightweight Card shape; cast to satisfy
+      // the existing BoosterPull display in the reveal panel.
+      setPack(redeemed.pack as unknown as BoosterPull[]);
       setOpenedSetId(set.id);
-      setMintSummary(mints);
-      if (mints.length > 0) {
-        setStatus(`${set.name} pack opened. ${cardIds.length} cards added to your collection and minted as NFTs.`);
-      } else {
-        setStatus(`${set.name} pack opened. ${cardIds.length} cards added to your collection.`);
-      }
+      setMintSummary(redeemed.mints);
+      setStatus(`${set.name} pack opened. ${cardIds.length} cards added to your collection and minted as NFTs.`);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -1308,11 +1306,11 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       <section className="panel boosters-panel">
         <p className="eyebrow">Boosters</p>
         <h1>Buy cards available in game while deckbuilding!</h1>
-        <p>Each pack pulls 8 cards exclusively from the set you choose — 4 Commons, 3 Uncommons, 1 Rare. {PACK_PRICE_SOL} SOL per pack, and every card is minted as a Metaplex Core NFT straight to your connected Solana wallet.</p>
+        <p>Each pack pulls 8 cards exclusively from the set you choose — 4 Commons, 3 Uncommons, 1 Rare. Payments flow through the Pokemon Masters pump.fun tokenized agent at {PACK_PRICE_LABEL} per pack, and every pulled card is minted as a Metaplex Core NFT straight to your connected Solana wallet.</p>
         <div className="booster-stats">
           <span>Packs opened: <strong>{profile.packsOpened}</strong></span>
           <span>Collection: <strong>{collectionSize(profile.ownedCards)}</strong> cards / <strong>{Object.keys(profile.ownedCards).length}</strong> unique</span>
-          <span>Recipient: {PACK_PAYMENT_RECIPIENT ? shortAddr(PACK_PAYMENT_RECIPIENT) : 'not configured'}</span>
+          <span>Price: <strong>{PACK_PRICE_LABEL}</strong></span>
         </div>
         {status && <p className="success">{status}</p>}
         {error && <p className="error">{error}</p>}
@@ -1391,7 +1389,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
                     disabled={buyingSetId !== null}
                     onClick={() => buyPackForSet(set)}
                   >
-                    {buyingSetId === set.id ? 'Opening...' : `Open · ${PACK_PRICE_SOL} SOL`}
+                    {buyingSetId === set.id ? 'Opening...' : `Open · ${PACK_PRICE_LABEL}`}
                   </button>
                 </article>
               );

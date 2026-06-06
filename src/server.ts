@@ -9,10 +9,12 @@ import { loadBundledCards } from './game/cards-server-bootstrap';
 import { PokemonTCG } from './game/PokemonTCG';
 import type { Card } from './game/types';
 import { MemoryCardStorage, PostgresCardStorage, type CardStorage } from './server/cardStorage';
+import { buildBoosterableSets, rollBoosterPack } from './server/boosters';
 import { createNftMinter, type NftMinter } from './server/nftMinter';
 import { buildSetNameIndex, scanWalletForPokemonNfts } from './server/nftScanner';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage } from './server/profileStorage';
+import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -65,6 +67,38 @@ try {
 } catch (err) {
   console.error(`[pokemon-tcg] NFT minter init failed: ${err instanceof Error ? err.message : String(err)}`);
   nftMinter = undefined;
+}
+
+// ----- Pump.fun payments -------------------------------------------------
+//
+// Booster pack purchases route through pump.fun's tokenized agent payment
+// system. The server builds an unsigned Transaction, the client signs and
+// submits it, and the server then verifies the invoice via pump.fun's
+// HTTP API (with RPC fallback) before minting NFTs. Disabled gracefully
+// if AGENT_TOKEN_MINT_ADDRESS / CURRENCY_MINT / PAYMENT_AMOUNT are unset.
+const agentMintEnv = process.env.AGENT_TOKEN_MINT_ADDRESS?.trim();
+const currencyMintEnv = process.env.CURRENCY_MINT?.trim();
+const paymentAmountEnv = process.env.PAYMENT_AMOUNT?.trim();
+let pumpPayments: PumpPaymentService | undefined;
+try {
+  if (agentMintEnv && currencyMintEnv && paymentAmountEnv) {
+    const amount = Number(paymentAmountEnv);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error(`PAYMENT_AMOUNT must be a positive number (got "${paymentAmountEnv}")`);
+    }
+    pumpPayments = createPumpPaymentService({
+      agentMintAddress: agentMintEnv,
+      currencyMintAddress: currencyMintEnv,
+      amountSmallestUnit: amount,
+      rpcUrl: solanaRpcUrl,
+    });
+    console.log(`[pokemon-tcg] pump.fun payments ready (mint=${pumpPayments.agentMint.toBase58()}, amount=${pumpPayments.amount})`);
+  } else {
+    console.log('[pokemon-tcg] pump.fun payments disabled (AGENT_TOKEN_MINT_ADDRESS / CURRENCY_MINT / PAYMENT_AMOUNT missing)');
+  }
+} catch (err) {
+  console.error(`[pokemon-tcg] pump.fun payments init failed: ${err instanceof Error ? err.message : String(err)}`);
+  pumpPayments = undefined;
 }
 
 // ----- Card library bootstrap -------------------------------------------
@@ -191,46 +225,105 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
 });
 
 /**
- * Mint one Metaplex Core NFT per pulled card to the user's wallet. Called
- * by the client after a successful 0.1 SOL pack payment. The treasury
- * keypair (server-side env var) pays for the mints out of its balance.
+ * Replaces /api/boosters/mint. Now a two-step flow gated by pump.fun:
+ *   1) POST /api/boosters/invoice  -> server builds an unsigned base64
+ *      Transaction targeting the agent token mint, returns invoice
+ *      params + the tx for the client to sign.
+ *   2) POST /api/boosters/redeem   -> client submits the signed signature
+ *      back along with invoice params + pack choice; server verifies on
+ *      chain via PumpAgent.validateInvoicePayment, then rolls the pack
+ *      deterministically from (setId, memo) and mints NFTs.
  */
-server.router.post('/api/boosters/mint', jsonBody, async (ctx) => {
+server.router.post('/api/boosters/invoice', jsonBody, async (ctx) => {
+  if (!pumpPayments) {
+    ctx.throw(503, 'Booster payments are not configured on this server (AGENT_TOKEN_MINT_ADDRESS missing).');
+    return;
+  }
+  const body = ctx.request.body as { walletAddress?: string } | undefined;
+  const walletAddress = body?.walletAddress?.trim();
+  if (!walletAddress) {
+    ctx.throw(400, 'walletAddress (base58 pubkey) is required.');
+    return;
+  }
+  try {
+    const invoice = await pumpPayments.buildInvoice(walletAddress);
+    ctx.body = invoice;
+  } catch (err) {
+    console.error(`[invoice] build failed for ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`);
+    ctx.throw(502, `Failed to build invoice: ${err instanceof Error ? err.message : String(err)}`);
+  }
+});
+
+server.router.post('/api/boosters/redeem', jsonBody, async (ctx) => {
+  if (!pumpPayments) {
+    ctx.throw(503, 'Booster payments are not configured on this server.');
+    return;
+  }
   if (!nftMinter) {
     ctx.throw(503, 'NFT minter is not configured on this server (SOLANA_TREASURY_SECRET_KEY missing).');
     return;
   }
-  const body = ctx.request.body as { recipient?: string; cardIds?: string[] } | undefined;
-  const recipient = body?.recipient?.trim();
-  const cardIds = body?.cardIds;
-  if (!recipient || !Array.isArray(cardIds) || cardIds.length === 0) {
-    ctx.throw(400, 'recipient (base58 pubkey) and cardIds (non-empty array) are required.');
-    return;
-  }
-  if (cardIds.length > 16) {
-    ctx.throw(400, 'Cannot mint more than 16 cards in a single request.');
+  const body = ctx.request.body as {
+    walletAddress?: string;
+    memo?: string;
+    startTime?: string;
+    endTime?: string;
+    setId?: string;
+    paymentSignature?: string;
+  } | undefined;
+  const walletAddress = body?.walletAddress?.trim();
+  const memo = body?.memo?.trim();
+  const startTime = body?.startTime?.trim();
+  const endTime = body?.endTime?.trim();
+  const setId = body?.setId?.trim();
+  const paymentSignature = body?.paymentSignature?.trim() || '';
+  if (!walletAddress || !memo || !startTime || !endTime || !setId) {
+    ctx.throw(400, 'walletAddress, memo, startTime, endTime, and setId are required.');
     return;
   }
 
+  // Step 1: verify the on-chain payment for this exact invoice.
+  const paid = await pumpPayments.verifyInvoice({ walletAddress, memo, startTime, endTime });
+  if (!paid) {
+    ctx.throw(402, 'Payment for this invoice has not been confirmed yet. Wait a few seconds and retry.');
+    return;
+  }
+
+  // Step 2: roll the pack contents deterministically from (setId, memo).
+  // Same invoice -> same cards on every redeem attempt, so the user can
+  // safely retry without minting a different pack each time.
+  const set = buildBoosterableSets().find((candidate) => candidate.id === setId);
+  if (!set) {
+    ctx.throw(400, `Unknown set: ${setId}`);
+    return;
+  }
+  const pack = rollBoosterPack(set, memo);
+
+  // Step 3: mint each card to the user's wallet as a Metaplex Core asset.
   const base = publicOrigin || `${ctx.protocol}://${ctx.host}`;
   const mints: Awaited<ReturnType<typeof nftMinter.mintCard>>[] = [];
-  for (const cardId of cardIds) {
-    const card = CARD_LIBRARY[cardId] as Card | undefined;
-    if (!card) {
-      ctx.throw(400, `Unknown card id: ${cardId}`);
-      return;
-    }
-    const metadataUri = `${base}/api/cards/${encodeURIComponent(cardId)}/metadata`;
+  for (const pulled of pack) {
+    const metadataUri = `${base}/api/cards/${encodeURIComponent(pulled.card.id)}/metadata`;
     try {
-      mints.push(await nftMinter.mintCard(recipient, card, metadataUri));
+      mints.push(await nftMinter.mintCard(walletAddress, pulled.card, metadataUri));
     } catch (err) {
-      console.error(`[mint] failed for ${cardId} -> ${recipient}: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[mint] redeem mint failed for ${pulled.card.id} -> ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`);
       ctx.status = 502;
-      ctx.body = { error: `Mint failed at card ${cardId}: ${err instanceof Error ? err.message : String(err)}`, mints };
+      ctx.body = {
+        error: `Payment confirmed but mint failed at ${pulled.card.id}: ${err instanceof Error ? err.message : String(err)}`,
+        pack,
+        mints,
+      };
       return;
     }
   }
-  ctx.body = { treasury: nftMinter.treasury, mints };
+
+  ctx.body = {
+    treasury: nftMinter.treasury,
+    pack,
+    mints,
+    invoice: { memo, startTime, endTime, walletAddress, setId, paymentSignature },
+  };
 });
 
 server.router.post('/api/login', jsonBody, async (ctx) => {
