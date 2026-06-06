@@ -622,7 +622,12 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, selecte
       <header className="hero">
         <div>
           <h1>{G.matchName}</h1>
-          <p>{G.matchType} | Phase: {ctx.phase ?? 'none'} | Current player: {ctx.currentPlayer} | Playmat: {G.playmatId}</p>
+          <p>
+            <span className={`match-type-badge match-type-badge-${G.matchType}`}>{G.matchType}</span>
+            {' '}Phase <strong>{ctx.phase ?? 'play'}</strong>
+            {' · '}Current turn <strong>P{ctx.currentPlayer}</strong>
+            {' · '}Playmat <strong>{G.playmatId}</strong>
+          </p>
           <p>Viewing as Player {actingPlayer}. Hidden hands, decks, and Prize cards are filtered by boardgame.io playerView.</p>
         </div>
         {G.stadium && <div className="stadium">Stadium: {G.stadium.name}</div>}

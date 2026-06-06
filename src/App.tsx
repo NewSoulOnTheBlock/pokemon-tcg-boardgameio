@@ -440,12 +440,37 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
 }
 
 function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: (page: Page) => void }) {
+  const stats = useMemo(() => {
+    const records = profile.matchRecords ?? [];
+    const wins = records.filter((record) => record.result === 'win').length;
+    const losses = records.filter((record) => record.result === 'loss').length;
+    return {
+      collection: collectionSize(profile.ownedCards),
+      packsOpened: profile.packsOpened,
+      record: `${wins}-${losses}`,
+    };
+  }, [profile.matchRecords, profile.ownedCards, profile.packsOpened]);
+
   return (
     <main className="hub-page">
       <section className="home-sidebar" aria-label="Home navigation">
         <div>
           <p className="eyebrow">Welcome back, {profile.name}</p>
-          <h1>Choose your next adventure.</h1>
+          <h1>Step into the Arena.</h1>
+        </div>
+        <div className="home-stats">
+          <div className="home-stat">
+            <strong>{stats.collection}</strong>
+            <span>Collection</span>
+          </div>
+          <div className="home-stat">
+            <strong>{stats.record}</strong>
+            <span>Record</span>
+          </div>
+          <div className="home-stat">
+            <strong>{stats.packsOpened}</strong>
+            <span>Packs</span>
+          </div>
         </div>
         <div className="home-button-stack">
           <button className="home-menu-button primary-cta" onClick={() => onNavigate('matchmaking')}>
@@ -904,15 +929,19 @@ function MatchmakingPage({
               const creator = playerInMatch(match, '0')?.name ?? 'Waiting for creator';
               const acceptor = playerInMatch(match, '1')?.name ?? 'Open seat';
               const canAcceptSelectedDeck = Boolean(seat && selectedAcceptDeck && selectedAcceptDeck.issues.length === 0);
+              const matchType = matchTypeForMatch(match);
               return (
                 <article className="match-card" key={match.matchID}>
                   <div>
+                    <div className="match-card-meta">
+                      <span className={`match-type-badge match-type-badge-${matchType}`}>{matchType}</span>
+                      <span className="match-id-chip">#{match.matchID.slice(0, 8)}</span>
+                    </div>
                     <strong>{matchNameForMatch(match)}</strong>
-                    <span>{matchTypeForMatch(match)} - Match {match.matchID}</span>
-                    <span>Player 0: {creator} using {deckLabelForMatch(match, '0')}</span>
-                    <span>Player 1: {acceptor} - chooses their own deck when accepting</span>
+                    <span>{creator} <em style={{ opacity: 0.6 }}>vs</em> {acceptor}</span>
+                    <span>Host plays {deckLabelForMatch(match, '0')}</span>
                   </div>
-                  <button disabled={busy !== null || !canAcceptSelectedDeck} onClick={() => acceptMatch(match)}>
+                  <button className="primary-cta" disabled={busy !== null || !canAcceptSelectedDeck} onClick={() => acceptMatch(match)}>
                     {busy === match.matchID ? 'Joining...' : 'Accept match'}
                   </button>
                 </article>
@@ -1124,9 +1153,10 @@ function MatchClient({
   return (
     <div className="match-screen">
       <div className="viewer-switch">
-        <button onClick={onExit}>Exit match</button>
-        <span>{config.matchName} ({config.matchType})</span>
-        <span>Match {config.matchID}</span>
+        <button onClick={onExit}>← Exit match</button>
+        <span className="viewer-match-title">{config.matchName}</span>
+        <span className={`match-type-badge match-type-badge-${config.matchType}`}>{config.matchType}</span>
+        <span className="match-id-chip">#{config.matchID.slice(0, 8)}</span>
         <span>You are Player {config.playerID}: {config.playerDeckLabel} vs {config.opponentDeckLabel}</span>
       </div>
       <PokemonClient
