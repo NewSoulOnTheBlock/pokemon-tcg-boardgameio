@@ -59,21 +59,17 @@ function deriveImagesForId(id: string, overrides?: { small?: string; large?: str
   if (dashIndex < 0) return overrides;
   const setId = id.slice(0, dashIndex);
   const number = id.slice(dashIndex + 1);
-  const images = {
+  return {
     small: overrides?.small ?? `${POKEMON_IMAGE_BASE}/${setId}/${number}.png`,
     large: overrides?.large ?? `${POKEMON_IMAGE_BASE}/${setId}/${number}_hires.png`,
   };
-  return images.small || images.large ? images : overrides;
 }
 
-function rehydrateManifestEntry(entry: SourceCard): SourceCard {
-  return {
-    ...entry,
-    images: deriveImagesForId(entry.id, entry.images),
-  };
-}
-
-const sourceCardList: SourceCard[] = (slimCardManifest as SourceCard[]).map(rehydrateManifestEntry);
+// NOTE: we hold the raw manifest array (kept alive by the module cache as
+// `slimCardManifest`'s default export) but DO NOT eagerly map over it. The
+// previous `.map(rehydrate)` doubled the manifest's footprint on the server.
+// Image URL derivation happens lazily inside `convertCard` so the converted
+// Card object is the only persistent representation.
 
 const POKEMON_TYPES = [
   'Grass',
@@ -131,24 +127,13 @@ function normalize(value: string | undefined): string {
     .toLowerCase();
 }
 
-function setIdFor(cardId: string): string | undefined {
-  const [setId] = cardId.split('-');
-  return setId || undefined;
-}
-
-function baseCardFields(source: SourceCard): Pick<Card, 'id' | 'name' | 'setId' | 'number' | 'rarity' | 'artist' | 'legalities' | 'images' | 'rules' | 'sourceId' | 'subtypes'> {
+function baseCardFields(source: SourceCard): Pick<Card, 'id' | 'name' | 'rarity' | 'images' | 'sourceId'> {
   return {
     id: source.id,
     name: source.name,
-    setId: setIdFor(source.id),
-    number: source.number,
     rarity: source.rarity,
-    artist: source.artist,
-    legalities: source.legalities,
-    images: source.images,
-    rules: source.rules,
+    images: deriveImagesForId(source.id, source.images),
     sourceId: source.id,
-    subtypes: source.subtypes,
   };
 }
 
@@ -214,7 +199,6 @@ function convertAttack(source: SourceAttack): Attack {
     name: source.name ?? 'Attack',
     cost: attackCost(source.cost),
     damage: parseDamage(source.damage),
-    text: source.text,
     effect: inferAttackEffect(source),
   };
 }
@@ -270,9 +254,7 @@ function convertPokemon(source: SourceCard): PokemonCard {
     weakness: firstPokemonTypeOrUndefined(source.weaknesses?.map((weakness) => weakness.type)),
     resistance: firstPokemonTypeOrUndefined(source.resistances?.map((resistance) => resistance.type)),
     prizeValue: prizeValueForRuleBox(ruleBox),
-    tera: source.subtypes?.some((subtype) => normalize(subtype) === 'tera'),
     ruleBox,
-    abilities: source.abilities,
   };
 }
 
@@ -340,7 +322,7 @@ function convertCard(source: SourceCard): Card | undefined {
 function buildCardLibrary(): Record<string, Card> {
   const library: Record<string, Card> = {};
 
-  for (const source of sourceCardList) {
+  for (const source of slimCardManifest as SourceCard[]) {
     const card = convertCard(source);
     if (card) {
       library[card.id] = card;
@@ -357,7 +339,39 @@ function buildCardLibrary(): Record<string, Card> {
   return library;
 }
 
-export const CARD_LIBRARY = buildCardLibrary();
+/**
+ * Lazy-built card catalogue. On the server (Render starter = 512 MB total),
+ * eagerly converting ~20k entries cost ~138 MB and pushed boot RSS over the
+ * memory cap. By deferring construction until the first lookup, the boot path
+ * (Koa + boardgame.io + Postgres pool + health probe) fits comfortably and the
+ * cost is only paid when an actual match needs a card. The Proxy keeps the old
+ * `CARD_LIBRARY[id]` / `Object.values(CARD_LIBRARY)` API working everywhere.
+ */
+let _library: Record<string, Card> | undefined;
+
+function getCardLibrary(): Record<string, Card> {
+  if (!_library) {
+    _library = buildCardLibrary();
+  }
+  return _library;
+}
+
+export const CARD_LIBRARY: Record<string, Card> = new Proxy({} as Record<string, Card>, {
+  get(_target, prop) {
+    if (typeof prop === 'symbol') return undefined;
+    return getCardLibrary()[prop];
+  },
+  has(_target, prop) {
+    if (typeof prop === 'symbol') return false;
+    return prop in getCardLibrary();
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getCardLibrary());
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    return Reflect.getOwnPropertyDescriptor(getCardLibrary(), prop);
+  },
+});
 
 export function cloneCard(cardId: string): Card {
   const card = CARD_LIBRARY[cardId];

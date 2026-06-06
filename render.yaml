@@ -14,13 +14,18 @@ services:
     region: oregon
     branch: main
     buildCommand: npm ci && npm run build
-    startCommand: npm run server
+    startCommand: npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: 20
       - key: NODE_ENV
         value: production
+      # Cap V8 heap below Render's 512 MB starter limit so Node GCs aggressively
+      # instead of being OOM-killed by the container. Bump to ~1800 if you
+      # upgrade to the Standard plan (2 GB RAM).
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=420
       - key: DATABASE_URL
         fromDatabase:
           name: pokemon-tcg-db

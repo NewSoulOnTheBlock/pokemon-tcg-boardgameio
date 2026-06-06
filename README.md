@@ -15,15 +15,19 @@ npm install
 npm run dev:server   # terminal 1 — boardgame.io server + REST API on :8000
 npm run dev          # terminal 2 — Vite dev server on :5173 (proxies /api, /games, /socket.io to :8000)
 npm test             # vitest run
-npm run build        # tsc + vite build (also rebuilds the card manifest)
+npm run build        # full prod build: card manifest + tsc + vite + esbuild server bundle
+npm start            # run the built server bundle with plain `node` (production-style)
 npm run build:cards  # regenerate the slim card manifest only
+npm run build:server # rebuild dist-server/server.mjs only
 ```
 
 Open `http://localhost:5173` in two different browser windows for online matches — each window logs in as a separate profile, picks a deck, and creates or joins a match. In production the Vite build is served by the same Koa server as the API and socket.io, so the browser uses `window.location.origin`; only set `VITE_BGIO_SERVER` when the static client is hosted on a different origin than the game server.
 
-### Card data manifest
+### Card data manifest + memory
 
-The vendored Pokemon TCG dataset ships as ~25 MB of raw JSON across 168 files. To keep the production bundle reasonable, `scripts/build-card-manifest.mjs` runs as a `prebuild` step and emits one slim `src/data/card-manifest.generated.json` containing only the fields the game actually uses (image URLs follow the canonical `images.pokemontcg.io/<set>/<number>.png` pattern and are derived at runtime). The generated manifest is gitignored. Re-run `npm run build:cards` after pulling new upstream card data.
+The vendored Pokemon TCG dataset ships as ~25 MB of raw JSON across 168 files. To keep the production bundle and **server RAM** reasonable, `scripts/build-card-manifest.mjs` runs as a `prebuild` step and emits one slim `src/data/card-manifest.generated.json` containing only the fields the engine actually uses (image URLs follow the canonical `images.pokemontcg.io/<set>/<number>.png` pattern and are derived at runtime). The generated manifest is gitignored. Re-run `npm run build:cards` after pulling new upstream card data.
+
+The full `CARD_LIBRARY` (`src/game/cards.ts`) is built lazily via a `Proxy` so the server boot path (Koa + boardgame.io + Postgres + health probe) fits in ~90 MB RSS on Render starter; the per-card structure was also trimmed to the fields the rules engine and UI actually read (drops `artist`, `legalities`, `rules`, `subtypes`, `abilities`, etc.). The compiled `dist-server/server.mjs` runs under plain `node` in production via `npm start`, which removes the `tsx`/esbuild loader overhead and keeps boot RSS well under Render's 512 MB starter cap.
 
 ### Backend storage
 
@@ -52,15 +56,18 @@ The app signs users in by wallet address when a wallet is connected, or by train
 | `VITE_API_TARGET` | (Dev-only) where the Vite proxy forwards `/api`, `/games`, `/socket.io`. Defaults to `http://localhost:8000`. |
 | `VITE_PACK_PAYMENT_RECIPIENT` | Solana address that receives booster pack payments. |
 | `VITE_SOLANA_RPC_URL` | Solana RPC endpoint (defaults to mainnet-beta). |
+| `NODE_OPTIONS` | Caps the V8 heap (`--max-old-space-size=420` in the Render blueprint). Bump to ~1800 if you upgrade to the Standard plan (2 GB RAM). |
 
 ## Deploying to Render.com
 
-This repo includes a `render.yaml` blueprint that provisions one Node web service + one free Postgres database, wires `DATABASE_URL` automatically, and points the Render health check at `/api/health`.
+This repo includes a `render.yaml` blueprint that provisions one Node web service + one free Postgres database, wires `DATABASE_URL` automatically, sets `NODE_OPTIONS=--max-old-space-size=420` so V8 GCs aggressively below the 512 MB starter cap, and points the Render health check at `/api/health`.
 
 1. Push this repo to GitHub.
 2. In the Render dashboard: **New → Blueprint**, point at the repo, click **Apply**.
-3. Render runs `npm ci && npm run build` and starts `npm run server`. The boardgame.io socket.io server, lobby REST API, custom `/api/*` profile endpoints, and the static React build are all served from the same port.
+3. Render runs `npm ci && npm run build` (which produces `dist/` + `dist-server/server.mjs`) and starts `npm start` (plain `node dist-server/server.mjs`).
 4. After the first deploy, set `ALLOW_ORIGIN` to the production URL (e.g. `https://your-app.onrender.com`).
+
+If you see OOM kills under sustained load, the cheapest fix is to upgrade the web service to the **Standard** plan (2 GB RAM) and bump `NODE_OPTIONS` to `--max-old-space-size=1800` in the dashboard. The starter plan is enough for boot + a handful of concurrent matches but will get tight if many players are online simultaneously.
 
 ## Paid boosters
 

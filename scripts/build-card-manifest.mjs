@@ -35,18 +35,19 @@ function slimAttack(attack) {
   if (attack.name) slim.name = attack.name;
   if (Array.isArray(attack.cost) && attack.cost.length > 0) slim.cost = attack.cost;
   if (attack.damage) slim.damage = attack.damage;
+  // text is required for inferAttackEffect (special conditions, draws, etc.)
   if (attack.text) slim.text = attack.text;
   return slim;
 }
 
-function slimAbility(ability) {
-  if (!ability || typeof ability !== 'object') return undefined;
-  const slim = {};
-  if (ability.name) slim.name = ability.name;
-  if (ability.text) slim.text = ability.text;
-  if (ability.type) slim.type = ability.type;
-  return slim;
+function slimAbility() {
+  // Abilities are dropped from the manifest entirely — convertPokemon no
+  // longer stores them on the resulting Card object. Keep the helper around
+  // (unused) to make the regenerate script easy to grep if we ever want them
+  // back.
+  return undefined;
 }
+void slimAbility;
 
 function slimWeaknessOrResistance(entry) {
   if (!entry || typeof entry !== 'object' || !entry.type) return undefined;
@@ -60,14 +61,13 @@ function slimCard(card) {
     name: card.name,
     supertype: card.supertype,
   };
+  // Subtypes drive stage / ruleBox / trainerType / "basic" energy detection
+  // at conversion time. We keep them here so the runtime converter can do its
+  // work, then drop them from the resulting Card object (see src/game/types.ts).
   if (Array.isArray(card.subtypes) && card.subtypes.length > 0) slim.subtypes = card.subtypes;
   if (card.hp) slim.hp = card.hp;
   if (Array.isArray(card.types) && card.types.length > 0) slim.types = card.types;
   if (card.evolvesFrom) slim.evolvesFrom = card.evolvesFrom;
-  if (Array.isArray(card.abilities) && card.abilities.length > 0) {
-    const abilities = card.abilities.map(slimAbility).filter(Boolean);
-    if (abilities.length > 0) slim.abilities = abilities;
-  }
   if (Array.isArray(card.attacks) && card.attacks.length > 0) {
     const attacks = card.attacks.map(slimAttack).filter(Boolean);
     if (attacks.length > 0) slim.attacks = attacks;
@@ -85,11 +85,15 @@ function slimCard(card) {
   } else if (Array.isArray(card.retreatCost)) {
     slim.convertedRetreatCost = card.retreatCost.length;
   }
-  if (card.number) slim.number = card.number;
-  if (card.artist) slim.artist = card.artist;
   if (card.rarity) slim.rarity = card.rarity;
-  if (Array.isArray(card.rules) && card.rules.length > 0) slim.rules = card.rules;
-  if (card.text) slim.text = card.text;
+  // Trainer effect detection reads `rules` and `text`. Energy and Pokemon
+  // cards don't need them at conversion time, so we only keep them for
+  // trainers. Saves several MB across the manifest.
+  const supertype = String(card.supertype || '').toLowerCase();
+  if (supertype === 'trainer') {
+    if (Array.isArray(card.rules) && card.rules.length > 0) slim.rules = card.rules;
+    if (card.text) slim.text = card.text;
+  }
   if (card.images) {
     const images = {};
     if (card.images.small && card.images.small !== standardSmallUrl(card.id)) {

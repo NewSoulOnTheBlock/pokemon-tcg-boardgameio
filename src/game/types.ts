@@ -34,7 +34,6 @@ export interface Attack {
   name: string;
   cost: PokemonType[];
   damage?: number;
-  text?: string;
   effect?: AttackEffect;
 }
 
@@ -45,22 +44,20 @@ export type AttackEffect =
   | { type: 'draw'; count: number }
   | { type: 'coinBonusDamage'; amount: number };
 
+/** Card metadata held in CARD_LIBRARY. Only fields that are actually read at
+ *  runtime live here; anything used only during the source -> Card conversion
+ *  step (artist, legalities, rules, subtypes, abilities text, ...) is dropped
+ *  so the 20 000+ entry library fits in well under 100 MB on Render. */
 export interface BaseCard {
   id: string;
   name: string;
   kind: CardKind;
-  setId?: string;
-  number?: string;
   rarity?: string;
-  artist?: string;
-  legalities?: Record<string, string>;
+  sourceId?: string;
   images?: {
     small?: string;
     large?: string;
   };
-  rules?: string[];
-  sourceId?: string;
-  subtypes?: string[];
 }
 
 export interface PokemonCard extends BaseCard {
@@ -74,13 +71,7 @@ export interface PokemonCard extends BaseCard {
   weakness?: PokemonType;
   resistance?: PokemonType;
   prizeValue?: number;
-  tera?: boolean;
   ruleBox?: 'ex' | 'V' | 'VSTAR' | 'VMAX' | 'V-UNION' | 'Radiant' | 'GX' | 'EX' | 'TAG TEAM';
-  abilities?: Array<{
-    name: string;
-    text?: string;
-    type?: string;
-  }>;
 }
 
 export interface EnergyCard extends BaseCard {
