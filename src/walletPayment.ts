@@ -34,7 +34,8 @@ export async function signAndSendBase64Transaction({
   }
 
   const { Connection, Transaction } = await import('@solana/web3.js');
-  const tx = Transaction.from(Buffer.from(transactionBase64, 'base64'));
+  const txBytes = Uint8Array.from(atob(transactionBase64), (c) => c.charCodeAt(0));
+  const tx = Transaction.from(txBytes);
   const connection = new Connection(rpcUrl, 'confirmed');
 
   let signature: string | undefined;
