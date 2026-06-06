@@ -395,7 +395,9 @@ function Shell({
   return (
     <div className="app-shell">
       <header className="app-topbar">
-        <button className="brand-button" onClick={() => onNavigate('home')}>Pokemon TCG</button>
+        <button className="brand-button" onClick={() => onNavigate('home')} aria-label="Go to home">
+          <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
+        </button>
         <nav>
           {(['home', 'profile', 'matchmaking', 'boosters'] as Page[]).map((target) => (
             <button
@@ -449,6 +451,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   return (
     <main className="signin-page">
       <section className="signin-card">
+        <img className="signin-logo" src="/site-logo.png" alt="Pokemon Masters" />
         <p className="eyebrow">Local wallet profile</p>
         <h1>Pokemon TCG Arena</h1>
         <p>Connect a browser wallet or continue with a trainer name. Your profile, collection, pack history, and match records are loaded from the game server.</p>

@@ -95,8 +95,18 @@ button:disabled {
 .brand-button {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.24);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  padding: 4px 8px;
+}
+
+.brand-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.brand-logo {
+  display: block;
+  height: 44px;
+  object-fit: contain;
+  width: 172px;
 }
 
 .account-pill {
@@ -150,6 +160,13 @@ button:disabled {
   margin: 0 auto;
   max-width: 560px;
   padding: 28px;
+}
+
+.signin-logo {
+  align-self: center;
+  display: block;
+  max-width: 320px;
+  width: min(80vw, 320px);
 }
 
 .eyebrow {
