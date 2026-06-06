@@ -41,6 +41,7 @@ import {
   shortAddr,
   type ConnectedWallet,
 } from './wallet';
+import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
 type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'match';
 
@@ -99,17 +100,114 @@ const CANONICAL_CARDS = Object.values(CARD_LIBRARY)
   .filter((card) => card.id === (card.sourceId ?? card.id))
   .sort((a, b) => a.name.localeCompare(b.name));
 const BUILDABLE_CARDS = CANONICAL_CARDS;
-const BOOSTER_CARDS = CANONICAL_CARDS.filter((card) => card.rarity && card.rarity !== 'Promo');
-const BOOSTER_COMMONS = BOOSTER_CARDS.filter((card) => card.rarity === 'Common');
-const BOOSTER_UNCOMMONS = BOOSTER_CARDS.filter((card) => card.rarity === 'Uncommon');
 const BOOSTER_ENERGY = CANONICAL_CARDS.filter((card) => card.kind === 'energy' && card.basic);
-const BOOSTER_REVERSE = BOOSTER_CARDS.filter((card) => card.kind !== 'energy' && card.rarity !== 'Promo');
-const BOOSTER_RARES = BOOSTER_CARDS.filter((card) => card.kind !== 'energy' && card.rarity !== 'Common' && card.rarity !== 'Uncommon');
+
 type BoosterSlot = 'Common' | 'Uncommon' | 'Reverse Holo' | 'Rare or better' | 'Basic Energy';
 interface BoosterPull {
   card: Card;
   slot: BoosterSlot;
 }
+
+// ----- Per-set booster packs -----
+//
+// Every Pokemon TCG set has its own pack. Pulls are restricted to cards from
+// that set (except Basic Energies, which are always pulled from the canonical
+// Scarlet & Violet Energies set so any pack opens with a usable energy).
+//
+// A set is considered "boosterable" when it has at least one Common, one
+// Uncommon, and one rarer non-energy card so we can actually fill all six
+// pack slots. The full sets/en.json file ships with logo + symbol URLs that
+// we use as pack art on the boosters page.
+
+interface RawSet {
+  id: string;
+  name: string;
+  series?: string;
+  releaseDate?: string;
+  ptcgoCode?: string;
+  total?: number;
+  images?: { logo?: string; symbol?: string };
+}
+
+interface SetMeta {
+  id: string;
+  name: string;
+  series: string;
+  releaseDate: string;
+  ptcgoCode?: string;
+  logo?: string;
+  symbol?: string;
+}
+
+interface BoosterableSet extends SetMeta {
+  commons: Card[];
+  uncommons: Card[];
+  rares: Card[];
+  reverseHolos: Card[];
+  totalCards: number;
+}
+
+function setIdOf(card: Card): string {
+  const dash = card.id.indexOf('-');
+  return dash > 0 ? card.id.slice(0, dash) : card.id;
+}
+
+const SET_METADATA: Map<string, SetMeta> = new Map(
+  (setsManifest as RawSet[]).map((set) => [
+    set.id,
+    {
+      id: set.id,
+      name: set.name,
+      series: set.series ?? 'Other',
+      releaseDate: set.releaseDate ?? '0000/00/00',
+      ptcgoCode: set.ptcgoCode,
+      logo: set.images?.logo,
+      symbol: set.images?.symbol,
+    },
+  ]),
+);
+
+function isRareForBoosters(card: Card): boolean {
+  if (card.kind === 'energy') return false;
+  const rarity = card.rarity;
+  if (!rarity) return false;
+  if (rarity === 'Common' || rarity === 'Uncommon' || rarity === 'Promo') return false;
+  return true;
+}
+
+function buildBoosterableSets(): BoosterableSet[] {
+  const byId = new Map<string, Card[]>();
+  for (const card of CANONICAL_CARDS) {
+    const id = setIdOf(card);
+    const list = byId.get(id);
+    if (list) list.push(card);
+    else byId.set(id, [card]);
+  }
+
+  const result: BoosterableSet[] = [];
+  for (const [setId, cards] of byId) {
+    const meta = SET_METADATA.get(setId);
+    if (!meta) continue;
+    const commons = cards.filter((card) => card.rarity === 'Common');
+    const uncommons = cards.filter((card) => card.rarity === 'Uncommon');
+    const rares = cards.filter(isRareForBoosters);
+    if (commons.length === 0 || uncommons.length === 0 || rares.length === 0) continue;
+    const reverseHolos = cards.filter((card) => card.kind !== 'energy' && card.rarity && card.rarity !== 'Promo');
+    result.push({
+      ...meta,
+      commons,
+      uncommons,
+      rares,
+      reverseHolos,
+      totalCards: cards.length,
+    });
+  }
+
+  return result.sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));
+}
+
+const BOOSTERABLE_SETS = buildBoosterableSets();
+const BOOSTERABLE_SET_BY_ID = new Map(BOOSTERABLE_SETS.map((set) => [set.id, set]));
 
 function loadProfile(): ProfileState {
   try {
@@ -221,7 +319,7 @@ function randomFromPool(pool: Card[], used: Set<string>): Card {
   return card;
 }
 
-function randomRare(used: Set<string>): Card {
+function randomRareFromSet(pool: Card[], used: Set<string>): Card {
   const weightedBuckets: Array<{ bucket: ReturnType<typeof rareBucket>; weight: number }> = [
     { bucket: 'rare', weight: 78 },
     { bucket: 'ultra', weight: 14 },
@@ -233,24 +331,27 @@ function randomRare(used: Set<string>): Card {
   for (const entry of weightedBuckets) {
     cursor += entry.weight;
     if (roll <= cursor) {
-      const pool = BOOSTER_RARES.filter((card) => rareBucket(card) === entry.bucket);
-      if (pool.length > 0) {
-        return randomFromPool(pool, used);
+      const bucket = pool.filter((card) => rareBucket(card) === entry.bucket);
+      if (bucket.length > 0) {
+        return randomFromPool(bucket, used);
       }
     }
   }
-  return randomFromPool(BOOSTER_RARES, used);
+  return randomFromPool(pool, used);
 }
 
-function makeBoosterPack(): BoosterPull[] {
+function makeBoosterPackForSet(set: BoosterableSet): BoosterPull[] {
   const used = new Set<string>();
+  const reverseLow = set.reverseHolos.filter((card) => card.rarity === 'Common' || card.rarity === 'Uncommon');
+  const reversePool = reverseLow.length > 0 ? reverseLow : set.reverseHolos;
+  const energyPool = BOOSTER_ENERGY.length > 0 ? BOOSTER_ENERGY : set.commons;
   return [
-    ...Array.from({ length: 4 }, () => ({ card: randomFromPool(BOOSTER_COMMONS, used), slot: 'Common' as const })),
-    ...Array.from({ length: 3 }, () => ({ card: randomFromPool(BOOSTER_UNCOMMONS, used), slot: 'Uncommon' as const })),
-    { card: randomFromPool(BOOSTER_REVERSE.filter((card) => card.rarity === 'Common' || card.rarity === 'Uncommon'), used), slot: 'Reverse Holo' as const },
-    { card: randomFromPool(BOOSTER_REVERSE, used), slot: 'Reverse Holo' as const },
-    { card: randomRare(used), slot: 'Rare or better' as const },
-    { card: randomFromPool(BOOSTER_ENERGY, used), slot: 'Basic Energy' as const },
+    ...Array.from({ length: 4 }, () => ({ card: randomFromPool(set.commons, used), slot: 'Common' as const })),
+    ...Array.from({ length: 3 }, () => ({ card: randomFromPool(set.uncommons, used), slot: 'Uncommon' as const })),
+    { card: randomFromPool(reversePool, used), slot: 'Reverse Holo' as const },
+    { card: randomFromPool(set.reverseHolos, used), slot: 'Reverse Holo' as const },
+    { card: randomRareFromSet(set.rares, used), slot: 'Rare or better' as const },
+    { card: randomFromPool(energyPool, used), slot: 'Basic Energy' as const },
   ];
 }
 
@@ -1015,12 +1116,26 @@ function DeckSelect({
 }
 
 function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void }) {
-  const [pack, setPack] = useState<BoosterPull[]>([]);
+  const [pack, setPack] = useState<BoosterPull[] | null>(null);
+  const [openedSetId, setOpenedSetId] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [buying, setBuying] = useState(false);
+  const [buyingSetId, setBuyingSetId] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
 
-  async function buyPack() {
+  const visibleSets = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return BOOSTERABLE_SETS;
+    return BOOSTERABLE_SETS.filter((set) =>
+      set.name.toLowerCase().includes(needle) ||
+      set.series.toLowerCase().includes(needle) ||
+      (set.ptcgoCode ?? '').toLowerCase().includes(needle),
+    );
+  }, [filter]);
+
+  const openedSet = openedSetId ? BOOSTERABLE_SET_BY_ID.get(openedSetId) : undefined;
+
+  async function buyPackForSet(set: BoosterableSet) {
     setStatus('');
     setError('');
     if (profile.wallet?.chain !== 'solana') {
@@ -1032,7 +1147,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       return;
     }
 
-    setBuying(true);
+    setBuyingSetId(set.id);
     try {
       const { sendSolPayment } = await import('./walletPayment');
       const signature = await sendSolPayment({
@@ -1041,57 +1156,115 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
         amountSol: PACK_PRICE_SOL,
         rpcUrl: SOLANA_RPC_URL,
       });
-      const next = makeBoosterPack();
+      const next = makeBoosterPackForSet(set);
       const cardIds = next.map(({ card }) => card.id);
       const purchase = { signature, openedAt: new Date().toISOString(), cardIds };
       const updated = {
         ...profile,
         ownedCards: addCardsToCollection(profile.ownedCards, cardIds),
         packsOpened: profile.packsOpened + 1,
-        packPurchases: [
-          ...profile.packPurchases,
-          purchase,
-        ],
+        packPurchases: [...profile.packPurchases, purchase],
       };
       const saved = await persistPackAndStore(updated, purchase);
       onProfileChange(saved);
       setPack(next);
-      setStatus(`Pack opened and ${cardIds.length} cards added to your collection. Signature: ${signature.slice(0, 8)}...${signature.slice(-8)}`);
+      setOpenedSetId(set.id);
+      setStatus(`${set.name} pack opened — ${cardIds.length} cards added to your collection. Signature: ${signature.slice(0, 8)}...${signature.slice(-8)}`);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
-      setBuying(false);
+      setBuyingSetId(null);
     }
   }
 
   return (
-    <main className="content-page">
+    <main className="content-page boosters-page">
       <section className="panel boosters-panel">
         <p className="eyebrow">Boosters</p>
-        <h1>Buy Pokemon-style boosters</h1>
-        <p>Each pack costs {PACK_PRICE_SOL} SOL, then adds its pulls to your deckbuilder collection. Pack collation uses a Scarlet & Violet-style mix: 4 Commons, 3 Uncommons, 2 Reverse Holo slots, 1 Rare-or-better slot, and 1 Basic Energy.</p>
-        <div className={`booster-pack ${buying ? 'booster-pack-busy' : ''}`} onClick={buying ? undefined : buyPack}>
-          <strong>Pokemon Booster</strong>
-          <span>{buying ? 'Confirming payment...' : `${PACK_PRICE_SOL} SOL - click to buy`}</span>
+        <h1>One pack per Pokemon TCG set</h1>
+        <p>Pulls are restricted to the set you choose — 4 Commons, 3 Uncommons, 2 Reverse Holos, 1 Rare-or-better, 1 Basic Energy. {PACK_PRICE_SOL} SOL per pack.</p>
+        <div className="booster-stats">
+          <span>Packs opened: <strong>{profile.packsOpened}</strong></span>
+          <span>Collection: <strong>{collectionSize(profile.ownedCards)}</strong> cards / <strong>{Object.keys(profile.ownedCards).length}</strong> unique</span>
+          <span>Recipient: {PACK_PAYMENT_RECIPIENT ? shortAddr(PACK_PAYMENT_RECIPIENT) : 'not configured'}</span>
         </div>
-        <p>Recipient: {PACK_PAYMENT_RECIPIENT ? shortAddr(PACK_PAYMENT_RECIPIENT) : 'not configured'}</p>
-        <p>Packs opened: {profile.packsOpened}</p>
-        <p>Collection: {collectionSize(profile.ownedCards)} cards / {Object.keys(profile.ownedCards).length} unique</p>
         {status && <p className="success">{status}</p>}
         {error && <p className="error">{error}</p>}
       </section>
-      {pack.length > 0 && (
-        <section className="booster-grid">
-          {pack.map(({ card, slot }, index) => (
-            <article className="booster-card" key={`${card.id}-${index}`}>
-              <DeckbuilderCardArt card={card} />
-              <strong>{card.name}</strong>
-              <span>{cardLabel(card)}</span>
-              <span>{slot} - {card.rarity ?? 'No rarity'}</span>
-            </article>
-          ))}
+
+      {pack && openedSet && (
+        <section className="panel booster-reveal">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Latest pull</p>
+              <h2>{openedSet.name}</h2>
+              <p className="section-subtitle">{openedSet.series} · {new Date(openedSet.releaseDate).getFullYear()}</p>
+            </div>
+            <button onClick={() => { setPack(null); setOpenedSetId(null); }}>Close</button>
+          </div>
+          <div className="booster-grid">
+            {pack.map(({ card, slot }, index) => (
+              <article className="booster-card" key={`${card.id}-${index}`}>
+                <DeckbuilderCardArt card={card} />
+                <strong>{card.name}</strong>
+                <span>{cardLabel(card)}</span>
+                <span>{slot} - {card.rarity ?? 'No rarity'}</span>
+              </article>
+            ))}
+          </div>
         </section>
       )}
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Sets</p>
+            <h2>Choose a set</h2>
+            <p className="section-subtitle">{BOOSTERABLE_SETS.length} sets available · sorted newest first</p>
+          </div>
+          <input
+            className="set-filter"
+            placeholder="Filter by set, series, or code..."
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
+        {visibleSets.length === 0 ? (
+          <p className="empty-state">No sets match "{filter}".</p>
+        ) : (
+          <div className="set-pack-grid">
+            {visibleSets.map((set) => {
+              const releaseYear = Number.parseInt(set.releaseDate.slice(0, 4), 10) || '';
+              return (
+                <article className="set-pack-card" key={set.id}>
+                  <div className="set-pack-art">
+                    {set.logo ? (
+                      <img className="set-pack-logo" src={set.logo} alt={`${set.name} logo`} loading="lazy" />
+                    ) : (
+                      <div className="set-pack-logo-fallback">{set.name}</div>
+                    )}
+                    {set.symbol && (
+                      <img className="set-pack-symbol" src={set.symbol} alt="" loading="lazy" />
+                    )}
+                  </div>
+                  <div className="set-pack-meta">
+                    <strong>{set.name}</strong>
+                    <span>{set.series}{releaseYear ? ` · ${releaseYear}` : ''}</span>
+                    <span>{set.totalCards} cards in pool</span>
+                  </div>
+                  <button
+                    className="primary-cta set-pack-buy"
+                    disabled={buyingSetId !== null}
+                    onClick={() => buyPackForSet(set)}
+                  >
+                    {buyingSetId === set.id ? 'Opening...' : `Open · ${PACK_PRICE_SOL} SOL`}
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
