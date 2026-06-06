@@ -1,13 +1,15 @@
-// Bundle src/server.ts -> dist-server/server.cjs with esbuild so production
+// Bundle src/server.ts -> dist-server/server.mjs with esbuild so production
 // runs plain `node` instead of `tsx`. That cut RSS at boot from ~450 MB (tsx
 // + transpile cache + esbuild loader) to ~120 MB on a 512 MB Render dyno.
 //
-// esbuild ships as a transitive dep of vite, so no new package needed.
-// The bundle stays CJS to keep `createRequire(import.meta.url)` and the
-// `require('boardgame.io/server')` workaround for the framework's broken
-// ESM subpath exports.
+// We also copy src/data/card-manifest.generated.json next to the bundle so
+// cards-server-bootstrap.ts can find it via `./card-manifest.generated.json`
+// at runtime (Render's repo layout puts compiled output at
+// /opt/render/project/src/dist-server/ and source at .../src/src/data/,
+// which makes `../data/` resolve to a non-existent path in prod).
 
 import { build } from 'esbuild';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -30,13 +32,21 @@ await build({
   // boardgame.io load their own platform-specific natives correctly.
   external: Object.keys(pkg.dependencies ?? {}),
   loader: { '.json': 'json' },
-  // ESM in Node needs an explicit shim for CJS interop (boardgame.io still
-  // uses `createRequire(import.meta.url)` to dodge its own broken ESM subpath
-  // exports). esbuild handles the require glue automatically when format=esm.
   banner: {
     js: "import { createRequire as __cjsRequire } from 'node:module';\nconst require = __cjsRequire(import.meta.url);",
   },
   logLevel: 'info',
 });
 
-console.log('[build-server] dist-server/server.mjs ready');
+// Copy the slim manifest next to the bundle so cards-server-bootstrap can
+// find it via `./card-manifest.generated.json` in production.
+const manifestSrc = join(REPO_ROOT, 'src', 'data', 'card-manifest.generated.json');
+const manifestDst = join(REPO_ROOT, 'dist-server', 'card-manifest.generated.json');
+if (!existsSync(manifestSrc)) {
+  throw new Error(`Card manifest not found at ${manifestSrc}. Run 'npm run build:cards' first.`);
+}
+mkdirSync(dirname(manifestDst), { recursive: true });
+copyFileSync(manifestSrc, manifestDst);
+
+console.log('[build-server] dist-server/server.mjs + card-manifest.generated.json ready');
+
