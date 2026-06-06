@@ -161,6 +161,7 @@ export class PostgresProfileStorage implements ProfileStorage {
     // Backfill columns for older rows so leaderboard / wager UI can read them.
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS match_type TEXT NOT NULL DEFAULT 'Ranked'`);
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS wager_amount NUMERIC`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS wager_currency TEXT`);
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS winner_wallet TEXT`);
   }
 
@@ -215,9 +216,9 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(
       `
         INSERT INTO ${MATCHES_TABLE}
-          (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at, match_type, wager_amount, winner_wallet)
+          (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at, match_type, wager_amount, wager_currency, winner_wallet)
         VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (user_id, match_id, player_id)
         DO UPDATE SET
           player_deck_label = EXCLUDED.player_deck_label,
@@ -228,6 +229,7 @@ export class PostgresProfileStorage implements ProfileStorage {
           completed_at = EXCLUDED.completed_at,
           match_type = EXCLUDED.match_type,
           wager_amount = EXCLUDED.wager_amount,
+          wager_currency = EXCLUDED.wager_currency,
           winner_wallet = EXCLUDED.winner_wallet
       `,
       [
@@ -243,6 +245,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         record.completedAt,
         record.matchType ?? 'Ranked',
         record.wagerAmount ?? null,
+        record.wagerCurrency ?? null,
         record.winnerWallet ?? null,
       ],
     );
@@ -354,9 +357,9 @@ export class PostgresProfileStorage implements ProfileStorage {
       await this.pool.query(
         `
           INSERT INTO ${MATCHES_TABLE}
-            (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at, match_type, wager_amount, winner_wallet)
+            (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at, match_type, wager_amount, wager_currency, winner_wallet)
           VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           ON CONFLICT (user_id, match_id, player_id)
           DO UPDATE SET
             player_deck_label = EXCLUDED.player_deck_label,
@@ -367,6 +370,7 @@ export class PostgresProfileStorage implements ProfileStorage {
             completed_at = EXCLUDED.completed_at,
             match_type = EXCLUDED.match_type,
             wager_amount = EXCLUDED.wager_amount,
+            wager_currency = EXCLUDED.wager_currency,
             winner_wallet = EXCLUDED.winner_wallet
         `,
         [
@@ -382,6 +386,7 @@ export class PostgresProfileStorage implements ProfileStorage {
           record.completedAt,
           record.matchType ?? 'Ranked',
           record.wagerAmount ?? null,
+          record.wagerCurrency ?? null,
           record.winnerWallet ?? null,
         ],
       );

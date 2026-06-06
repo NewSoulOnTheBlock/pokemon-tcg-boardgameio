@@ -143,6 +143,7 @@ export interface PokemonTCGState {
   matchName: string;
   matchType: MatchType;
   wagerAmount: number;
+  wagerCurrency: WagerCurrency;
   playmatId: PlaymatID;
   playOrder: PlayerID[];
   firstPlayer: PlayerID;
@@ -156,14 +157,35 @@ export interface PokemonTCGState {
 
 export type MatchType = 'Casual' | 'Ranked' | 'Wager';
 
+// Currencies the in-game wager popup knows how to display. The app never
+// escrows funds — it just shows the winner's wallet + amount/currency so
+// the loser can settle off-app. Adding a new currency only needs an entry
+// here, a mint address (if SPL), and a formatter case in formatWager.
+export type WagerCurrency = 'SOL' | 'POKETCG';
+
+// Pump.fun tokenized agent mint for $POKETCG. Used both as the booster
+// payment currency (separately, via PAYMENT_AMOUNT/CURRENCY_MINT env vars)
+// and as the SPL token the loser sends when wagering in $POKETCG.
+export const POKETCG_TOKEN_MINT = 'N9Curnf2ZQWBZWrjBkzP6xBe6n5WRhBhouRfiSqpump';
+
 export interface PokemonTCGSetupData {
   deckLabels?: Partial<Record<PlayerID, string>>;
   walletAddresses?: Partial<Record<PlayerID, string>>;
   matchName?: string;
   matchType?: MatchType;
   wagerAmount?: number;
+  wagerCurrency?: WagerCurrency;
   seedDecks?: Partial<Record<PlayerID, string[]>>;
   shuffleDecks?: boolean;
   firstPlayer?: PlayerID;
   playmatId?: PlaymatID;
+}
+
+export function formatWager(amount: number, currency: WagerCurrency): string {
+  if (currency === 'POKETCG') {
+    // $POKETCG amounts can be large — format with thousands separators and
+    // no fixed decimals (users type whole-token amounts).
+    return `${amount.toLocaleString('en-US')} $POKETCG`;
+  }
+  return `${amount} SOL`;
 }

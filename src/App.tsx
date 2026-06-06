@@ -26,7 +26,8 @@ import {
   type StarterEnergyType,
 } from './game/cards';
 import { PokemonTCG } from './game/PokemonTCG';
-import type { Card, MatchType, PlayerID, PokemonTCGSetupData, PokemonTCGState } from './game/types';
+import type { Card, MatchType, PlayerID, PokemonTCGSetupData, PokemonTCGState, WagerCurrency } from './game/types';
+import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
 import { PokemonBoard } from './PokemonBoard';
 import {
   addCardsToCollection,
@@ -58,6 +59,7 @@ interface MatchConfig {
   matchName: string;
   matchType: MatchType;
   wagerAmount: number;
+  wagerCurrency: WagerCurrency;
   playerDeck?: DeckPayload;
   playerWallet?: string;
   playerID: PlayerID;
@@ -91,6 +93,10 @@ const SOLANA_RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL?.trim() || 'https://a
 const GAME_NAME = PokemonTCG.name ?? 'pokemon-tcg';
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
 const MATCH_TYPES: MatchType[] = ['Casual', 'Ranked', 'Wager'];
+const WAGER_CURRENCIES: { value: WagerCurrency; label: string }[] = [
+  { value: 'SOL', label: 'SOL' },
+  { value: 'POKETCG', label: '$POKETCG' },
+];
 const STARTER_COLLECTION = collectionFromCards(Object.values(STARTER_DECKS).flat());
 const DEFAULT_PROFILE: ProfileState = {
   name: '',
@@ -445,6 +451,10 @@ function wagerForMatch(match: LobbyAPI.Match): number {
   return typeof value === 'number' && value > 0 ? value : 0;
 }
 
+function wagerCurrencyForMatch(match: LobbyAPI.Match): WagerCurrency {
+  return setupDataForMatch(match)?.wagerCurrency === 'POKETCG' ? 'POKETCG' : 'SOL';
+}
+
 function Shell({
   page,
   profile,
@@ -492,8 +502,23 @@ function Shell({
   );
 }
 
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+const RESERVED_NAMES = new Set(['pokemontrainer', 'pokemon trainer', 'trainer', 'player', 'anonymous']);
+
+function isReservedName(value: string): boolean {
+  const normalized = normalizeName(value);
+  if (!normalized) return true;
+  return RESERVED_NAMES.has(normalized) || RESERVED_NAMES.has(normalized.replace(/\s+/g, ''));
+}
+
 function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void }) {
-  const [name, setName] = useState(() => loadProfile().name || 'PokemonTrainer');
+  const [name, setName] = useState(() => {
+    const cached = loadProfile().name;
+    return cached && !isReservedName(cached) ? cached : '';
+  });
   const [wallet, setWallet] = useState<ConnectedWallet | null>(() => loadProfile().wallet);
   const [error, setError] = useState('');
   const [signingIn, setSigningIn] = useState(false);
@@ -514,8 +539,17 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
       setError('Connect a wallet to enter the arena.');
       return;
     }
+    const trimmedName = name.trim();
+    if (trimmedName.length < 2) {
+      setError('Pick a trainer name (at least 2 characters).');
+      return;
+    }
+    if (isReservedName(trimmedName)) {
+      setError(`"${trimmedName}" is reserved. Choose a unique trainer name.`);
+      return;
+    }
     setSigningIn(true);
-    const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: name.trim() || 'PokemonTrainer', wallet };
+    const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: trimmedName, wallet };
     try {
       onSignIn(await loginAndStore(profile));
     } catch (err) {
@@ -524,6 +558,8 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
       setSigningIn(false);
     }
   }
+
+  const nameInvalid = name.length > 0 && isReservedName(name);
 
   return (
     <main className="signin-page">
@@ -534,8 +570,14 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
         <p>Connect a Solana or EVM wallet to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
         <label>
           Trainer name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Pick a unique trainer name"
+            maxLength={32}
+          />
         </label>
+        {nameInvalid && <p className="action-hint" style={{ color: '#ff8a8a' }}>"{name.trim()}" is reserved — pick a different name.</p>}
         <div className="wallet-actions">
           <button onClick={() => connect('evm')}>Connect EVM Wallet</button>
           <button onClick={() => connect('solana')}>Connect Solana Wallet</button>
@@ -551,7 +593,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
           <p className="action-hint">No wallet connected yet — pick one above to unlock the arena.</p>
         )}
         {error && <p className="error">{error}</p>}
-        <button className="primary-cta" disabled={signingIn || !wallet} onClick={finish}>
+        <button className="primary-cta" disabled={signingIn || !wallet || name.trim().length < 2 || isReservedName(name)} onClick={finish}>
           {signingIn ? 'Loading profile...' : wallet ? 'Enter Arena' : 'Connect a wallet to continue'}
         </button>
       </section>
@@ -873,6 +915,7 @@ function MatchmakingPage({
   const [matchName, setMatchName] = useState(`${profile.name}'s Match`);
   const [matchType, setMatchType] = useState<MatchType>('Casual');
   const [wagerAmount, setWagerAmount] = useState<number>(0.1);
+  const [wagerCurrency, setWagerCurrency] = useState<WagerCurrency>('SOL');
   const [matches, setMatches] = useState<LobbyAPI.Match[]>([]);
   const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
   const [busy, setBusy] = useState<'create' | 'refresh' | string | null>(null);
@@ -920,6 +963,7 @@ function MatchmakingPage({
       playerDeckLabel: config.playerDeckLabel,
       opponentDeckLabel: config.opponentDeckLabel,
       wagerAmount: config.wagerAmount > 0 ? config.wagerAmount : undefined,
+      wagerCurrency: config.wagerAmount > 0 ? config.wagerCurrency : undefined,
       result: 'in_progress',
       startedAt: new Date().toISOString(),
     };
@@ -943,7 +987,7 @@ function MatchmakingPage({
         return;
       }
       if (!(wagerAmount > 0)) {
-        setError('Wager matches need a positive SOL amount.');
+        setError(`Wager matches need a positive ${wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'} amount.`);
         return;
       }
     }
@@ -959,6 +1003,7 @@ function MatchmakingPage({
       matchName: cleanMatchName,
       matchType,
       wagerAmount: isWager ? wagerAmount : undefined,
+      wagerCurrency: isWager ? wagerCurrency : undefined,
       seedDecks: {
         '0': selectedPlayerDeck.cardIds,
       },
@@ -984,6 +1029,7 @@ function MatchmakingPage({
         matchName: cleanMatchName,
         matchType,
         wagerAmount: isWager ? wagerAmount : 0,
+        wagerCurrency: isWager ? wagerCurrency : 'SOL',
         playerID,
         playerWallet,
         credentials: joined.playerCredentials,
@@ -1016,6 +1062,7 @@ function MatchmakingPage({
     }
     const matchKind = matchTypeForMatch(match);
     const matchWager = wagerForMatch(match);
+    const matchCurrency = wagerCurrencyForMatch(match);
     if (matchKind === 'Wager' && !playerWallet) {
       setError('Connect a Solana wallet on sign-in to accept a Wager match.');
       return;
@@ -1035,6 +1082,7 @@ function MatchmakingPage({
         matchName: matchNameForMatch(match),
         matchType: matchKind,
         wagerAmount: matchWager,
+        wagerCurrency: matchCurrency,
         playerDeck: {
           cardIds: selectedAcceptDeck.cardIds,
           label: selectedAcceptDeck.label,
@@ -1088,20 +1136,26 @@ function MatchmakingPage({
           {matchType === 'Wager' && (
             <div className="wager-controls">
               <label className="wager-field">
-                Wager (SOL)
+                Currency
+                <select value={wagerCurrency} onChange={(event) => setWagerCurrency(event.target.value as WagerCurrency)}>
+                  {WAGER_CURRENCIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="wager-field">
+                Wager ({wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'})
                 <input
                   type="number"
                   inputMode="decimal"
-                  step="0.01"
-                  min="0.001"
+                  step={wagerCurrency === 'POKETCG' ? '1' : '0.01'}
+                  min={wagerCurrency === 'POKETCG' ? '1' : '0.001'}
                   value={wagerAmount}
                   onChange={(event) => setWagerAmount(Number.parseFloat(event.target.value) || 0)}
-                  placeholder="0.10"
+                  placeholder={wagerCurrency === 'POKETCG' ? '1000' : '0.10'}
                 />
               </label>
               <p className="wager-hint">
                 {playerWallet
-                  ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow the SOL — settle off-app after the popup appears.`
+                  ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKETCG mint: ${shortAddr(POKETCG_TOKEN_MINT)}` : ''}`
                   : 'Connect a Solana wallet on sign-in to create or accept a Wager match.'}
               </p>
             </div>
@@ -1125,6 +1179,7 @@ function MatchmakingPage({
               const acceptor = playerInMatch(match, '1')?.name ?? 'Open seat';
               const matchKind = matchTypeForMatch(match);
               const wager = wagerForMatch(match);
+              const wagerCcy = wagerCurrencyForMatch(match);
               const canAcceptSelectedDeck = Boolean(
                 seat
                 && selectedAcceptDeck
@@ -1137,7 +1192,7 @@ function MatchmakingPage({
                     <div className="match-card-meta">
                       <span className={`match-type-badge match-type-badge-${matchKind}`}>{matchKind}</span>
                       <span className="match-id-chip">#{match.matchID.slice(0, 8)}</span>
-                      {wager > 0 && <span className="wager-chip">{wager} SOL wager</span>}
+                      {wager > 0 && <span className="wager-chip">{formatWager(wager, wagerCcy)} wager</span>}
                     </div>
                     <strong>{matchNameForMatch(match)}</strong>
                     <span>{creator} <em style={{ opacity: 0.6 }}>vs</em> {acceptor}</span>
@@ -1429,6 +1484,7 @@ function BotMatchPage({ profile, onExit }: { profile: ProfileState; onExit: () =
     const setupData: MatchSetupData = {
       matchName: `${profile.name} vs CPU`,
       matchType: 'Casual',
+      wagerCurrency: 'SOL',
       seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': activeMatch.botDeck.cardIds },
       deckLabels: { '0': activeMatch.playerDeck.label, '1': activeMatch.botDeck.label },
     };
@@ -1753,6 +1809,7 @@ function MatchClient({
       playerDeckLabel: config.playerDeckLabel,
       opponentDeckLabel: config.opponentDeckLabel,
       wagerAmount: config.wagerAmount > 0 ? config.wagerAmount : undefined,
+      wagerCurrency: config.wagerAmount > 0 ? config.wagerCurrency : undefined,
       result,
       winner,
       winnerWallet,
@@ -1761,7 +1818,7 @@ function MatchClient({
       completedAt: new Date().toISOString(),
     };
     onProfileChange(await persistMatchAndStore(profile, record));
-  }, [config.matchID, config.matchType, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, config.wagerAmount, onProfileChange, profile, recordedGameover]);
+  }, [config.matchID, config.matchType, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, config.wagerAmount, config.wagerCurrency, onProfileChange, profile, recordedGameover]);
 
   const MatchBoard = useMemo(() => (
     function MatchBoard(props: BoardProps<PokemonTCGState>) {
@@ -1804,7 +1861,7 @@ export default function App() {
     const stored = loadProfile();
     // Wallet-less profiles get bounced back to sign-in even if their name is
     // cached — the arena is wallet-only now.
-    return stored.name && stored.wallet ? 'home' : 'signin';
+    return stored.name && stored.wallet && !isReservedName(stored.name) ? 'home' : 'signin';
   });
   const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
 
@@ -1820,7 +1877,7 @@ export default function App() {
     setPage('signin');
   }
 
-  if (page === 'signin' || !profile.name || !profile.wallet) {
+  if (page === 'signin' || !profile.name || !profile.wallet || isReservedName(profile.name)) {
     return <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />;
   }
 

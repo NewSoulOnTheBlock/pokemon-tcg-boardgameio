@@ -1,5 +1,5 @@
 import type { ConnectedWallet } from '../wallet';
-import type { MatchType, PlayerID } from '../game/types';
+import type { MatchType, PlayerID, WagerCurrency } from '../game/types';
 
 export interface PackPurchase {
   signature: string;
@@ -19,6 +19,7 @@ export interface MatchRecord {
   result: 'in_progress' | 'win' | 'loss' | 'draw';
   startedAt: string;
   wagerAmount?: number;
+  wagerCurrency?: WagerCurrency;
   winner?: PlayerID;
   winnerWallet?: string;
 }

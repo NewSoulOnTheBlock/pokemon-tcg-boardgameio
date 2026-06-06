@@ -370,6 +370,7 @@ export const PokemonTCG: Game<PokemonTCGState> = {
       wagerAmount: typeof setupData?.wagerAmount === 'number' && setupData.wagerAmount > 0
         ? setupData.wagerAmount
         : 0,
+      wagerCurrency: setupData?.wagerCurrency === 'POKETCG' ? 'POKETCG' : 'SOL',
       playmatId,
       playOrder,
       firstPlayer,

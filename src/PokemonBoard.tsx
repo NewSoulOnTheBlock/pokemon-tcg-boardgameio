@@ -3,6 +3,7 @@ import type { BoardProps } from 'boardgame.io/react';
 import { CardImage as SharedCardImage } from './components/CardImage';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
+import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
 
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
   onMatchComplete?: (payload: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => void | Promise<void>;
@@ -652,12 +653,17 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
               {gameover.winner === undefined
                 ? 'Match drew — refund both sides.'
                 : gameover.winner === actingPlayer
-                  ? `You won ${G.wagerAmount} SOL!`
-                  : `You owe ${G.wagerAmount} SOL.`}
+                  ? `You won ${formatWager(G.wagerAmount, G.wagerCurrency)}!`
+                  : `You owe ${formatWager(G.wagerAmount, G.wagerCurrency)}.`}
             </h2>
             <p className="wager-modal-sub">
-              The app does not escrow funds — settle the wager off-app by sending SOL to the winner's wallet below.
+              The app does not escrow funds — settle the wager off-app by sending {G.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'} to the winner's wallet below.
             </p>
+            {G.wagerCurrency === 'POKETCG' && (
+              <p className="wager-modal-sub">
+                <strong>$POKETCG token mint:</strong> <code title={POKETCG_TOKEN_MINT}>{POKETCG_TOKEN_MINT}</code>
+              </p>
+            )}
             {winnerWallet ? (
               <div className="wager-modal-wallet">
                 <span>Winner wallet</span>
