@@ -7,7 +7,9 @@ import serve from 'koa-static';
 import { CARD_LIBRARY, cardLibrarySize, initCardLibrary } from './game/cards';
 import { loadBundledCards } from './game/cards-server-bootstrap';
 import { PokemonTCG } from './game/PokemonTCG';
+import type { Card } from './game/types';
 import { MemoryCardStorage, PostgresCardStorage, type CardStorage } from './server/cardStorage';
+import { createNftMinter, type NftMinter } from './server/nftMinter';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage } from './server/profileStorage';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
@@ -38,6 +40,30 @@ const cardStorage: CardStorage = databaseUrl
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
+
+// ----- Solana / NFT minter -----------------------------------------------
+//
+// Server-side mints happen with a treasury keypair so users don't sign N
+// transactions per pack. The treasury is normally the same wallet that
+// receives the 0.1 SOL pack payment. If SOLANA_TREASURY_SECRET_KEY isn't
+// set, the server records pack purchases but skips minting entirely (the
+// /api/boosters/mint endpoint returns 503).
+const solanaRpcUrl = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+const treasurySecret = process.env.SOLANA_TREASURY_SECRET_KEY?.trim();
+const publicOrigin = process.env.PUBLIC_ORIGIN ?? allowedOrigins[0] ?? '';
+
+let nftMinter: NftMinter | undefined;
+try {
+  if (treasurySecret) {
+    nftMinter = createNftMinter({ rpcUrl: solanaRpcUrl, treasurySecretKeyBase58: treasurySecret });
+    console.log(`[pokemon-tcg] NFT minter ready (treasury=${nftMinter.treasury})`);
+  } else {
+    console.log('[pokemon-tcg] NFT minter disabled (SOLANA_TREASURY_SECRET_KEY not set)');
+  }
+} catch (err) {
+  console.error(`[pokemon-tcg] NFT minter init failed: ${err instanceof Error ? err.message : String(err)}`);
+  nftMinter = undefined;
+}
 
 // ----- Card library bootstrap -------------------------------------------
 //
@@ -94,11 +120,11 @@ server.app.use(async (ctx: Context, next: Next) => {
 const jsonBody = koaBody({ jsonLimit: '256kb' });
 
 server.router.get('/health', (ctx) => {
-  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize() };
+  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize(), nftMinter: Boolean(nftMinter) };
 });
 
 server.router.get('/api/health', (ctx) => {
-  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize() };
+  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize(), nftMinter: Boolean(nftMinter) };
 });
 
 server.router.get('/api/cards/library', (ctx) => {
@@ -107,6 +133,98 @@ server.router.get('/api/cards/library', (ctx) => {
   // higher once /api/cards/library?v=<hash> is wired up for cache busting.
   ctx.set('Cache-Control', 'public, max-age=3600');
   ctx.body = cardsJsonCache;
+});
+
+/**
+ * Metaplex-standard NFT metadata for a single card. Used as the `uri` for
+ * each Core asset minted in /api/boosters/mint. Phantom / Solflare fetch
+ * this URL when displaying the NFT.
+ *
+ * Example: /api/cards/sv1-13/metadata
+ */
+server.router.get('/api/cards/:id/metadata', (ctx) => {
+  const card = CARD_LIBRARY[ctx.params.id] as Card | undefined;
+  if (!card) {
+    ctx.throw(404, `Unknown card ${ctx.params.id}`);
+    return;
+  }
+  const attributes: Array<{ trait_type: string; value: string | number }> = [];
+  if (card.rarity) attributes.push({ trait_type: 'Rarity', value: card.rarity });
+  attributes.push({ trait_type: 'Kind', value: card.kind });
+  if (card.kind === 'pokemon') {
+    attributes.push({ trait_type: 'Type', value: card.pokemonType });
+    attributes.push({ trait_type: 'Stage', value: card.stage });
+    attributes.push({ trait_type: 'HP', value: card.hp });
+    if (card.ruleBox) attributes.push({ trait_type: 'Rule Box', value: card.ruleBox });
+  } else if (card.kind === 'energy') {
+    attributes.push({ trait_type: 'Energy Type', value: card.energyType });
+  } else if (card.kind === 'trainer') {
+    attributes.push({ trait_type: 'Trainer Type', value: card.trainerType });
+  }
+  const sourceId = card.sourceId ?? card.id;
+  const setId = sourceId.includes('-') ? sourceId.split('-')[0] : sourceId;
+  attributes.push({ trait_type: 'Set', value: setId });
+  const image = card.images?.large ?? card.images?.small ?? '';
+  const description = card.kind === 'pokemon'
+    ? `${card.name} — ${card.stage} ${card.pokemonType} Pokemon, ${card.hp} HP. From ${setId.toUpperCase()}.`
+    : `${card.name} — ${card.kind === 'energy' ? 'Energy' : 'Trainer'} card from ${setId.toUpperCase()}.`;
+  ctx.type = 'application/json';
+  ctx.set('Cache-Control', 'public, max-age=86400');
+  ctx.body = {
+    name: card.name,
+    symbol: 'PTCG',
+    description,
+    image,
+    external_url: publicOrigin || `https://images.pokemontcg.io/${setId}/`,
+    attributes,
+    properties: {
+      category: 'image',
+      files: image ? [{ uri: image, type: 'image/png' }] : [],
+    },
+  };
+});
+
+/**
+ * Mint one Metaplex Core NFT per pulled card to the user's wallet. Called
+ * by the client after a successful 0.1 SOL pack payment. The treasury
+ * keypair (server-side env var) pays for the mints out of its balance.
+ */
+server.router.post('/api/boosters/mint', jsonBody, async (ctx) => {
+  if (!nftMinter) {
+    ctx.throw(503, 'NFT minter is not configured on this server (SOLANA_TREASURY_SECRET_KEY missing).');
+    return;
+  }
+  const body = ctx.request.body as { recipient?: string; cardIds?: string[] } | undefined;
+  const recipient = body?.recipient?.trim();
+  const cardIds = body?.cardIds;
+  if (!recipient || !Array.isArray(cardIds) || cardIds.length === 0) {
+    ctx.throw(400, 'recipient (base58 pubkey) and cardIds (non-empty array) are required.');
+    return;
+  }
+  if (cardIds.length > 16) {
+    ctx.throw(400, 'Cannot mint more than 16 cards in a single request.');
+    return;
+  }
+
+  const base = publicOrigin || `${ctx.protocol}://${ctx.host}`;
+  const mints: Awaited<ReturnType<typeof nftMinter.mintCard>>[] = [];
+  for (const cardId of cardIds) {
+    const card = CARD_LIBRARY[cardId] as Card | undefined;
+    if (!card) {
+      ctx.throw(400, `Unknown card id: ${cardId}`);
+      return;
+    }
+    const metadataUri = `${base}/api/cards/${encodeURIComponent(cardId)}/metadata`;
+    try {
+      mints.push(await nftMinter.mintCard(recipient, card, metadataUri));
+    } catch (err) {
+      console.error(`[mint] failed for ${cardId} -> ${recipient}: ${err instanceof Error ? err.message : String(err)}`);
+      ctx.status = 502;
+      ctx.body = { error: `Mint failed at card ${cardId}: ${err instanceof Error ? err.message : String(err)}`, mints };
+      return;
+    }
+  }
+  ctx.body = { treasury: nftMinter.treasury, mints };
 });
 
 server.router.post('/api/login', jsonBody, async (ctx) => {

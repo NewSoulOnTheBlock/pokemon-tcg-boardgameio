@@ -7,6 +7,7 @@ import { SocketIO } from 'boardgame.io/multiplayer';
 import {
   fetchLeaderboard,
   loginProfile,
+  mintBoosterNfts,
   persistMatchRecord,
   persistPackPurchase,
   persistProfile,
@@ -100,9 +101,8 @@ const CANONICAL_CARDS = Object.values(CARD_LIBRARY)
   .filter((card) => card.id === (card.sourceId ?? card.id))
   .sort((a, b) => a.name.localeCompare(b.name));
 const BUILDABLE_CARDS = CANONICAL_CARDS;
-const BOOSTER_ENERGY = CANONICAL_CARDS.filter((card) => card.kind === 'energy' && card.basic);
 
-type BoosterSlot = 'Common' | 'Uncommon' | 'Reverse Holo' | 'Rare or better' | 'Basic Energy';
+type BoosterSlot = 'Common' | 'Uncommon' | 'Rare';
 interface BoosterPull {
   card: Card;
   slot: BoosterSlot;
@@ -143,7 +143,6 @@ interface BoosterableSet extends SetMeta {
   commons: Card[];
   uncommons: Card[];
   rares: Card[];
-  reverseHolos: Card[];
   totalCards: number;
 }
 
@@ -192,13 +191,11 @@ function buildBoosterableSets(): BoosterableSet[] {
     const uncommons = cards.filter((card) => card.rarity === 'Uncommon');
     const rares = cards.filter(isRareForBoosters);
     if (commons.length === 0 || uncommons.length === 0 || rares.length === 0) continue;
-    const reverseHolos = cards.filter((card) => card.kind !== 'energy' && card.rarity && card.rarity !== 'Promo');
     result.push({
       ...meta,
       commons,
       uncommons,
       rares,
-      reverseHolos,
       totalCards: cards.length,
     });
   }
@@ -342,16 +339,10 @@ function randomRareFromSet(pool: Card[], used: Set<string>): Card {
 
 function makeBoosterPackForSet(set: BoosterableSet): BoosterPull[] {
   const used = new Set<string>();
-  const reverseLow = set.reverseHolos.filter((card) => card.rarity === 'Common' || card.rarity === 'Uncommon');
-  const reversePool = reverseLow.length > 0 ? reverseLow : set.reverseHolos;
-  const energyPool = BOOSTER_ENERGY.length > 0 ? BOOSTER_ENERGY : set.commons;
   return [
     ...Array.from({ length: 4 }, () => ({ card: randomFromPool(set.commons, used), slot: 'Common' as const })),
     ...Array.from({ length: 3 }, () => ({ card: randomFromPool(set.uncommons, used), slot: 'Uncommon' as const })),
-    { card: randomFromPool(reversePool, used), slot: 'Reverse Holo' as const },
-    { card: randomFromPool(set.reverseHolos, used), slot: 'Reverse Holo' as const },
-    { card: randomRareFromSet(set.rares, used), slot: 'Rare or better' as const },
-    { card: randomFromPool(energyPool, used), slot: 'Basic Energy' as const },
+    { card: randomRareFromSet(set.rares, used), slot: 'Rare' as const },
   ];
 }
 
@@ -1122,6 +1113,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
   const [error, setError] = useState('');
   const [buyingSetId, setBuyingSetId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [mintSummary, setMintSummary] = useState<Array<{ cardId: string; mintAddress: string; signature: string }>>([]);
 
   const visibleSets = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -1158,7 +1150,26 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       });
       const next = makeBoosterPackForSet(set);
       const cardIds = next.map(({ card }) => card.id);
-      const purchase = { signature, openedAt: new Date().toISOString(), cardIds };
+
+      setStatus(`Payment confirmed. Minting ${cardIds.length} NFTs to ${shortAddr(profile.wallet.address)}...`);
+      let mints: Array<{ cardId: string; mintAddress: string; signature: string }> = [];
+      try {
+        const minted = await mintBoosterNfts(profile.wallet.address, cardIds);
+        mints = minted.mints;
+      } catch (mintErr) {
+        // Mint failure shouldn't lose the user's payment record — fall through
+        // with empty mints array and surface a warning. The card collection
+        // still updates locally so the user can deckbuild with their pulls.
+        console.warn('[mint] server-side mint failed', mintErr);
+        setError(`NFT mint failed but your cards were still added. ${mintErr instanceof Error ? mintErr.message : String(mintErr)}`);
+      }
+
+      const purchase: PackPurchase = {
+        signature,
+        openedAt: new Date().toISOString(),
+        cardIds,
+        mints: mints.length > 0 ? mints : undefined,
+      };
       const updated = {
         ...profile,
         ownedCards: addCardsToCollection(profile.ownedCards, cardIds),
@@ -1169,7 +1180,12 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       onProfileChange(saved);
       setPack(next);
       setOpenedSetId(set.id);
-      setStatus(`${set.name} pack opened — ${cardIds.length} cards added to your collection. Signature: ${signature.slice(0, 8)}...${signature.slice(-8)}`);
+      setMintSummary(mints);
+      if (mints.length > 0) {
+        setStatus(`${set.name} pack opened. ${cardIds.length} cards added to your collection and minted as NFTs.`);
+      } else {
+        setStatus(`${set.name} pack opened. ${cardIds.length} cards added to your collection.`);
+      }
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -1181,8 +1197,8 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
     <main className="content-page boosters-page">
       <section className="panel boosters-panel">
         <p className="eyebrow">Boosters</p>
-        <h1>One pack per Pokemon TCG set</h1>
-        <p>Pulls are restricted to the set you choose — 4 Commons, 3 Uncommons, 2 Reverse Holos, 1 Rare-or-better, 1 Basic Energy. {PACK_PRICE_SOL} SOL per pack.</p>
+        <h1>Buy cards available in game while deckbuilding!</h1>
+        <p>Each pack pulls 8 cards exclusively from the set you choose — 4 Commons, 3 Uncommons, 1 Rare. {PACK_PRICE_SOL} SOL per pack, and every card is minted as a Metaplex Core NFT straight to your connected Solana wallet.</p>
         <div className="booster-stats">
           <span>Packs opened: <strong>{profile.packsOpened}</strong></span>
           <span>Collection: <strong>{collectionSize(profile.ownedCards)}</strong> cards / <strong>{Object.keys(profile.ownedCards).length}</strong> unique</span>
@@ -1200,17 +1216,25 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
               <h2>{openedSet.name}</h2>
               <p className="section-subtitle">{openedSet.series} · {new Date(openedSet.releaseDate).getFullYear()}</p>
             </div>
-            <button onClick={() => { setPack(null); setOpenedSetId(null); }}>Close</button>
+            <button onClick={() => { setPack(null); setOpenedSetId(null); setMintSummary([]); }}>Close</button>
           </div>
           <div className="booster-grid">
-            {pack.map(({ card, slot }, index) => (
-              <article className="booster-card" key={`${card.id}-${index}`}>
-                <DeckbuilderCardArt card={card} />
-                <strong>{card.name}</strong>
-                <span>{cardLabel(card)}</span>
-                <span>{slot} - {card.rarity ?? 'No rarity'}</span>
-              </article>
-            ))}
+            {pack.map(({ card, slot }, index) => {
+              const mint = mintSummary.find((m) => m.cardId === card.id);
+              return (
+                <article className="booster-card" key={`${card.id}-${index}`}>
+                  <DeckbuilderCardArt card={card} />
+                  <strong>{card.name}</strong>
+                  <span>{cardLabel(card)}</span>
+                  <span>{slot} · {card.rarity ?? 'No rarity'}</span>
+                  {mint ? (
+                    <a className="booster-mint-link" href={`https://solscan.io/token/${mint.mintAddress}`} target="_blank" rel="noreferrer">
+                      NFT {shortAddr(mint.mintAddress)} ↗
+                    </a>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         </section>
       )}

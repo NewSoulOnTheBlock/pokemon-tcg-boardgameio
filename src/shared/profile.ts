@@ -5,6 +5,7 @@ export interface PackPurchase {
   signature: string;
   openedAt: string;
   cardIds: string[];
+  mints?: Array<{ cardId: string; mintAddress: string; signature: string }>;
 }
 
 export interface MatchRecord {

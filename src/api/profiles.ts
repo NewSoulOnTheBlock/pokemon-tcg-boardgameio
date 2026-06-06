@@ -81,4 +81,16 @@ export async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
   return request<MatchLeaderboardEntry[]>('/api/leaderboard');
 }
 
+export interface BoosterMintResponse {
+  treasury: string;
+  mints: Array<{ cardId: string; mintAddress: string; signature: string }>;
+}
+
+export async function mintBoosterNfts(recipient: string, cardIds: string[]): Promise<BoosterMintResponse> {
+  return request<BoosterMintResponse>('/api/boosters/mint', {
+    method: 'POST',
+    body: JSON.stringify({ recipient, cardIds }),
+  });
+}
+
 export { ApiError };
