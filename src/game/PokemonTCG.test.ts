@@ -122,6 +122,24 @@ describe('PokemonTCG', () => {
     expect(setupState({ ...fullSetupDataForTests(), playmatId: 'purple' }).playmatId).toBe('purple');
   });
 
+  it('can create a named match while leaving the acceptor deck unselected', () => {
+    const G = setupState({
+      ...fullSetupDataForTests({
+        deckLabels: { '0': 'Grass Starter' },
+        matchName: 'Saturday ranked room',
+        matchType: 'Ranked',
+        seedDecks: { '0': testDecks['0'] },
+      }),
+    });
+
+    expect(G.matchName).toBe('Saturday ranked room');
+    expect(G.matchType).toBe('Ranked');
+    expect(G.deckLabels).toEqual({ '0': 'Grass Starter' });
+    expect(G.players['0'].hand).toHaveLength(7);
+    expect(G.players['1'].hand).toHaveLength(0);
+    expect(G.players['1'].deck).toHaveLength(0);
+  });
+
   it('loads the vendored Pokemon TCG card database without API calls', () => {
     expect(Object.keys(CARD_LIBRARY).length).toBeGreaterThan(20000);
     expect(cloneCard('sv1-1').name).toBe('Pineco');

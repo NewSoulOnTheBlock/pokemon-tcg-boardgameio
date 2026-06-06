@@ -6,6 +6,10 @@ import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
   onMatchComplete?: (payload: { reason?: string; winner?: PlayerID }) => void | Promise<void>;
   playerID: string | null;
+  selectedDeck?: {
+    cardIds: string[];
+    label: string;
+  };
 }
 
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
@@ -333,7 +337,7 @@ function PlayerSummary({ id, player }: { id: PlayerID; player: PlayerState }) {
   );
 }
 
-export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: PokemonBoardProps) {
+export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, selectedDeck }: PokemonBoardProps) {
   const actingPlayer = (playerID === '1' ? '1' : '0') as PlayerID;
   const player = G.players[actingPlayer];
   const isCurrent = ctx.currentPlayer === actingPlayer;
@@ -343,12 +347,21 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
   const [openingBenchIndexes, setOpeningBenchIndexes] = useState<Array<number | undefined>>([]);
   const [boardHint, setBoardHint] = useState('');
   const playmatImage = PLAYMAT_IMAGE_BY_ID[G.playmatId];
+  const visibleDeckCount = player.deckCount ?? player.deck.length;
+  const isLoadingSelectedDeck = Boolean(selectedDeck && isSetup && !player.ready && player.hand.length === 0 && visibleDeckCount === 0);
 
   useEffect(() => {
     if (gameover) {
       void onMatchComplete?.({ reason: gameover.reason, winner: gameover.winner });
     }
   }, [gameover?.reason, gameover?.winner, onMatchComplete]);
+
+  useEffect(() => {
+    if (!selectedDeck || !isSetup || player.ready || player.hand.length > 0 || visibleDeckCount > 0 || player.active || player.bench.length > 0) {
+      return;
+    }
+    moves.setPlayerDeck(selectedDeck.cardIds, selectedDeck.label);
+  }, [isSetup, moves, player.active, player.bench.length, player.hand.length, player.ready, selectedDeck, visibleDeckCount]);
 
   const toggleOpeningBench = (index: number) => {
     setOpeningBenchIndexes((current) => {
@@ -503,6 +516,8 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
       <h2>Opening setup</h2>
       {player.ready ? (
         <p>Player {actingPlayer} is ready. Switch viewers so the other player can choose their opening Pokemon.</p>
+      ) : isLoadingSelectedDeck ? (
+        <p>Loading {selectedDeck?.label} into this match...</p>
       ) : (
         <>
           <p>Drag one Basic Pokemon onto your Active spot and up to five more onto your Bench, then confirm.</p>
@@ -626,8 +641,8 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
     <main>
       <header className="hero">
         <div>
-          <h1>Pokemon TCG Rules Engine</h1>
-          <p>Phase: {ctx.phase ?? 'none'} | Current player: {ctx.currentPlayer} | Playmat: {G.playmatId}</p>
+          <h1>{G.matchName}</h1>
+          <p>{G.matchType} | Phase: {ctx.phase ?? 'none'} | Current player: {ctx.currentPlayer} | Playmat: {G.playmatId}</p>
           <p>Viewing as Player {actingPlayer}. Hidden hands, decks, and Prize cards are filtered by boardgame.io playerView.</p>
         </div>
         {G.stadium && <div className="stadium">Stadium: {G.stadium.name}</div>}

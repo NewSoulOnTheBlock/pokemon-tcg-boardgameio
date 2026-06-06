@@ -63,6 +63,32 @@ function drawOpeningHandWithMulligans(player: ReturnType<typeof makePlayer>, shu
   }
 }
 
+function playerHasSelectedDeck(player: ReturnType<typeof makePlayer>): boolean {
+  return player.ready
+    || player.deck.length > 0
+    || player.hand.length > 0
+    || player.discard.length > 0
+    || player.prizeCards.length > 0
+    || player.bench.length > 0
+    || Boolean(player.active);
+}
+
+const setPlayerDeck: Move<PokemonTCGState> = ({ G, random, playerID }, cardIds: string[], label: string) => {
+  const pid = ensurePlayer(playerID);
+  if (!pid || !Array.isArray(cardIds) || cardIds.length === 0) return INVALID_MOVE;
+
+  const player = G.players[pid];
+  if (playerHasSelectedDeck(player)) return INVALID_MOVE;
+
+  const deck = makeDeck(cardIds);
+  if (!deck.some(isBasicPokemon)) return INVALID_MOVE;
+
+  player.deck = random.Shuffle(deck);
+  drawOpeningHandWithMulligans(player, random.Shuffle);
+  G.deckLabels[pid] = label.trim() || `Player ${pid} deck`;
+  appendLog(G, `Player ${pid} selected ${G.deckLabels[pid]}.`);
+};
+
 const chooseOpeningPokemon: Move<PokemonTCGState> = ({ G, ctx, playerID }, activeHandIndex: number, benchHandIndexes: number[] = []) => {
   const pid = ensurePlayer(playerID);
   if (!pid) return INVALID_MOVE;
@@ -311,14 +337,20 @@ export const PokemonTCG: Game<PokemonTCGState> = {
   minPlayers: 2,
   maxPlayers: 2,
   setup: ({ random }, setupData: PokemonTCGSetupData | undefined): PokemonTCGState => {
-    const deck0 = makeDeck(setupData?.seedDecks?.['0'] ?? DEFAULT_DECK_0);
-    const deck1 = makeDeck(setupData?.seedDecks?.['1'] ?? DEFAULT_DECK_1);
+    const deck0Ids = setupData?.seedDecks ? setupData.seedDecks['0'] : DEFAULT_DECK_0;
+    const deck1Ids = setupData?.seedDecks ? setupData.seedDecks['1'] : DEFAULT_DECK_1;
+    const deck0 = deck0Ids ? makeDeck(deck0Ids) : [];
+    const deck1 = deck1Ids ? makeDeck(deck1Ids) : [];
     const shouldShuffle = setupData?.shuffleDecks !== false;
     const shuffle = shouldShuffle ? random.Shuffle : <T,>(cards: T[]) => [...cards];
     const player0 = makePlayer(shuffle(deck0));
     const player1 = makePlayer(shuffle(deck1));
-    drawOpeningHandWithMulligans(player0, shuffle);
-    drawOpeningHandWithMulligans(player1, shuffle);
+    if (deck0.length > 0) {
+      drawOpeningHandWithMulligans(player0, shuffle);
+    }
+    if (deck1.length > 0) {
+      drawOpeningHandWithMulligans(player1, shuffle);
+    }
 
     const firstPlayer = setupData?.firstPlayer ?? (random.Die(2) === 1 ? '0' : '1');
     const playOrder: PlayerID[] = firstPlayer === '0' ? ['0', '1'] : ['1', '0'];
@@ -326,6 +358,9 @@ export const PokemonTCG: Game<PokemonTCGState> = {
 
     return {
       players: { '0': player0, '1': player1 },
+      deckLabels: { ...setupData?.deckLabels },
+      matchName: setupData?.matchName?.trim() || 'Pokemon Match',
+      matchType: setupData?.matchType ?? 'Casual',
       playmatId,
       playOrder,
       firstPlayer,
@@ -338,6 +373,10 @@ export const PokemonTCG: Game<PokemonTCGState> = {
     setup: {
       start: true,
       moves: {
+        setPlayerDeck: {
+          move: setPlayerDeck,
+          client: false,
+        },
         chooseOpeningPokemon: {
           move: chooseOpeningPokemon,
           client: false,

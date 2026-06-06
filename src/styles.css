@@ -365,10 +365,11 @@ button:disabled {
   align-items: end;
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(180px, 1fr)) auto;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(140px, 0.8fr) minmax(180px, 1fr) auto;
 }
 
-.deck-select {
+.deck-select,
+.match-name-field {
   min-width: 0;
 }
 
