@@ -1,0 +1,856 @@
+:root {
+  color: #1d2433;
+  background: #f5f7fb;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+input,
+select {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 800;
+}
+
+main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.viewer-switch {
+  align-items: center;
+  background: #0f172a;
+  color: white;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 10px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.danger {
+  background: #dc2626;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-topbar {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.96);
+  color: white;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 18px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-topbar nav,
+.account-pill,
+.wallet-actions,
+.starter-row,
+.filters {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.brand-button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.account-pill {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 4px;
+}
+
+.nav-active {
+  background: #f59e0b;
+  color: #111827;
+}
+
+.signin-page,
+.hub-page,
+.content-page {
+  margin: 0 auto;
+  max-width: 1180px;
+  padding: 24px;
+}
+
+.signin-page {
+  align-items: center;
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.72), rgba(15, 23, 42, 0.18)),
+    url('/signin-background.jpg') center / cover no-repeat;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  max-width: none;
+  min-height: 100vh;
+}
+
+.signin-card,
+.hub-hero,
+.hub-tile,
+.panel {
+  background: white;
+  border: 1px solid #d8dfeb;
+  border-radius: 20px;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.12);
+}
+
+.signin-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 560px;
+  padding: 28px;
+}
+
+.eyebrow {
+  color: #2563eb;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.primary-cta {
+  background: linear-gradient(90deg, #f97316, #facc15);
+  color: #111827;
+}
+
+.success {
+  color: #15803d;
+  font-weight: 800;
+}
+
+.error,
+.issues {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.wallet-list {
+  color: #64748b;
+  display: grid;
+  font-size: 0.85rem;
+  gap: 4px;
+}
+
+.hub-hero {
+  align-items: center;
+  background:
+    radial-gradient(circle at top left, rgba(250, 204, 21, 0.35), transparent 34%),
+    linear-gradient(135deg, #ffffff, #eff6ff);
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding: 28px;
+}
+
+.hub-hero h1,
+.signin-card h1,
+.content-page h1 {
+  margin: 8px 0;
+}
+
+.section-subtitle {
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 6px 0 0;
+}
+
+.hub-grid,
+.starter-grid,
+.booster-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.hub-tile {
+  color: #111827;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 140px;
+  padding: 20px;
+  text-align: left;
+}
+
+.hub-tile strong {
+  font-size: 1.1rem;
+}
+
+.content-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.profile-panel,
+.section-heading {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.deck-valid,
+.deck-invalid {
+  border-radius: 999px;
+  font-weight: 900;
+  padding: 8px 12px;
+}
+
+.deck-valid {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.deck-invalid {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.starter-row button,
+.starter-grid button {
+  background: var(--energy);
+  color: var(--ink, #111827);
+}
+
+.deckbuilder-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  margin: 16px 0;
+}
+
+.deck-list {
+  background: #f8fafc;
+  border: 1px solid #d8dfeb;
+  border-radius: 14px;
+  max-height: 520px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.deck-list div {
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+}
+
+.deck-list span {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.deck-list-thumb {
+  border-radius: 4px;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.16);
+  flex: 0 0 auto;
+  height: 34px;
+  object-fit: contain;
+  width: 24px;
+}
+
+.card-pool {
+  min-width: 0;
+}
+
+.card-pool-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.builder-card,
+.booster-card {
+  background: #f8fafc;
+  border: 1px solid #d8dfeb;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.builder-card {
+  overflow: visible;
+  position: relative;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.builder-card:hover,
+.builder-card:focus-within {
+  border-color: #2563eb;
+  box-shadow: 0 18px 38px rgba(37, 99, 235, 0.2);
+  transform: translateY(-4px);
+  z-index: 50;
+}
+
+.builder-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 3px;
+}
+
+.builder-card-owned {
+  border-color: #f59e0b;
+  box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.builder-card-art {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 220px;
+  position: relative;
+}
+
+.builder-card-art > img {
+  border-radius: 10px;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.2);
+  display: block;
+  max-height: 220px;
+  max-width: 158px;
+  object-fit: contain;
+  width: 100%;
+}
+
+.builder-card-art-placeholder {
+  aspect-ratio: 63 / 88;
+  background: linear-gradient(135deg, #dbeafe, #eff6ff);
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: #1e3a8a;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 158px;
+  padding: 12px;
+  text-align: center;
+  width: 100%;
+}
+
+.builder-card-hover-preview {
+  bottom: calc(100% + 12px);
+  display: none;
+  left: 50%;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 90;
+}
+
+.builder-card:hover .builder-card-hover-preview,
+.builder-card:focus-within .builder-card-hover-preview {
+  display: block;
+}
+
+.builder-card-hover-preview img {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 28px 64px rgba(15, 23, 42, 0.42);
+  max-height: 72vh;
+  width: min(320px, 76vw);
+}
+
+.builder-card-copy-count {
+  background: #0f172a;
+  border-radius: 999px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.22);
+  color: white;
+  font-weight: 900;
+  padding: 5px 9px;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
+
+.builder-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.builder-card-info strong {
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.builder-card-info span {
+  color: #475569;
+  font-size: 0.84rem;
+}
+
+.builder-card-controls {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.deck-choice {
+  margin-top: 18px;
+}
+
+.starter-grid button {
+  border: 3px solid transparent;
+  min-height: 130px;
+  text-align: left;
+}
+
+.starter-grid .starter-selected {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.12);
+}
+
+.starter-grid button strong,
+.starter-grid button span {
+  display: block;
+}
+
+.starter-grid button span {
+  font-size: 0.84rem;
+  margin-top: 8px;
+}
+
+.checkbox-row {
+  align-items: center;
+  flex-direction: row;
+  margin: 12px 0;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.boosters-panel {
+  text-align: center;
+}
+
+.booster-pack {
+  align-items: center;
+  background: linear-gradient(135deg, #1d4ed8, #f59e0b);
+  border-radius: 22px;
+  color: white;
+  cursor: pointer;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 260px;
+  justify-content: center;
+  margin: 18px auto;
+  max-width: 190px;
+  padding: 20px;
+  width: 100%;
+}
+
+.booster-pack-busy {
+  cursor: wait;
+  filter: saturate(0.7);
+  opacity: 0.72;
+}
+
+.booster-card img {
+  align-self: center;
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.match-screen {
+  min-height: 100vh;
+}
+
+.hero,
+.actions,
+.player-summary,
+.log,
+.gameover {
+  background: white;
+  border: 1px solid #d8dfeb;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.hero {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.stadium,
+.gameover {
+  background: #fef3c7;
+  font-weight: 800;
+}
+
+.player-summaries {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.zone-stats,
+.bench,
+.action-group,
+.attacks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.zone-stats span,
+.pokemon,
+.hand-card {
+  border: 1px solid #d8dfeb;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.pokemon {
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+}
+
+.pokemon.empty {
+  color: #64748b;
+}
+
+.player-summary h3 {
+  margin-top: 0;
+}
+
+.action-group-hand {
+  align-items: stretch;
+  flex-direction: column;
+  width: 100%;
+}
+
+.action-hint {
+  color: #64748b;
+  margin: 0;
+}
+
+.match-playmat {
+  aspect-ratio: 1;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  border-radius: 18px;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.18);
+  margin: 0 auto 16px;
+  max-width: 900px;
+  overflow: hidden;
+  position: relative;
+  width: min(100%, 900px);
+}
+
+.mat-zone {
+  box-sizing: border-box;
+  display: flex;
+  position: absolute;
+  transform-origin: center;
+}
+
+.mat-card {
+  align-items: center;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.28);
+  border-radius: 7px;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18);
+  box-sizing: border-box;
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  font-size: clamp(0.45rem, 1.1vw, 0.72rem);
+  gap: 2px;
+  height: 100%;
+  justify-content: center;
+  line-height: 1.15;
+  overflow: hidden;
+  padding: 5px;
+  text-align: center;
+  width: 100%;
+}
+
+.mat-card strong {
+  font-size: clamp(0.55rem, 1.2vw, 0.78rem);
+}
+
+.mat-card-empty {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px dashed rgba(255, 255, 255, 0.65);
+  box-shadow: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 800;
+  text-shadow: 0 1px 3px rgba(15, 23, 42, 0.8);
+}
+
+.mat-stack {
+  font-weight: 800;
+}
+
+.mat-zone-active {
+  z-index: 2;
+}
+
+.mat-zone-stadium .mat-card {
+  border-radius: 6px;
+  font-size: clamp(0.42rem, 1vw, 0.66rem);
+  padding: 3px;
+}
+
+.hand-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  width: 100%;
+}
+
+.setup-hand-grid {
+  margin-bottom: 12px;
+}
+
+.hand-card {
+  align-items: stretch;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 10px;
+  min-width: 0;
+  overflow: visible;
+  position: relative;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  width: auto;
+}
+
+.hand-card:hover,
+.hand-card:focus-within {
+  border-color: #2563eb;
+  box-shadow: 0 14px 34px rgba(37, 99, 235, 0.18);
+  transform: translateY(-3px);
+  z-index: 40;
+}
+
+.hand-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 3px;
+}
+
+.hand-card-selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.card-art-frame {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 178px;
+  position: relative;
+}
+
+.card-art {
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.2);
+  display: block;
+  max-height: 178px;
+  max-width: 128px;
+  object-fit: contain;
+  width: 100%;
+}
+
+.card-art-placeholder {
+  align-items: center;
+  aspect-ratio: 63 / 88;
+  background: linear-gradient(135deg, #dbeafe, #eff6ff);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1e3a8a;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  max-width: 128px;
+  padding: 10px;
+  text-align: center;
+  width: 100%;
+}
+
+.card-hover-preview {
+  bottom: calc(100% + 12px);
+  display: none;
+  left: 50%;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 80;
+}
+
+.hand-card:hover .card-hover-preview,
+.hand-card:focus-within .card-hover-preview {
+  display: block;
+}
+
+.card-hover-preview img {
+  background: white;
+  border-radius: 14px;
+  box-shadow: 0 24px 58px rgba(15, 23, 42, 0.38);
+  max-height: 70vh;
+  width: min(280px, 72vw);
+}
+
+.hand-card-info,
+.hand-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hand-card-info strong {
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.hand-card-info span {
+  color: #475569;
+  font-size: 0.82rem;
+}
+
+.hand-card-info .hand-card-index {
+  color: #2563eb;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hand-card-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.hand-card-actions button {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+}
+
+.hand-card-note {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.log ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+@media (max-width: 900px) {
+  .player-summaries {
+    grid-template-columns: 1fr;
+  }
+
+  .app-topbar,
+  .hub-hero,
+  .profile-panel,
+  .section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .deckbuilder-layout {
+    grid-template-columns: 1fr;
+  }
+
+  main {
+    padding: 12px;
+  }
+
+  .hand-grid {
+    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  }
+
+  .card-art-frame {
+    min-height: 150px;
+  }
+
+  .card-art,
+  .card-art-placeholder {
+    max-width: 108px;
+  }
+
+  .card-hover-preview img {
+    width: min(230px, 78vw);
+  }
+}
