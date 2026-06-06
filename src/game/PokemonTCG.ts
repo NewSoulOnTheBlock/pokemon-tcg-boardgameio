@@ -337,6 +337,22 @@ const pass: Move<PokemonTCGState> = ({ G, events, random, playerID }) => {
   events.endTurn();
 };
 
+// Forfeit / quit-out move. Either player can call it at any time during
+// either phase (handled via per-phase stages below). The opponent is
+// declared the winner, which trips the top-level endIf and triggers the
+// normal match-completion flow on the client (records win/loss, fires
+// the wager-settlement modal, etc.). Idempotent — a second concede after
+// G.winner is already set is a no-op so simultaneous exits don't crash.
+const concede: Move<PokemonTCGState> = ({ G, playerID }) => {
+  if (G.winner) return;
+  const pid = ensurePlayer(playerID);
+  if (!pid) return INVALID_MOVE;
+  const winner = opponentOf(pid);
+  G.winner = winner;
+  G.winReason = `Player ${pid} left the match — Player ${winner} wins by forfeit.`;
+  appendLog(G, G.winReason);
+};
+
 export const PokemonTCG: Game<PokemonTCGState> = {
   name: 'pokemon-tcg',
   minPlayers: 2,
@@ -391,6 +407,7 @@ export const PokemonTCG: Game<PokemonTCGState> = {
           move: chooseOpeningPokemon,
           client: false,
         },
+        concede,
       },
       turn: {
         activePlayers: { all: Stage.NULL },
@@ -416,9 +433,20 @@ export const PokemonTCG: Game<PokemonTCGState> = {
         retreat,
         attack,
         pass,
+        concede,
       },
       turn: {
         order: TurnOrder.CUSTOM_FROM('playOrder'),
+        // Keep the current player on Stage.NULL so they retain access to
+        // every play-phase move. Put the off-turn player on the 'waiting'
+        // stage which only allows concede — that's what lets them quit
+        // mid-turn and award the win to the player still in the game.
+        activePlayers: { currentPlayer: Stage.NULL, others: 'waiting' },
+        stages: {
+          waiting: {
+            moves: { concede },
+          },
+        },
         onBegin: ({ G, ctx }) => {
           beginPlayerTurn(G, ctx);
         },

@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
 import { CardImage as SharedCardImage } from './components/CardImage';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
@@ -335,6 +335,30 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
   const isLoadingSelectedDeck = Boolean(selectedDeck && isSetup && !player.ready && player.hand.length === 0 && visibleDeckCount === 0);
   const winnerWallet = gameover?.winner ? G.walletAddresses?.[gameover.winner] : undefined;
   const isWager = G.matchType === 'Wager' && G.wagerAmount > 0;
+
+  // Forfeit guard: if the player closes the tab, navigates away, or clicks
+  // Exit (which unmounts MatchClient → PokemonClient → PokemonBoard), fire
+  // the concede move so the opponent is declared the winner. The cleanup
+  // runs while the bgio socket is still open (React tears down children
+  // before parents), so the move flushes to the server before disconnect.
+  // Best-effort only — a hard network drop or browser kill can't deliver
+  // the message; the opponent's client will sit waiting in that case.
+  const concededRef = useRef(false);
+  useEffect(() => {
+    function handleUnload() {
+      if (gameover || concededRef.current) return;
+      concededRef.current = true;
+      try { moves.concede(); } catch { /* ignore — page is going away */ }
+    }
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      if (!gameover && !concededRef.current) {
+        concededRef.current = true;
+        try { moves.concede(); } catch { /* socket may already be tearing down */ }
+      }
+    };
+  }, [gameover, moves]);
 
   useEffect(() => {
     if (gameover) {

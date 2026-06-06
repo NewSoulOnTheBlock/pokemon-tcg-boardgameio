@@ -185,4 +185,26 @@ describe('PokemonTCG', () => {
 
     expect(stateOf(client).players[current].active?.attachedEnergy.length).toBe(before + 1);
   });
+
+  it('lets the off-turn player concede so the player still in the match wins', () => {
+    const clients = makeClients('forfeit-off-turn');
+    chooseOpeningForBoth(clients);
+
+    // firstPlayer goes first in the play phase. The OTHER player concedes
+    // while it's not their turn — they're in the 'waiting' stage where
+    // only concede is allowed.
+    const current = stateOf(clients.p0).firstPlayer;
+    const offTurnClient = current === '0' ? clients.p1 : clients.p0;
+    const offTurnPlayer = current === '0' ? '1' : '0';
+
+    offTurnClient.moves.concede();
+
+    const G = stateOf(clients.p0);
+    expect(G.winner).toBe(current);
+    expect(G.winReason).toContain('forfeit');
+    expect(clients.p0.getState()?.ctx.gameover).toEqual({ winner: current, reason: G.winReason });
+    expect(clients.p1.getState()?.ctx.gameover).toEqual({ winner: current, reason: G.winReason });
+    // The off-turn player should be marked as loser (current player wins).
+    expect(G.winner).not.toBe(offTurnPlayer);
+  });
 });
