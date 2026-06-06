@@ -3,7 +3,8 @@ import type { LobbyAPI } from 'boardgame.io';
 import { LobbyClient } from 'boardgame.io/client';
 import type { BoardProps } from 'boardgame.io/react';
 import { Client } from 'boardgame.io/react';
-import { SocketIO } from 'boardgame.io/multiplayer';
+import { Local, SocketIO } from 'boardgame.io/multiplayer';
+import { RandomBot } from 'boardgame.io/ai';
 import {
   fetchLeaderboard,
   loginProfile,
@@ -44,7 +45,9 @@ import {
 } from './wallet';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'match';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'bot' | 'match';
+
+const NEWS_URL = 'https://x.com/pokemasterstcg';
 
 interface MatchConfig {
   matchID: string;
@@ -452,15 +455,16 @@ function Shell({
           <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
         </button>
         <nav>
-          {(['home', 'profile', 'matchmaking', 'boosters'] as Page[]).map((target) => (
+          {(['home', 'profile', 'matchmaking', 'bot', 'boosters'] as Page[]).map((target) => (
             <button
               className={page === target ? 'nav-active' : ''}
               key={target}
               onClick={() => onNavigate(target)}
             >
-              {target === 'matchmaking' ? 'Matchmaking' : target[0].toUpperCase() + target.slice(1)}
+              {target === 'matchmaking' ? 'Matchmaking' : target === 'bot' ? 'Vs Bot' : target[0].toUpperCase() + target.slice(1)}
             </button>
           ))}
+          <a className="nav-news" href={NEWS_URL} target="_blank" rel="noreferrer">News ↗</a>
         </nav>
         <div className="account-pill">
           <span>{profile.wallet ? shortAddr(profile.wallet.address) : profile.name}</span>
@@ -569,6 +573,10 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
             <strong>Matchmaking</strong>
             <span>Create an online match or accept an open challenge.</span>
           </button>
+          <button className="home-menu-button" onClick={() => onNavigate('bot')}>
+            <strong>Play vs Bot</strong>
+            <span>Practice offline against a CPU opponent — no waiting for a player.</span>
+          </button>
           <button className="home-menu-button" onClick={() => onNavigate('profile')}>
             <strong>Profile + Deckbuilder</strong>
             <span>Manage your profile and custom deck library.</span>
@@ -577,6 +585,15 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
             <strong>Boosters</strong>
             <span>Open packs for {PACK_PRICE_SOL} SOL and grow your collection.</span>
           </button>
+          <a
+            className="home-menu-button home-news-button"
+            href={NEWS_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <strong>News ↗</strong>
+            <span>Patch notes and announcements on x.com/pokemasterstcg.</span>
+          </a>
         </div>
       </section>
     </main>
@@ -1293,6 +1310,109 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
   );
 }
 
+function pickBotDeckLabel(playerDeckLabel: string): { cardIds: string[]; label: string } {
+  // Bot defaults to a different starter than the player so the matchup has
+  // some flavour. Falls back to Fire vs Grass when there's no obvious pick.
+  const playerEnergy = STARTER_ENERGY_TYPES.find((type) => playerDeckLabel.startsWith(type));
+  const candidates = STARTER_ENERGY_TYPES.filter((type) => type !== playerEnergy);
+  const choice = candidates[Math.floor(Math.random() * candidates.length)] ?? 'Fire';
+  return { cardIds: STARTER_DECKS[choice], label: `${choice} CPU` };
+}
+
+function BotMatchPage({ profile, onExit }: { profile: ProfileState; onExit: () => void }) {
+  const deckOptions = useMemo(() => deckOptionsForProfile(profile), [profile]);
+  const [deckId, setDeckId] = useState(() => firstValidDeckId(deckOptions));
+  const [activeMatch, setActiveMatch] = useState<{
+    seed: string;
+    playerDeck: DeckPayload;
+    botDeck: DeckPayload;
+  } | null>(null);
+
+  const selectedDeck = deckOptionById(deckOptions, deckId);
+
+  const BotClient = useMemo(() => {
+    if (!activeMatch) return null;
+    // boardgame.io's Client doesn't take setupData as a prop — for local
+    // single-player matches we bake the deck IDs into the game's setup by
+    // wrapping it, then hand the customised game to the Client factory.
+    const setupData: MatchSetupData = {
+      matchName: `${profile.name} vs CPU`,
+      matchType: 'Casual',
+      seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': activeMatch.botDeck.cardIds },
+      deckLabels: { '0': activeMatch.playerDeck.label, '1': activeMatch.botDeck.label },
+    };
+    const baseSetup = PokemonTCG.setup;
+    if (!baseSetup) return null;
+    const customisedGame = {
+      ...PokemonTCG,
+      setup: (ctx: Parameters<typeof baseSetup>[0]) => baseSetup(ctx, setupData),
+    };
+    return Client({
+      game: customisedGame,
+      board: PokemonBoard,
+      numPlayers: 2,
+      multiplayer: Local({ bots: { '1': RandomBot } }),
+      loading: () => <div className="match-loading">Dealing out the CPU match...</div>,
+      debug: false,
+    });
+  }, [activeMatch, profile.name]);
+
+  function startBotMatch() {
+    if (!selectedDeck || selectedDeck.issues.length > 0) return;
+    const botDeck = pickBotDeckLabel(selectedDeck.label);
+    setActiveMatch({
+      seed: `bot-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      playerDeck: { cardIds: selectedDeck.cardIds, label: selectedDeck.label },
+      botDeck: { cardIds: botDeck.cardIds, label: botDeck.label },
+    });
+  }
+
+  if (!activeMatch || !BotClient) {
+    return (
+      <main className="content-page bot-setup-page">
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">CPU practice</p>
+              <h1>Play vs Bot</h1>
+              <p className="section-subtitle">A local match — your deck against a CPU opponent. No payments, no network round-trip, no rating changes.</p>
+            </div>
+            <button onClick={onExit}>← Home</button>
+          </div>
+          <div className="bot-setup-controls">
+            <DeckSelect title="Your deck" value={deckId} options={deckOptions} onChange={setDeckId} />
+            <button
+              className="primary-cta"
+              disabled={!selectedDeck || selectedDeck.issues.length > 0}
+              onClick={startBotMatch}
+            >
+              Start CPU match
+            </button>
+          </div>
+          {selectedDeck?.issues.length ? (
+            <ul className="issues">
+              {selectedDeck.issues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          ) : null}
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <div className="match-screen">
+      <div className="viewer-switch">
+        <button onClick={onExit}>← Exit match</button>
+        <span className="viewer-match-title">{profile.name} vs CPU</span>
+        <span className="match-type-badge match-type-badge-Casual">CPU</span>
+        <span>You play {activeMatch.playerDeck.label}; CPU plays {activeMatch.botDeck.label}</span>
+        <button onClick={() => setActiveMatch(null)}>Choose a different deck</button>
+      </div>
+      <BotClient matchID={activeMatch.seed} playerID="0" />
+    </div>
+  );
+}
+
 function MatchClient({
   config,
   onExit,
@@ -1395,6 +1515,10 @@ export default function App() {
         profile={profile}
       />
     );
+  }
+
+  if (page === 'bot') {
+    return <BotMatchPage profile={profile} onExit={() => setPage('home')} />;
   }
 
   return (

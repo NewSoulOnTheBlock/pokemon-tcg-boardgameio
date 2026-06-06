@@ -381,6 +381,68 @@ button:disabled {
   color: var(--accent-gold-soft);
 }
 
+.nav-news {
+  align-items: center;
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  border-radius: var(--r-pill);
+  color: var(--accent-cyan);
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 7px 14px;
+  text-decoration: none;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+
+.nav-news:hover {
+  background: rgba(34, 211, 238, 0.22);
+  border-color: var(--accent-cyan);
+  color: var(--ink-primary);
+}
+
+.home-news-button {
+  align-items: flex-start;
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  color: var(--ink-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  text-decoration: none;
+}
+
+.home-news-button:hover {
+  background: rgba(34, 211, 238, 0.18);
+  border-color: var(--accent-cyan);
+  color: var(--ink-primary);
+}
+
+.home-news-button strong {
+  color: var(--accent-cyan);
+}
+
+.home-news-button span {
+  color: inherit;
+  font-size: 0.82rem;
+  font-weight: 500;
+  opacity: 0.78;
+}
+
+.bot-setup-page {
+  max-width: 720px;
+}
+
+.bot-setup-controls {
+  align-items: end;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  margin-top: 16px;
+}
+
 .brand-button {
   background: transparent;
   border: 1px solid transparent;

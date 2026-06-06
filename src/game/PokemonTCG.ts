@@ -424,23 +424,55 @@ export const PokemonTCG: Game<PokemonTCGState> = {
       if (!pid) return [];
       const player = G.players[pid];
 
+      // ----- Setup phase: pick an Active Basic + optionally bench more ---
       if (ctx.phase === 'setup') {
-        const activeIndex = player.hand.findIndex(isBasicPokemon);
-        return activeIndex >= 0 ? [{ move: 'chooseOpeningPokemon' }] : [];
+        if (player.ready) return [];
+        const basicIndexes: number[] = [];
+        player.hand.forEach((card, index) => {
+          if (isBasicPokemon(card)) basicIndexes.push(index);
+        });
+        if (basicIndexes.length === 0) return [];
+        const [activeIndex, ...benchCandidates] = basicIndexes;
+        const benchIndexes = benchCandidates.slice(0, 2);
+        return [{ move: 'chooseOpeningPokemon', args: [activeIndex, benchIndexes] }];
       }
 
+      // ----- Not our turn during play -----
       if (ctx.phase !== 'play' || ctx.currentPlayer !== pid) {
         return [];
       }
 
-      const moves = [{ move: 'pass' }];
-      if (player.active) {
-        player.active.card.attacks.forEach((candidate, index) => {
-          if (canPayEnergyCost(player.active!.attachedEnergy, candidate.cost)) {
-            moves.push({ move: `attack:${index}` });
+      const moves: Array<{ move: string; args?: unknown[] }> = [];
+
+      // Bench any Basics we're still holding so we have backups.
+      if (player.bench.length < 5) {
+        player.hand.forEach((card, index) => {
+          if (isBasicPokemon(card)) {
+            moves.push({ move: 'benchBasic', args: [index] });
           }
         });
       }
+
+      // Attach one Energy to the Active Pokemon if we have one and haven't yet.
+      if (player.active && !player.energyAttachedThisTurn) {
+        const energyIndex = player.hand.findIndex(isEnergy);
+        if (energyIndex >= 0) {
+          moves.push({ move: 'attachEnergy', args: [energyIndex, 'active'] });
+        }
+      }
+
+      // Attack with any attack we can afford.
+      if (player.active) {
+        player.active.card.attacks.forEach((candidate, index) => {
+          if (canPayEnergyCost(player.active!.attachedEnergy, candidate.cost)) {
+            moves.push({ move: 'attack', args: [index] });
+          }
+        });
+      }
+
+      // Always allow a pass as a fallback.
+      moves.push({ move: 'pass' });
+
       return moves;
     },
   },
