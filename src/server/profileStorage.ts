@@ -292,6 +292,8 @@ export class PostgresProfileStorage implements ProfileStorage {
   async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
     // Casual matches are explicitly excluded so they show up in personal
     // history but don't affect the public ranking. Ranked + Wager both count.
+    // INNER JOIN + HAVING keeps profiles with zero ranked games out of the
+    // leaderboard so it doesn't show every signed-up user at 0/0/0/0.
     const { rows } = await this.pool.query<MatchLeaderboardEntry>(`
       SELECT
         p.user_id AS "userId",
@@ -301,8 +303,9 @@ export class PostgresProfileStorage implements ProfileStorage {
         COUNT(*) FILTER (WHERE m.result = 'loss' AND m.match_type <> 'Casual')::int AS losses,
         COUNT(*) FILTER (WHERE m.result = 'draw' AND m.match_type <> 'Casual')::int AS draws
       FROM ${PROFILES_TABLE} p
-      LEFT JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
+      INNER JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
       GROUP BY p.user_id, p.name
+      HAVING COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type <> 'Casual') > 0
       ORDER BY wins DESC, losses ASC, draws DESC, matches DESC, p.name ASC
       LIMIT 50
     `);
