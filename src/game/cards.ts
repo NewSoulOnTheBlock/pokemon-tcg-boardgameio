@@ -10,6 +10,7 @@ import type {
   TrainerCard,
   TrainerType,
 } from './types';
+import slimCardManifest from '../data/card-manifest.generated.json' with { type: 'json' };
 
 interface SourceAttack {
   name?: string;
@@ -51,36 +52,28 @@ interface SourceCard {
   text?: string;
 }
 
-type SourceCardModules = Record<string, SourceCard[]>;
+const POKEMON_IMAGE_BASE = 'https://images.pokemontcg.io';
 
-function loadNodeSourceCardModules(): SourceCardModules {
-  const nodeProcess = globalThis.process as (NodeJS.Process & { getBuiltinModule?: (id: string) => unknown }) | undefined;
-  const fs = nodeProcess?.getBuiltinModule?.('node:fs') as Pick<typeof import('node:fs'), 'readdirSync' | 'readFileSync'> | undefined;
-  if (!fs) {
-    throw new Error('Node filesystem APIs are required to load cards outside Vite.');
-  }
-
-  const cardsDirectory = new URL(
-    /* @vite-ignore */ '../data/pokemon-tcg-data/cards/en/',
-    import.meta.url,
-  );
-
-  return Object.fromEntries(
-    fs.readdirSync(cardsDirectory)
-      .filter((fileName) => fileName.endsWith('.json'))
-      .map((fileName) => [
-        `../data/pokemon-tcg-data/cards/en/${fileName}`,
-        JSON.parse(fs.readFileSync(new URL(fileName, cardsDirectory), 'utf8')) as SourceCard[],
-      ]),
-  );
+function deriveImagesForId(id: string, overrides?: { small?: string; large?: string }): { small?: string; large?: string } | undefined {
+  const dashIndex = id.indexOf('-');
+  if (dashIndex < 0) return overrides;
+  const setId = id.slice(0, dashIndex);
+  const number = id.slice(dashIndex + 1);
+  const images = {
+    small: overrides?.small ?? `${POKEMON_IMAGE_BASE}/${setId}/${number}.png`,
+    large: overrides?.large ?? `${POKEMON_IMAGE_BASE}/${setId}/${number}_hires.png`,
+  };
+  return images.small || images.large ? images : overrides;
 }
 
-const sourceCardModules: SourceCardModules = typeof window === 'undefined'
-  ? loadNodeSourceCardModules()
-  : import.meta.glob<SourceCard[]>('../data/pokemon-tcg-data/cards/en/*.json', {
-    eager: true,
-    import: 'default',
-  });
+function rehydrateManifestEntry(entry: SourceCard): SourceCard {
+  return {
+    ...entry,
+    images: deriveImagesForId(entry.id, entry.images),
+  };
+}
+
+const sourceCardList: SourceCard[] = (slimCardManifest as SourceCard[]).map(rehydrateManifestEntry);
 
 const POKEMON_TYPES = [
   'Grass',
@@ -165,6 +158,15 @@ function toPokemonType(value: string | undefined): PokemonType | undefined {
 
 function firstPokemonType(values: Array<string | undefined> | undefined, fallback: PokemonType = 'Colorless'): PokemonType {
   return values?.map(toPokemonType).find((type): type is PokemonType => Boolean(type)) ?? fallback;
+}
+
+function firstPokemonTypeOrUndefined(values: Array<string | undefined> | undefined): PokemonType | undefined {
+  if (!values) return undefined;
+  for (const value of values) {
+    const matched = toPokemonType(value);
+    if (matched) return matched;
+  }
+  return undefined;
 }
 
 function attackCost(cost: string[] | undefined): PokemonType[] {
@@ -265,8 +267,8 @@ function convertPokemon(source: SourceCard): PokemonCard {
     attacks: (source.attacks ?? []).map(convertAttack),
     retreatCost: source.convertedRetreatCost ?? source.retreatCost?.length ?? 0,
     evolvesFrom: source.evolvesFrom,
-    weakness: firstPokemonType(source.weaknesses?.map((weakness) => weakness.type), undefined),
-    resistance: firstPokemonType(source.resistances?.map((resistance) => resistance.type), undefined),
+    weakness: firstPokemonTypeOrUndefined(source.weaknesses?.map((weakness) => weakness.type)),
+    resistance: firstPokemonTypeOrUndefined(source.resistances?.map((resistance) => resistance.type)),
     prizeValue: prizeValueForRuleBox(ruleBox),
     tera: source.subtypes?.some((subtype) => normalize(subtype) === 'tera'),
     ruleBox,
@@ -275,9 +277,9 @@ function convertPokemon(source: SourceCard): PokemonCard {
 }
 
 function inferEnergyType(source: SourceCard): PokemonType {
-  const explicitType = firstPokemonType(source.types, undefined);
-  if (explicitType) {
-    return explicitType;
+  for (const candidate of source.types ?? []) {
+    const matched = toPokemonType(candidate);
+    if (matched) return matched;
   }
 
   return POKEMON_TYPES.find((type) => normalize(source.name).includes(normalize(type))) ?? 'Colorless';
@@ -338,7 +340,7 @@ function convertCard(source: SourceCard): Card | undefined {
 function buildCardLibrary(): Record<string, Card> {
   const library: Record<string, Card> = {};
 
-  for (const source of Object.values(sourceCardModules).flat()) {
+  for (const source of sourceCardList) {
     const card = convertCard(source);
     if (card) {
       library[card.id] = card;

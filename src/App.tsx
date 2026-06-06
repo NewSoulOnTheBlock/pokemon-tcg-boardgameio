@@ -5,6 +5,15 @@ import type { BoardProps } from 'boardgame.io/react';
 import { Client } from 'boardgame.io/react';
 import { SocketIO } from 'boardgame.io/multiplayer';
 import {
+  fetchLeaderboard,
+  loginProfile,
+  persistMatchRecord,
+  persistPackPurchase,
+  persistProfile,
+} from './api/profiles';
+import { MULTIPLAYER_SERVER } from './api/server';
+import { CardImage } from './components/CardImage';
+import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
   STARTER_DECKS,
@@ -29,7 +38,6 @@ import {
   connectEvm,
   connectSolana,
   detectSolanaWallets,
-  sendSolPayment,
   shortAddr,
   type ConnectedWallet,
 } from './wallet';
@@ -71,10 +79,6 @@ const PACK_PRICE_SOL = 0.1;
 const PACK_PAYMENT_RECIPIENT = import.meta.env.VITE_PACK_PAYMENT_RECIPIENT?.trim() ?? '';
 const SOLANA_RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com';
 const GAME_NAME = PokemonTCG.name ?? 'pokemon-tcg';
-const DEFAULT_MULTIPLAYER_SERVER = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-  ? `${window.location.protocol}//${window.location.hostname}:8000`
-  : window.location.origin;
-const MULTIPLAYER_SERVER = import.meta.env.VITE_BGIO_SERVER || DEFAULT_MULTIPLAYER_SERVER;
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
 const MATCH_TYPES: MatchType[] = ['Casual', 'Ranked', 'Wager'];
 const STARTER_COLLECTION = collectionFromCards(Object.values(STARTER_DECKS).flat());
@@ -157,67 +161,28 @@ function saveProfile(profile: ProfileState): void {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
-async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${MULTIPLAYER_SERVER}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init.headers,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json() as Promise<T>;
-}
-
-async function loginProfile(profile: ProfileState): Promise<ProfileState> {
-  const saved = await apiRequest<ProfileState>('/api/login', {
-    method: 'POST',
-    body: JSON.stringify({ profile }),
-  });
+async function loginAndStore(profile: ProfileState): Promise<ProfileState> {
+  const saved = await loginProfile(profile);
   saveProfile(saved);
   return saved;
 }
 
-async function persistProfile(profile: ProfileState): Promise<ProfileState> {
-  if (!profile.userId) {
-    throw new Error('Sign in again before saving your profile.');
-  }
-  const saved = await apiRequest<ProfileState>(`/api/profiles/${profile.userId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  });
+async function persistAndStore(profile: ProfileState): Promise<ProfileState> {
+  const saved = await persistProfile(profile);
   saveProfile(saved);
   return saved;
 }
 
-async function persistPackPurchase(profile: ProfileState, purchase: PackPurchase): Promise<ProfileState> {
-  if (!profile.userId) {
-    throw new Error('Sign in again before opening booster packs.');
-  }
-  const saved = await apiRequest<ProfileState>(`/api/profiles/${profile.userId}/packs`, {
-    method: 'POST',
-    body: JSON.stringify({ profile, purchase }),
-  });
+async function persistPackAndStore(profile: ProfileState, purchase: PackPurchase): Promise<ProfileState> {
+  const saved = await persistPackPurchase(profile, purchase);
   saveProfile(saved);
   return saved;
 }
 
-async function persistMatchRecord(profile: ProfileState, record: MatchRecord): Promise<ProfileState> {
-  if (!profile.userId) {
-    throw new Error('Sign in again before recording matches.');
-  }
-  const saved = await apiRequest<ProfileState>(`/api/profiles/${profile.userId}/matches`, {
-    method: 'POST',
-    body: JSON.stringify({ record }),
-  });
+async function persistMatchAndStore(profile: ProfileState, record: MatchRecord): Promise<ProfileState> {
+  const saved = await persistMatchRecord(profile, record);
   saveProfile(saved);
   return saved;
-}
-
-async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
-  return apiRequest<MatchLeaderboardEntry[]>('/api/leaderboard', {});
 }
 
 function cardLabel(card: Card): string {
@@ -227,28 +192,7 @@ function cardLabel(card: Card): string {
 }
 
 function DeckbuilderCardArt({ card }: { card: Card }) {
-  const thumbnail = card.images?.small ?? card.images?.large;
-  const preview = card.images?.large ?? card.images?.small;
-
-  if (!thumbnail) {
-    return (
-      <div className="builder-card-art builder-card-art-placeholder" aria-label={card.name}>
-        <strong>{card.name}</strong>
-        <span>{card.kind}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="builder-card-art">
-      <img src={thumbnail} alt={card.name} loading="lazy" decoding="async" />
-      {preview && (
-        <div className="builder-card-hover-preview" aria-hidden="true">
-          <img src={preview} alt="" loading="lazy" decoding="async" />
-        </div>
-      )}
-    </div>
-  );
+  return <CardImage card={card} className="builder-card-art" imageClassName="builder-card-image" />;
 }
 
 function deckCounts(cards: string[]): Record<string, number> {
@@ -457,7 +401,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
     setSigningIn(true);
     const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: name.trim() || 'PokemonTrainer', wallet };
     try {
-      onSignIn(await loginProfile(profile));
+      onSignIn(await loginAndStore(profile));
     } catch (err) {
       setError(`Could not load stored profile: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -592,7 +536,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
       deckLibrary: nextLibrary,
     };
     try {
-      const saved = await persistProfile(next);
+      const saved = await persistAndStore(next);
       onProfileChange(saved);
       setDeckLibrary(saved.deckLibrary);
       setEditingDeckId(savedDeck.id);
@@ -813,7 +757,7 @@ function MatchmakingPage({
       result: 'in_progress',
       startedAt: new Date().toISOString(),
     };
-    onProfileChange(await persistMatchRecord(profile, record));
+    onProfileChange(await persistMatchAndStore(profile, record));
   }
 
   async function createMatch() {
@@ -1061,6 +1005,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
 
     setBuying(true);
     try {
+      const { sendSolPayment } = await import('./walletPayment');
       const signature = await sendSolPayment({
         payerAddress: profile.wallet.address,
         recipientAddress: PACK_PAYMENT_RECIPIENT,
@@ -1079,7 +1024,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
           purchase,
         ],
       };
-      const saved = await persistPackPurchase(updated, purchase);
+      const saved = await persistPackAndStore(updated, purchase);
       onProfileChange(saved);
       setPack(next);
       setStatus(`Pack opened and ${cardIds.length} cards added to your collection. Signature: ${signature.slice(0, 8)}...${signature.slice(-8)}`);
@@ -1156,7 +1101,7 @@ function MatchClient({
       startedAt: startedRecord?.startedAt ?? new Date().toISOString(),
       completedAt: new Date().toISOString(),
     };
-    onProfileChange(await persistMatchRecord(profile, record));
+    onProfileChange(await persistMatchAndStore(profile, record));
   }, [config.matchID, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, onProfileChange, profile, recordedGameover]);
 
   const MatchBoard = useMemo(() => (

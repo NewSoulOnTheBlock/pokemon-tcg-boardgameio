@@ -4,3 +4,4 @@ storage
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+src/data/card-manifest.generated.json

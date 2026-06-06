@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { Context, Next } from 'koa';
 import { koaBody } from 'koa-body';
 import serve from 'koa-static';
 import { PokemonTCG } from './game/PokemonTCG';
@@ -14,9 +15,13 @@ const { FlatFile, Origins, Server } = require('boardgame.io/server') as typeof i
 const port = Number(process.env.PORT ?? 8000);
 const databaseUrl = process.env.DATABASE_URL;
 const storageDir = process.env.BGIO_STORAGE_DIR ?? './storage';
-const clientOrigin = process.env.CLIENT_ORIGIN;
-const origins = clientOrigin
-  ? [Origins.LOCALHOST_IN_DEVELOPMENT, clientOrigin]
+const allowOrigin = process.env.ALLOW_ORIGIN ?? process.env.CLIENT_ORIGIN ?? '';
+const allowedOrigins = allowOrigin
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const origins = allowedOrigins.length > 0
+  ? [Origins.LOCALHOST_IN_DEVELOPMENT, ...allowedOrigins]
   : Origins.LOCALHOST_IN_DEVELOPMENT;
 const db = databaseUrl
   ? new PostgresStorage({ connectionString: databaseUrl, ssl: postgresSslFromEnv() })
@@ -24,6 +29,8 @@ const db = databaseUrl
 const profileStorage = databaseUrl
   ? new PostgresProfileStorage(databaseUrl, postgresSslFromEnv())
   : new MemoryProfileStorage();
+const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
+const profileLabel = databaseUrl ? 'postgres' : 'memory';
 
 const server = Server({
   games: [PokemonTCG],
@@ -34,11 +41,31 @@ const server = Server({
 const distPath = fileURLToPath(new URL('../dist/', import.meta.url));
 const indexPath = fileURLToPath(new URL('../dist/index.html', import.meta.url));
 
-server.router.get('/health', (ctx) => {
-  ctx.body = 'ok';
+server.app.use(async (ctx: Context, next: Next) => {
+  try {
+    await next();
+  } catch (err) {
+    const status = typeof (err as { status?: unknown }).status === 'number' ? (err as { status: number }).status : 500;
+    if (status >= 500) {
+      console.error(`[api ${ctx.method} ${ctx.path}] ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+    }
+    ctx.status = status;
+    ctx.type = 'application/json';
+    ctx.body = { error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
-server.router.post('/api/login', koaBody(), async (ctx) => {
+const jsonBody = koaBody({ jsonLimit: '256kb' });
+
+server.router.get('/health', (ctx) => {
+  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel };
+});
+
+server.router.get('/api/health', (ctx) => {
+  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel };
+});
+
+server.router.post('/api/login', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState } | undefined;
   const profile = body?.profile;
   if (!profile?.name) {
@@ -48,7 +75,7 @@ server.router.post('/api/login', koaBody(), async (ctx) => {
   ctx.body = await profileStorage.login(profile);
 });
 
-server.router.put('/api/profiles/:userId', koaBody(), async (ctx) => {
+server.router.put('/api/profiles/:userId', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState } | undefined;
   const profile = body?.profile;
   if (!profile) {
@@ -58,7 +85,7 @@ server.router.put('/api/profiles/:userId', koaBody(), async (ctx) => {
   ctx.body = await profileStorage.saveProfile(ctx.params.userId, profile);
 });
 
-server.router.post('/api/profiles/:userId/packs', koaBody(), async (ctx) => {
+server.router.post('/api/profiles/:userId/packs', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState; purchase?: PackPurchase } | undefined;
   const profile = body?.profile;
   const purchase = body?.purchase;
@@ -69,7 +96,7 @@ server.router.post('/api/profiles/:userId/packs', koaBody(), async (ctx) => {
   ctx.body = await profileStorage.recordPack(ctx.params.userId, purchase, profile);
 });
 
-server.router.post('/api/profiles/:userId/matches', koaBody(), async (ctx) => {
+server.router.post('/api/profiles/:userId/matches', jsonBody, async (ctx) => {
   const body = ctx.request.body as { record?: MatchRecord } | undefined;
   const record = body?.record;
   if (!record?.matchID || !record.playerID) {
@@ -96,7 +123,9 @@ server.app.use(async (ctx, next) => {
 
 await profileStorage.connect();
 await server.run(port, () => {
-  console.log(`Pokemon TCG multiplayer server running at http://localhost:${port}`);
-  console.log(`Using ${databaseUrl ? 'Postgres' : 'FlatFile'} storage.`);
-  console.log(`Using ${databaseUrl ? 'Postgres' : 'memory'} profile storage.`);
+  console.log(`[pokemon-tcg] listening on http://localhost:${port}`);
+  console.log(`[pokemon-tcg] match storage: ${storageLabel} | profile storage: ${profileLabel}`);
+  if (allowedOrigins.length > 0) {
+    console.log(`[pokemon-tcg] additional CORS origins: ${allowedOrigins.join(', ')}`);
+  }
 });

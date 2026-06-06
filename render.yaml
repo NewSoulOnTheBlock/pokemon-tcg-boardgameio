@@ -1,0 +1,39 @@
+# Render blueprint for the Pokemon TCG multiplayer app.
+#
+# Apply via Render dashboard: New → Blueprint → point at the repo → Apply.
+# Render provisions one Node web service + one free Postgres DB, runs the
+# build, and starts the server. The Koa server serves both the static
+# Vite build (dist/) and the boardgame.io API + custom /api/* endpoints
+# from the same port, so no static-site service is required.
+
+services:
+  - type: web
+    name: pokemon-tcg-boardgameio
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm run server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pokemon-tcg-db
+          property: connectionString
+      - key: PGSSLMODE
+        value: require
+      - key: ALLOW_ORIGIN
+        sync: false
+      - key: BGIO_STORAGE_DIR
+        value: /tmp/bgio-storage
+
+databases:
+  - name: pokemon-tcg-db
+    plan: free
+    region: oregon
+    postgresMajorVersion: 16

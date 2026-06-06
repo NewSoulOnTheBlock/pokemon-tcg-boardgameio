@@ -1,5 +1,6 @@
 import { type CSSProperties, useEffect, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
+import { CardImage as SharedCardImage } from './components/CardImage';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
 
@@ -92,28 +93,7 @@ function CardImage({
   frameClassName: string;
   imageClassName: string;
 }) {
-  const thumbnail = card.images?.small ?? card.images?.large;
-  const preview = card.images?.large ?? card.images?.small;
-
-  if (!thumbnail) {
-    return (
-      <div className={`${frameClassName} card-art-placeholder`} aria-label={card.name}>
-        <strong>{card.name}</strong>
-        <span>{card.kind}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className={frameClassName}>
-      <img className={imageClassName} src={thumbnail} alt={card.name} loading="lazy" />
-      {preview && (
-        <div className="card-hover-preview" aria-hidden="true">
-          <img src={preview} alt="" loading="lazy" />
-        </div>
-      )}
-    </div>
-  );
+  return <SharedCardImage card={card} className={frameClassName} imageClassName={imageClassName} />;
 }
 
 function CardArt({ card }: { card: Card }) {
