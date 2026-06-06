@@ -1142,6 +1142,15 @@ button:disabled {
 
 .matchmaking-page {
   align-items: center;
+  background:
+    linear-gradient(180deg, rgba(5, 8, 16, 0.55) 0%, rgba(5, 8, 16, 0.7) 60%, rgba(5, 8, 16, 0.92) 100%),
+    url('/matchmaking-background.png') center / cover no-repeat fixed;
+  box-sizing: border-box;
+  margin: 0;
+  max-width: none;
+  min-height: calc(100vh - 65px);
+  padding: clamp(20px, 4vw, 64px);
+  width: 100%;
 }
 
 .matchmaking-center-panel,
