@@ -14,12 +14,14 @@
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
     "boardgame.io": "^0.50.2",
+    "koa-static": "^5.0.0",
     "node-persist": "^4.0.4",
     "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/koa-static": "^4.0.4",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.20.0",
     "@types/react": "^18.3.12",

@@ -18,7 +18,7 @@ npm test
 npm run build
 ```
 
-Run `npm run dev:server` in one terminal and `npm run dev` in another for online matches. The browser connects to `http://localhost:8000` by default; set `VITE_BGIO_SERVER=http://host:8000` for a remote lobby/game server.
+Run `npm run dev:server` in one terminal and `npm run dev` in another for online matches. Local Vite browsers connect to `http://localhost:8000` by default. In production, the browser uses the same origin as the hosted app; set `VITE_BGIO_SERVER=http://host:8000` only when the frontend and lobby/game server are hosted separately.
 
 The multiplayer server uses PostgreSQL when `DATABASE_URL` is set, otherwise it falls back to local FlatFile storage in `./storage` unless `BGIO_STORAGE_DIR` is set. On Render, add your Postgres database's Internal Database URL as `DATABASE_URL` on the web service. If your database URL requires SSL, set `PGSSLMODE=require`; use `PGSSLMODE=no-verify` only for providers with self-signed certificates.
 

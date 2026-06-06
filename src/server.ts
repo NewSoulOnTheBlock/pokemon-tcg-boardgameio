@@ -1,4 +1,7 @@
 import { createRequire } from 'node:module';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import serve from 'koa-static';
 import { PokemonTCG } from './game/PokemonTCG';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 
@@ -22,9 +25,22 @@ const server = Server({
   apiOrigins: origins,
   db,
 });
+const distPath = fileURLToPath(new URL('../dist/', import.meta.url));
+const indexPath = fileURLToPath(new URL('../dist/index.html', import.meta.url));
 
 server.router.get('/health', (ctx) => {
   ctx.body = 'ok';
+});
+
+server.app.use(serve(distPath));
+server.app.use(async (ctx, next) => {
+  await next();
+  const acceptsHtml = ctx.accepts('html');
+  if (ctx.status === 404 && ctx.method === 'GET' && acceptsHtml && existsSync(indexPath)) {
+    ctx.status = 200;
+    ctx.type = 'html';
+    ctx.body = readFileSync(indexPath, 'utf8');
+  }
 });
 
 await server.run(port, () => {

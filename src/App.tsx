@@ -58,7 +58,10 @@ const PACK_PRICE_SOL = 0.1;
 const PACK_PAYMENT_RECIPIENT = import.meta.env.VITE_PACK_PAYMENT_RECIPIENT?.trim() ?? '';
 const SOLANA_RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com';
 const GAME_NAME = PokemonTCG.name ?? 'pokemon-tcg';
-const MULTIPLAYER_SERVER = import.meta.env.VITE_BGIO_SERVER || `${window.location.protocol}//${window.location.hostname}:8000`;
+const DEFAULT_MULTIPLAYER_SERVER = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  ? `${window.location.protocol}//${window.location.hostname}:8000`
+  : window.location.origin;
+const MULTIPLAYER_SERVER = import.meta.env.VITE_BGIO_SERVER || DEFAULT_MULTIPLAYER_SERVER;
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
 const STARTER_COLLECTION = collectionFromCards(Object.values(STARTER_DECKS).flat());
 const DEFAULT_PROFILE: ProfileState = {
