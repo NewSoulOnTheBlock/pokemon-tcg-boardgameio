@@ -23,22 +23,33 @@ npm run build:server # rebuild dist-server/server.mjs only
 
 Open `http://localhost:5173` in two different browser windows for online matches — each window logs in as a separate profile, picks a deck, and creates or joins a match. In production the Vite build is served by the same Koa server as the API and socket.io, so the browser uses `window.location.origin`; only set `VITE_BGIO_SERVER` when the static client is hosted on a different origin than the game server.
 
-### Card data manifest + memory
+### Card data — Postgres source of truth
 
-The vendored Pokemon TCG dataset ships as ~25 MB of raw JSON across 168 files. To keep the production bundle and **server RAM** reasonable, `scripts/build-card-manifest.mjs` runs as a `prebuild` step and emits one slim `src/data/card-manifest.generated.json` containing only the fields the engine actually uses (image URLs follow the canonical `images.pokemontcg.io/<set>/<number>.png` pattern and are derived at runtime). The generated manifest is gitignored. Re-run `npm run build:cards` after pulling new upstream card data.
+The vendored Pokemon TCG dataset ships as ~25 MB of raw JSON across 168 files. `scripts/build-card-manifest.mjs` (`prebuild`) emits one slim `src/data/card-manifest.generated.json` (gitignored) that the server bundles for the **one-time** Postgres migration.
 
-The full `CARD_LIBRARY` (`src/game/cards.ts`) is built lazily via a `Proxy` so the server boot path (Koa + boardgame.io + Postgres + health probe) fits in ~90 MB RSS on Render starter; the per-card structure was also trimmed to the fields the rules engine and UI actually read (drops `artist`, `legalities`, `rules`, `subtypes`, `abilities`, etc.). The compiled `dist-server/server.mjs` runs under plain `node` in production via `npm start`, which removes the `tsx`/esbuild loader overhead and keeps boot RSS well under Render's 512 MB starter cap.
+Production lifecycle:
+
+1. **First boot** — `app_cards` is empty, so `src/server.ts` reads the bundled manifest, runs the conversion, populates the in-memory `CARD_LIBRARY`, then bulk-upserts ~20 000 rows into `app_cards`.
+2. **Every subsequent boot** — `app_cards` is populated, so the server reads cards from Postgres straight into `CARD_LIBRARY` and never touches the bundled manifest. The manifest stays on disk for disaster recovery; you can edit cards in Postgres directly and the next boot picks them up.
+3. **Browsers** — `src/main.tsx` shows a tiny boot splash, fetches `GET /api/cards/library` (~8.5 MB JSON, served with `Cache-Control: public, max-age=3600`), calls `initCardLibrary`, then dynamic-`import('./App')` so the UI's top-level `CANONICAL_CARDS` / `BOOSTERABLE_SETS` derivations all see a populated catalogue.
+
+Because the client never statically imports the manifest, the Vite client chunks dropped from 11.4 MB → ~430 KB (boot + App + vendors). The 8.5 MB card payload is fetched once and cached by the browser.
+
+When `DATABASE_URL` is not set the server uses a `MemoryCardStorage` that recomputes from the manifest on every boot — fine for local dev.
+
+Re-run `npm run build:cards` after pulling new upstream card data; on next deploy you can also `TRUNCATE app_cards` to force the bootstrap to re-import.
 
 ### Backend storage
 
 The multiplayer server uses PostgreSQL when `DATABASE_URL` is set, otherwise it falls back to local FlatFile storage in `./storage` (override with `BGIO_STORAGE_DIR`). When Postgres is configured the same database stores:
 
 - boardgame.io match state in `bgio_matches`
+- the canonical card catalogue in `app_cards` (~20 000 rows, populated on first boot)
 - profile/login records in `app_profiles`
 - opened booster pack history and pulled card IDs in `app_pack_purchases`
 - per-user match records in `app_match_records`
 
-`/api/health` returns `{ ok, storage, profileStorage }` for liveness checks.
+`/api/health` returns `{ ok, storage, profileStorage, cardStorage, cards }` for liveness checks.
 
 The app signs users in by wallet address when a wallet is connected, or by trainer name otherwise. LocalStorage is kept only as a browser cache/session handoff; the server profile is the source of truth after sign-in.
 
