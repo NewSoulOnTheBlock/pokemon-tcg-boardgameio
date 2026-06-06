@@ -238,8 +238,22 @@ button:disabled {
   gap: 18px;
 }
 
+.profile-page {
+  box-sizing: border-box;
+  max-width: none;
+  width: 100%;
+}
+
 .panel {
   padding: 20px;
+}
+
+.deckbuilder-panel {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 8px 0 0;
 }
 
 .profile-panel,
@@ -275,9 +289,10 @@ button:disabled {
 
 .deckbuilder-layout {
   display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(220px, 300px) 1fr;
-  margin: 16px 0;
+  gap: 22px;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  margin: 20px 0;
+  width: 100%;
 }
 
 .deck-list {
@@ -319,9 +334,9 @@ button:disabled {
 
 .card-pool-grid {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  max-height: 560px;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  max-height: none;
   overflow: auto;
   padding-right: 6px;
 }

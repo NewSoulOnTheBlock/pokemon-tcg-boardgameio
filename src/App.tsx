@@ -484,7 +484,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
   }
 
   return (
-    <main className="content-page">
+    <main className="content-page profile-page">
       <section className="panel profile-panel">
         <div>
           <p className="eyebrow">Trainer profile</p>
@@ -499,7 +499,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
         {error && <p className="error">{error}</p>}
       </section>
 
-      <section className="panel">
+      <section className="panel deckbuilder-panel">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Deckbuilder</p>
