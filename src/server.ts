@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { sep as pathSep } from 'node:path';
 import type { Context, Next } from 'koa';
 import { koaBody } from 'koa-body';
 import serve from 'koa-static';
@@ -400,13 +401,29 @@ server.router.post('/api/imports/scan', jsonBody, async (ctx) => {
   }
 });
 
-server.app.use(serve(distPath));
+// Serve hashed asset files with long-lived caching, but keep index.html
+// fresh on every load. Without this, a browser can hold onto an old
+// index.html that references vite hashed chunks (e.g. walletPayment-XXXX.js)
+// which no longer exist after a redeploy, producing a "Failed to fetch
+// dynamically imported module" error the moment the user triggers a
+// lazy import. The /assets/ chunks are content-hashed so they're safe to
+// cache forever; only the entry HTML needs no-store.
+server.app.use(serve(distPath, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else if (filePath.includes(`${pathSep}assets${pathSep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  },
+}));
 server.app.use(async (ctx, next) => {
   await next();
   const acceptsHtml = ctx.accepts('html');
   if (ctx.status === 404 && ctx.method === 'GET' && acceptsHtml && existsSync(indexPath)) {
     ctx.status = 200;
     ctx.type = 'html';
+    ctx.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     ctx.body = readFileSync(indexPath, 'utf8');
   }
 });

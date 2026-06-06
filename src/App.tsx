@@ -1308,7 +1308,21 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       const invoice = await buildBoosterInvoice(walletAddress);
 
       // 2. User signs + submits the transaction through their wallet.
-      const { signAndSendBase64Transaction } = await import('./walletPayment');
+      //    The dynamic import can 404 if the user's cached index.html
+      //    references a stale chunk hash from a previous deploy. Detect
+      //    that and force a reload so they get the fresh bundle.
+      let signAndSendBase64Transaction: typeof import('./walletPayment')['signAndSendBase64Transaction'];
+      try {
+        ({ signAndSendBase64Transaction } = await import('./walletPayment'));
+      } catch (importErr) {
+        const message = importErr instanceof Error ? importErr.message : String(importErr);
+        if (/dynamically imported module|Failed to fetch|Loading chunk/i.test(message)) {
+          setError('A new version of the app was deployed. Reloading...');
+          window.setTimeout(() => window.location.reload(), 1200);
+          return;
+        }
+        throw importErr;
+      }
       setStatus(`Approve the ${PACK_PRICE_LABEL} payment in your wallet...`);
       const paymentSignature = await signAndSendBase64Transaction({
         payerAddress: walletAddress,
