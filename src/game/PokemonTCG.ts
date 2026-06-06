@@ -73,7 +73,7 @@ function playerHasSelectedDeck(player: ReturnType<typeof makePlayer>): boolean {
     || Boolean(player.active);
 }
 
-const setPlayerDeck: Move<PokemonTCGState> = ({ G, random, playerID }, cardIds: string[], label: string) => {
+const setPlayerDeck: Move<PokemonTCGState> = ({ G, random, playerID }, cardIds: string[], label: string, walletAddress?: string) => {
   const pid = ensurePlayer(playerID);
   if (!pid || !Array.isArray(cardIds) || cardIds.length === 0) return INVALID_MOVE;
 
@@ -86,6 +86,9 @@ const setPlayerDeck: Move<PokemonTCGState> = ({ G, random, playerID }, cardIds: 
   player.deck = random.Shuffle(deck);
   drawOpeningHandWithMulligans(player, random.Shuffle);
   G.deckLabels[pid] = label.trim() || `Player ${pid} deck`;
+  if (walletAddress) {
+    G.walletAddresses[pid] = walletAddress;
+  }
   appendLog(G, `Player ${pid} selected ${G.deckLabels[pid]}.`);
 };
 
@@ -359,8 +362,12 @@ export const PokemonTCG: Game<PokemonTCGState> = {
     return {
       players: { '0': player0, '1': player1 },
       deckLabels: { ...setupData?.deckLabels },
+      walletAddresses: { ...setupData?.walletAddresses },
       matchName: setupData?.matchName?.trim() || 'Pokemon Match',
       matchType: setupData?.matchType ?? 'Casual',
+      wagerAmount: typeof setupData?.wagerAmount === 'number' && setupData.wagerAmount > 0
+        ? setupData.wagerAmount
+        : 0,
       playmatId,
       playOrder,
       firstPlayer,

@@ -5,8 +5,9 @@ import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
 
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
-  onMatchComplete?: (payload: { reason?: string; winner?: PlayerID }) => void | Promise<void>;
+  onMatchComplete?: (payload: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => void | Promise<void>;
   playerID: string | null;
+  playerWallet?: string;
   selectedDeck?: {
     cardIds: string[];
     label: string;
@@ -317,7 +318,7 @@ function PlayerSummary({ id, player }: { id: PlayerID; player: PlayerState }) {
   );
 }
 
-export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, selectedDeck }: PokemonBoardProps) {
+export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerWallet, selectedDeck }: PokemonBoardProps) {
   const actingPlayer = (playerID === '1' ? '1' : '0') as PlayerID;
   const player = G.players[actingPlayer];
   const isCurrent = ctx.currentPlayer === actingPlayer;
@@ -326,22 +327,26 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, selecte
   const [openingActiveIndex, setOpeningActiveIndex] = useState<number | null>(null);
   const [openingBenchIndexes, setOpeningBenchIndexes] = useState<Array<number | undefined>>([]);
   const [boardHint, setBoardHint] = useState('');
+  const [wagerCopied, setWagerCopied] = useState(false);
+  const [wagerDismissed, setWagerDismissed] = useState(false);
   const playmatImage = PLAYMAT_IMAGE_BY_ID[G.playmatId];
   const visibleDeckCount = player.deckCount ?? player.deck.length;
   const isLoadingSelectedDeck = Boolean(selectedDeck && isSetup && !player.ready && player.hand.length === 0 && visibleDeckCount === 0);
+  const winnerWallet = gameover?.winner ? G.walletAddresses?.[gameover.winner] : undefined;
+  const isWager = G.matchType === 'Wager' && G.wagerAmount > 0;
 
   useEffect(() => {
     if (gameover) {
-      void onMatchComplete?.({ reason: gameover.reason, winner: gameover.winner });
+      void onMatchComplete?.({ reason: gameover.reason, winner: gameover.winner, winnerWallet });
     }
-  }, [gameover?.reason, gameover?.winner, onMatchComplete]);
+  }, [gameover?.reason, gameover?.winner, onMatchComplete, winnerWallet]);
 
   useEffect(() => {
     if (!selectedDeck || !isSetup || player.ready || player.hand.length > 0 || visibleDeckCount > 0 || player.active || player.bench.length > 0) {
       return;
     }
-    moves.setPlayerDeck(selectedDeck.cardIds, selectedDeck.label);
-  }, [isSetup, moves, player.active, player.bench.length, player.hand.length, player.ready, selectedDeck, visibleDeckCount]);
+    moves.setPlayerDeck(selectedDeck.cardIds, selectedDeck.label, playerWallet);
+  }, [isSetup, moves, player.active, player.bench.length, player.hand.length, player.ready, playerWallet, selectedDeck, visibleDeckCount]);
 
   const toggleOpeningBench = (index: number) => {
     setOpeningBenchIndexes((current) => {
@@ -635,8 +640,60 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, selecte
 
       {gameover && (
         <section className="gameover">
-          Player {gameover.winner} wins. {gameover.reason}
+          {gameover.winner !== undefined ? `Player ${gameover.winner} wins.` : 'Match ended in a draw.'} {gameover.reason}
         </section>
+      )}
+
+      {gameover && isWager && !wagerDismissed && (
+        <div className="wager-modal-backdrop" role="dialog" aria-modal="true" aria-label="Wager settlement">
+          <div className="wager-modal">
+            <p className="eyebrow">Wager settlement</p>
+            <h2>
+              {gameover.winner === undefined
+                ? 'Match drew — refund both sides.'
+                : gameover.winner === actingPlayer
+                  ? `You won ${G.wagerAmount} SOL!`
+                  : `You owe ${G.wagerAmount} SOL.`}
+            </h2>
+            <p className="wager-modal-sub">
+              The app does not escrow funds — settle the wager off-app by sending SOL to the winner's wallet below.
+            </p>
+            {winnerWallet ? (
+              <div className="wager-modal-wallet">
+                <span>Winner wallet</span>
+                <code title={winnerWallet}>{winnerWallet}</code>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(winnerWallet);
+                      setWagerCopied(true);
+                      window.setTimeout(() => setWagerCopied(false), 2000);
+                    } catch {
+                      setWagerCopied(false);
+                    }
+                  }}
+                >
+                  {wagerCopied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            ) : (
+              <p className="error">Winner did not register a wallet during setup. Coordinate the payout manually.</p>
+            )}
+            <div className="wager-modal-actions">
+              {winnerWallet && (
+                <a
+                  className="primary-cta"
+                  href={`https://solscan.io/account/${winnerWallet}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View on Solscan ↗
+                </a>
+              )}
+              <button onClick={() => setWagerDismissed(true)}>Dismiss</button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="player-summaries">

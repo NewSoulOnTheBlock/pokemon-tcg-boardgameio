@@ -149,6 +149,10 @@ export class PostgresProfileStorage implements ProfileStorage {
         PRIMARY KEY (user_id, match_id, player_id)
       )
     `);
+    // Backfill columns for older rows so leaderboard / wager UI can read them.
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS match_type TEXT NOT NULL DEFAULT 'Ranked'`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS wager_amount NUMERIC`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS winner_wallet TEXT`);
   }
 
   async login(profile: ProfileState): Promise<StoredProfile> {
@@ -202,9 +206,9 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(
       `
         INSERT INTO ${MATCHES_TABLE}
-          (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at)
+          (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at, match_type, wager_amount, winner_wallet)
         VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (user_id, match_id, player_id)
         DO UPDATE SET
           player_deck_label = EXCLUDED.player_deck_label,
@@ -212,7 +216,10 @@ export class PostgresProfileStorage implements ProfileStorage {
           result = EXCLUDED.result,
           winner = EXCLUDED.winner,
           reason = EXCLUDED.reason,
-          completed_at = EXCLUDED.completed_at
+          completed_at = EXCLUDED.completed_at,
+          match_type = EXCLUDED.match_type,
+          wager_amount = EXCLUDED.wager_amount,
+          winner_wallet = EXCLUDED.winner_wallet
       `,
       [
         userId,
@@ -225,6 +232,9 @@ export class PostgresProfileStorage implements ProfileStorage {
         record.reason,
         record.startedAt,
         record.completedAt,
+        record.matchType ?? 'Ranked',
+        record.wagerAmount ?? null,
+        record.winnerWallet ?? null,
       ],
     );
 
@@ -238,14 +248,16 @@ export class PostgresProfileStorage implements ProfileStorage {
   }
 
   async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
+    // Casual matches are explicitly excluded so they show up in personal
+    // history but don't affect the public ranking. Ranked + Wager both count.
     const { rows } = await this.pool.query<MatchLeaderboardEntry>(`
       SELECT
         p.user_id AS "userId",
         p.name,
-        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw'))::int AS matches,
-        COUNT(*) FILTER (WHERE m.result = 'win')::int AS wins,
-        COUNT(*) FILTER (WHERE m.result = 'loss')::int AS losses,
-        COUNT(*) FILTER (WHERE m.result = 'draw')::int AS draws
+        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type <> 'Casual')::int AS matches,
+        COUNT(*) FILTER (WHERE m.result = 'win' AND m.match_type <> 'Casual')::int AS wins,
+        COUNT(*) FILTER (WHERE m.result = 'loss' AND m.match_type <> 'Casual')::int AS losses,
+        COUNT(*) FILTER (WHERE m.result = 'draw' AND m.match_type <> 'Casual')::int AS draws
       FROM ${PROFILES_TABLE} p
       LEFT JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
       GROUP BY p.user_id, p.name
@@ -331,9 +343,9 @@ export class PostgresProfileStorage implements ProfileStorage {
       await this.pool.query(
         `
           INSERT INTO ${MATCHES_TABLE}
-            (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at)
+            (user_id, match_id, player_id, player_deck_label, opponent_deck_label, result, winner, reason, started_at, completed_at, match_type, wager_amount, winner_wallet)
           VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (user_id, match_id, player_id)
           DO UPDATE SET
             player_deck_label = EXCLUDED.player_deck_label,
@@ -341,7 +353,10 @@ export class PostgresProfileStorage implements ProfileStorage {
             result = EXCLUDED.result,
             winner = EXCLUDED.winner,
             reason = EXCLUDED.reason,
-            completed_at = EXCLUDED.completed_at
+            completed_at = EXCLUDED.completed_at,
+            match_type = EXCLUDED.match_type,
+            wager_amount = EXCLUDED.wager_amount,
+            winner_wallet = EXCLUDED.winner_wallet
         `,
         [
           userId,
@@ -354,6 +369,9 @@ export class PostgresProfileStorage implements ProfileStorage {
           record.reason,
           record.startedAt,
           record.completedAt,
+          record.matchType ?? 'Ranked',
+          record.wagerAmount ?? null,
+          record.winnerWallet ?? null,
         ],
       );
     }
@@ -419,14 +437,19 @@ export class MemoryProfileStorage implements ProfileStorage {
   async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
     return [...this.profiles.values()]
       .map((profile) => {
-        const completed = profile.matchRecords.filter((record) => record.result !== 'in_progress');
+        // Casual matches are tracked in the user's personal history but
+        // explicitly excluded from the leaderboard, mirroring the Postgres
+        // listLeaderboard() query above.
+        const ranked = profile.matchRecords.filter(
+          (record) => record.result !== 'in_progress' && (record.matchType ?? 'Ranked') !== 'Casual',
+        );
         return {
           userId: profile.userId,
           name: profile.name,
-          matches: completed.length,
-          wins: completed.filter((record) => record.result === 'win').length,
-          losses: completed.filter((record) => record.result === 'loss').length,
-          draws: completed.filter((record) => record.result === 'draw').length,
+          matches: ranked.length,
+          wins: ranked.filter((record) => record.result === 'win').length,
+          losses: ranked.filter((record) => record.result === 'loss').length,
+          draws: ranked.filter((record) => record.result === 'draw').length,
         };
       })
       .sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || b.matches - a.matches || a.name.localeCompare(b.name))

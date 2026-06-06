@@ -1261,6 +1261,18 @@ button:disabled {
   gap: 8px;
 }
 
+.wager-chip {
+  background: rgba(192, 132, 252, 0.16);
+  border: 1px solid rgba(192, 132, 252, 0.55);
+  border-radius: var(--r-pill);
+  color: var(--tier-wager);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+}
+
 .match-id-chip {
   background: rgba(15, 23, 42, 0.7);
   border: 1px solid var(--border-soft);
@@ -1269,6 +1281,124 @@ button:disabled {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   font-size: 0.72rem;
   padding: 3px 10px;
+}
+
+.wager-controls {
+  background: rgba(192, 132, 252, 0.06);
+  border: 1px solid rgba(192, 132, 252, 0.25);
+  border-radius: var(--r-md);
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.wager-field {
+  max-width: 220px;
+}
+
+.wager-hint {
+  color: var(--ink-muted);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.wager-modal-backdrop {
+  align-items: center;
+  background: rgba(5, 8, 16, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  padding: 24px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 200;
+}
+
+.wager-modal {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.82));
+  border: 1px solid rgba(192, 132, 252, 0.5);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3), 0 0 80px rgba(192, 132, 252, 0.25);
+  color: var(--ink-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 540px;
+  padding: clamp(22px, 4vw, 32px);
+  width: min(540px, 100%);
+}
+
+.wager-modal h2 {
+  background: linear-gradient(120deg, #c084fc, #f0abfc, #fbbf24);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-size: clamp(1.4rem, 2.6vw, 1.9rem);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.wager-modal .eyebrow {
+  color: var(--tier-wager);
+}
+
+.wager-modal-sub {
+  color: var(--ink-secondary);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.wager-modal-wallet {
+  align-items: center;
+  background: rgba(5, 8, 16, 0.6);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  display: grid;
+  gap: 6px;
+  grid-template-columns: auto 1fr auto;
+  padding: 12px 14px;
+}
+
+.wager-modal-wallet > span {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  grid-column: 1 / -1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wager-modal-wallet code {
+  color: var(--accent-cyan);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.78rem;
+  grid-column: 1 / 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wager-modal-wallet button {
+  font-size: 0.78rem;
+  grid-column: 3 / 4;
+  padding: 6px 12px;
+}
+
+.wager-modal-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.wager-modal-actions .primary-cta {
+  text-decoration: none;
 }
 
 /* ----- Leaderboard ----- */

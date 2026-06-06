@@ -53,7 +53,9 @@ interface MatchConfig {
   matchID: string;
   matchName: string;
   matchType: MatchType;
+  wagerAmount: number;
   playerDeck?: DeckPayload;
+  playerWallet?: string;
   playerID: PlayerID;
   credentials: string;
   playerDeckLabel: string;
@@ -433,6 +435,11 @@ function matchNameForMatch(match: LobbyAPI.Match): string {
 
 function matchTypeForMatch(match: LobbyAPI.Match): MatchType {
   return setupDataForMatch(match)?.matchType ?? 'Casual';
+}
+
+function wagerForMatch(match: LobbyAPI.Match): number {
+  const value = setupDataForMatch(match)?.wagerAmount;
+  return typeof value === 'number' && value > 0 ? value : 0;
 }
 
 function Shell({
@@ -844,6 +851,7 @@ function MatchmakingPage({
   const [acceptDeckId, setAcceptDeckId] = useState(() => firstValidDeckId(deckOptionsForProfile(profile)));
   const [matchName, setMatchName] = useState(`${profile.name}'s Match`);
   const [matchType, setMatchType] = useState<MatchType>('Casual');
+  const [wagerAmount, setWagerAmount] = useState<number>(0.1);
   const [matches, setMatches] = useState<LobbyAPI.Match[]>([]);
   const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
   const [busy, setBusy] = useState<'create' | 'refresh' | string | null>(null);
@@ -851,6 +859,7 @@ function MatchmakingPage({
   const lobby = useMemo(() => new LobbyClient({ server: MULTIPLAYER_SERVER }), []);
   const selectedPlayerDeck = deckOptionById(deckOptions, playerDeckId);
   const selectedAcceptDeck = deckOptionById(deckOptions, acceptDeckId);
+  const playerWallet = profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined;
 
   useEffect(() => {
     if (!deckOptions.some((option) => option.id === playerDeckId)) {
@@ -885,9 +894,11 @@ function MatchmakingPage({
   async function recordStartedMatch(config: MatchConfig): Promise<void> {
     const record: MatchRecord = {
       matchID: config.matchID,
+      matchType: config.matchType,
       playerID: config.playerID,
       playerDeckLabel: config.playerDeckLabel,
       opponentDeckLabel: config.opponentDeckLabel,
+      wagerAmount: config.wagerAmount > 0 ? config.wagerAmount : undefined,
       result: 'in_progress',
       startedAt: new Date().toISOString(),
     };
@@ -904,17 +915,34 @@ function MatchmakingPage({
       return;
     }
 
+    const isWager = matchType === 'Wager';
+    if (isWager) {
+      if (!playerWallet) {
+        setError('Connect a Solana wallet on sign-in to create a Wager match.');
+        return;
+      }
+      if (!(wagerAmount > 0)) {
+        setError('Wager matches need a positive SOL amount.');
+        return;
+      }
+    }
+
     const cleanMatchName = matchName.trim() || `${profile.name}'s ${matchType} Match`;
     const deckLabels: Partial<Record<PlayerID, string>> = {
       '0': selectedPlayerDeck.label,
     };
+    const walletAddresses: Partial<Record<PlayerID, string>> | undefined = isWager && playerWallet
+      ? { '0': playerWallet }
+      : undefined;
     const setupData: MatchSetupData = {
       matchName: cleanMatchName,
       matchType,
+      wagerAmount: isWager ? wagerAmount : undefined,
       seedDecks: {
         '0': selectedPlayerDeck.cardIds,
       },
       deckLabels,
+      walletAddresses,
     };
 
     setError('');
@@ -930,11 +958,13 @@ function MatchmakingPage({
         data: { deckLabel: selectedPlayerDeck.label },
       });
       const playerID = asPlayerID(joined.playerID);
-      const config = {
+      const config: MatchConfig = {
         matchID,
         matchName: cleanMatchName,
         matchType,
+        wagerAmount: isWager ? wagerAmount : 0,
         playerID,
+        playerWallet,
         credentials: joined.playerCredentials,
         playerDeckLabel: selectedPlayerDeck.label,
         opponentDeckLabel: 'Opponent chooses on accept',
@@ -963,6 +993,12 @@ function MatchmakingPage({
       setError(`${selectedAcceptDeck.label} cannot be used yet: ${selectedAcceptDeck.issues.join(' ')}`);
       return;
     }
+    const matchKind = matchTypeForMatch(match);
+    const matchWager = wagerForMatch(match);
+    if (matchKind === 'Wager' && !playerWallet) {
+      setError('Connect a Solana wallet on sign-in to accept a Wager match.');
+      return;
+    }
 
     setError('');
     setBusy(match.matchID);
@@ -973,15 +1009,17 @@ function MatchmakingPage({
         data: { deckLabel: selectedAcceptDeck.label },
       });
       const playerID = asPlayerID(joined.playerID);
-      const config = {
+      const config: MatchConfig = {
         matchID: match.matchID,
         matchName: matchNameForMatch(match),
-        matchType: matchTypeForMatch(match),
+        matchType: matchKind,
+        wagerAmount: matchWager,
         playerDeck: {
           cardIds: selectedAcceptDeck.cardIds,
           label: selectedAcceptDeck.label,
         },
         playerID,
+        playerWallet,
         credentials: joined.playerCredentials,
         playerDeckLabel: selectedAcceptDeck.label,
         opponentDeckLabel: deckLabelForMatch(match, opponentID(playerID)),
@@ -1022,10 +1060,37 @@ function MatchmakingPage({
               </select>
             </label>
             <DeckSelect title="Start as" value={playerDeckId} options={deckOptions} onChange={setPlayerDeckId} />
-            <button className="primary-cta" disabled={busy !== null || !selectedPlayerDeck || selectedPlayerDeck.issues.length > 0} onClick={createMatch}>
+            <button className="primary-cta" disabled={busy !== null || !selectedPlayerDeck || selectedPlayerDeck.issues.length > 0 || (matchType === 'Wager' && (!playerWallet || !(wagerAmount > 0)))} onClick={createMatch}>
               {busy === 'create' ? 'Creating...' : 'Create match'}
             </button>
           </div>
+          {matchType === 'Wager' && (
+            <div className="wager-controls">
+              <label className="wager-field">
+                Wager (SOL)
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0.001"
+                  value={wagerAmount}
+                  onChange={(event) => setWagerAmount(Number.parseFloat(event.target.value) || 0)}
+                  placeholder="0.10"
+                />
+              </label>
+              <p className="wager-hint">
+                {playerWallet
+                  ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow the SOL — settle off-app after the popup appears.`
+                  : 'Connect a Solana wallet on sign-in to create or accept a Wager match.'}
+              </p>
+            </div>
+          )}
+          {matchType === 'Casual' && (
+            <p className="wager-hint">Casual matches do not affect your win/loss record or the leaderboard.</p>
+          )}
+          {matchType === 'Ranked' && (
+            <p className="wager-hint">Ranked match results are tallied on the leaderboard.</p>
+          )}
           <DeckSelect title="Accept as" value={acceptDeckId} options={deckOptions} onChange={setAcceptDeckId} />
         </div>
         {error && <p className="error">{error}</p>}
@@ -1037,21 +1102,28 @@ function MatchmakingPage({
               const seat = openSeat(match);
               const creator = playerInMatch(match, '0')?.name ?? 'Waiting for creator';
               const acceptor = playerInMatch(match, '1')?.name ?? 'Open seat';
-              const canAcceptSelectedDeck = Boolean(seat && selectedAcceptDeck && selectedAcceptDeck.issues.length === 0);
-              const matchType = matchTypeForMatch(match);
+              const matchKind = matchTypeForMatch(match);
+              const wager = wagerForMatch(match);
+              const canAcceptSelectedDeck = Boolean(
+                seat
+                && selectedAcceptDeck
+                && selectedAcceptDeck.issues.length === 0
+                && (matchKind !== 'Wager' || playerWallet),
+              );
               return (
                 <article className="match-card" key={match.matchID}>
                   <div>
                     <div className="match-card-meta">
-                      <span className={`match-type-badge match-type-badge-${matchType}`}>{matchType}</span>
+                      <span className={`match-type-badge match-type-badge-${matchKind}`}>{matchKind}</span>
                       <span className="match-id-chip">#{match.matchID.slice(0, 8)}</span>
+                      {wager > 0 && <span className="wager-chip">{wager} SOL wager</span>}
                     </div>
                     <strong>{matchNameForMatch(match)}</strong>
                     <span>{creator} <em style={{ opacity: 0.6 }}>vs</em> {acceptor}</span>
                     <span>Host plays {deckLabelForMatch(match, '0')}</span>
                   </div>
                   <button className="primary-cta" disabled={busy !== null || !canAcceptSelectedDeck} onClick={() => acceptMatch(match)}>
-                    {busy === match.matchID ? 'Joining...' : 'Accept match'}
+                    {busy === match.matchID ? 'Joining...' : matchKind === 'Wager' && !playerWallet ? 'Wallet needed' : 'Accept match'}
                   </button>
                 </article>
               );
@@ -1425,7 +1497,7 @@ function MatchClient({
   profile: ProfileState;
 }) {
   const [recordedGameover, setRecordedGameover] = useState(false);
-  const recordMatchCompletion = useCallback(async ({ reason, winner }: { reason?: string; winner?: PlayerID }) => {
+  const recordMatchCompletion = useCallback(async ({ reason, winner, winnerWallet }: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => {
     if (recordedGameover) {
       return;
     }
@@ -1438,23 +1510,26 @@ function MatchClient({
     const startedRecord = profile.matchRecords.find((record) => record.matchID === config.matchID && record.playerID === config.playerID);
     const record: MatchRecord = {
       matchID: config.matchID,
+      matchType: config.matchType,
       playerID: config.playerID,
       playerDeckLabel: config.playerDeckLabel,
       opponentDeckLabel: config.opponentDeckLabel,
+      wagerAmount: config.wagerAmount > 0 ? config.wagerAmount : undefined,
       result,
       winner,
+      winnerWallet,
       reason,
       startedAt: startedRecord?.startedAt ?? new Date().toISOString(),
       completedAt: new Date().toISOString(),
     };
     onProfileChange(await persistMatchAndStore(profile, record));
-  }, [config.matchID, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, onProfileChange, profile, recordedGameover]);
+  }, [config.matchID, config.matchType, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, config.wagerAmount, onProfileChange, profile, recordedGameover]);
 
   const MatchBoard = useMemo(() => (
     function MatchBoard(props: BoardProps<PokemonTCGState>) {
-      return <PokemonBoard {...props} onMatchComplete={recordMatchCompletion} selectedDeck={config.playerDeck} />;
+      return <PokemonBoard {...props} onMatchComplete={recordMatchCompletion} selectedDeck={config.playerDeck} playerWallet={config.playerWallet} />;
     }
-  ), [config.playerDeck, recordMatchCompletion]);
+  ), [config.playerDeck, config.playerWallet, recordMatchCompletion]);
 
   const PokemonClient = useMemo(() => {
     return Client({

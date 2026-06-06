@@ -139,8 +139,10 @@ export interface PublicPlayerState extends Omit<PlayerState, 'deck' | 'hand' | '
 export interface PokemonTCGState {
   players: Record<PlayerID, PlayerState>;
   deckLabels: Partial<Record<PlayerID, string>>;
+  walletAddresses: Partial<Record<PlayerID, string>>;
   matchName: string;
   matchType: MatchType;
+  wagerAmount: number;
   playmatId: PlaymatID;
   playOrder: PlayerID[];
   firstPlayer: PlayerID;
@@ -156,8 +158,10 @@ export type MatchType = 'Casual' | 'Ranked' | 'Wager';
 
 export interface PokemonTCGSetupData {
   deckLabels?: Partial<Record<PlayerID, string>>;
+  walletAddresses?: Partial<Record<PlayerID, string>>;
   matchName?: string;
   matchType?: MatchType;
+  wagerAmount?: number;
   seedDecks?: Partial<Record<PlayerID, string[]>>;
   shuffleDecks?: boolean;
   firstPlayer?: PlayerID;
