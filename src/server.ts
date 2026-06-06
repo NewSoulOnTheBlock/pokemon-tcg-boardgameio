@@ -10,9 +10,11 @@ import { PokemonTCG } from './game/PokemonTCG';
 import type { Card } from './game/types';
 import { MemoryCardStorage, PostgresCardStorage, type CardStorage } from './server/cardStorage';
 import { createNftMinter, type NftMinter } from './server/nftMinter';
+import { buildSetNameIndex, scanWalletForPokemonNfts } from './server/nftScanner';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage } from './server/profileStorage';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
+import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
 const require = createRequire(import.meta.url);
 const { FlatFile, Origins, Server } = require('boardgame.io/server') as typeof import('boardgame.io/server');
@@ -93,6 +95,10 @@ await bootstrapCardLibrary();
 // Pre-serialise the catalogue once so /api/cards/library never re-walks the
 // 20k+ entry Proxy on every request. ~8 MB string in memory.
 const cardsJsonCache: string = JSON.stringify(Object.values(CARD_LIBRARY));
+
+// Index sets by name / PTCGO code so the NFT import scanner can resolve
+// "Base Set" / "Scarlet & Violet" / "SVI" etc. -> setId. Built once.
+const setNameIndex = buildSetNameIndex(setsManifest as Array<{ id: string; name: string; ptcgoCode?: string }>);
 
 const server = Server({
   games: [PokemonTCG],
@@ -270,6 +276,33 @@ server.router.post('/api/profiles/:userId/matches', jsonBody, async (ctx) => {
 
 server.router.get('/api/leaderboard', async (ctx) => {
   ctx.body = await profileStorage.listLeaderboard();
+});
+
+/**
+ * Scan a Solana wallet for phygital / Collector Crypt Pokemon NFTs and
+ * propose matches against the local card library. The client uses the
+ * returned candidates to populate the Import page.
+ */
+server.router.post('/api/imports/scan', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { ownerAddress?: string } | undefined;
+  const ownerAddress = body?.ownerAddress?.trim();
+  if (!ownerAddress) {
+    ctx.throw(400, 'ownerAddress (base58 Solana pubkey) is required.');
+    return;
+  }
+  try {
+    const candidates = await scanWalletForPokemonNfts({
+      rpcUrl: solanaRpcUrl,
+      ownerAddress,
+      publicOrigin,
+      cardLibrary: CARD_LIBRARY as unknown as Record<string, Card>,
+      setIdByName: setNameIndex,
+    });
+    ctx.body = { ownerAddress, candidates };
+  } catch (err) {
+    console.error(`[imports] scan failed for ${ownerAddress}: ${err instanceof Error ? err.message : String(err)}`);
+    ctx.throw(502, `Wallet scan failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 });
 
 server.app.use(serve(distPath));

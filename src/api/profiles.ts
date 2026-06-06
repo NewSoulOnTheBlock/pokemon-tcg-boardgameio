@@ -93,4 +93,28 @@ export async function mintBoosterNfts(recipient: string, cardIds: string[]): Pro
   });
 }
 
+export interface ImportCandidate {
+  mintAddress: string;
+  nftName: string;
+  nftImage?: string;
+  cardId?: string;
+  cardName?: string;
+  setName?: string;
+  cardImage?: string;
+  confidence: 'app-mint' | 'attribute-match' | 'fuzzy-match' | 'none';
+  metadataUri?: string;
+}
+
+export interface ImportScanResponse {
+  ownerAddress: string;
+  candidates: ImportCandidate[];
+}
+
+export async function scanWalletForImports(ownerAddress: string): Promise<ImportScanResponse> {
+  return request<ImportScanResponse>('/api/imports/scan', {
+    method: 'POST',
+    body: JSON.stringify({ ownerAddress }),
+  });
+}
+
 export { ApiError };

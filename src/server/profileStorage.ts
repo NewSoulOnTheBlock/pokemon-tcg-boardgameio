@@ -30,6 +30,7 @@ function normalizeProfile(profile: ProfileState): ProfileState {
     packsOpened: Number.isFinite(profile.packsOpened) ? profile.packsOpened : 0,
     packPurchases: Array.isArray(profile.packPurchases) ? profile.packPurchases : [],
     matchRecords: Array.isArray(profile.matchRecords) ? profile.matchRecords : [],
+    importedNfts: Array.isArray(profile.importedNfts) ? profile.importedNfts : [],
   };
 }
 
@@ -48,6 +49,10 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
   for (const deck of normalized.deckLibrary) {
     deckLibrary.set(deck.id, deck);
   }
+  const imports = new Map((existing.importedNfts ?? []).map((entry) => [entry.mintAddress, entry]));
+  for (const entry of (normalized.importedNfts ?? [])) {
+    imports.set(entry.mintAddress, entry);
+  }
 
   return {
     ...existing,
@@ -60,6 +65,7 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
     packsOpened: Math.max(existing.packsOpened, normalized.packsOpened, purchases.size),
     packPurchases: [...purchases.values()],
     matchRecords: [...matches.values()],
+    importedNfts: [...imports.values()],
     updatedAt: nowIso(),
     lastLoginAt: nowIso(),
   };
@@ -70,6 +76,7 @@ function storedProfileFromRow(row: {
   created_at: string;
   custom_deck: string[];
   deck_library: ProfileState['deckLibrary'] | null;
+  imported_nfts: ProfileState['importedNfts'] | null;
   last_login_at: string;
   login_key: string;
   match_records: MatchRecord[] | null;
@@ -93,6 +100,7 @@ function storedProfileFromRow(row: {
     packsOpened: row.packs_opened,
     packPurchases: row.pack_purchases ?? [],
     matchRecords: row.match_records ?? [],
+    importedNfts: row.imported_nfts ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastLoginAt: row.last_login_at,
@@ -124,6 +132,7 @@ export class PostgresProfileStorage implements ProfileStorage {
       )
     `);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS deck_library JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS imported_nfts JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${PACKS_TABLE} (
         id BIGSERIAL PRIMARY KEY,
@@ -282,9 +291,9 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(
       `
         INSERT INTO ${PROFILES_TABLE}
-          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, owned_cards, packs_opened, created_at, updated_at, last_login_at)
+          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, imported_nfts, owned_cards, packs_opened, created_at, updated_at, last_login_at)
         VALUES
-          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12)
+          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13)
         ON CONFLICT (user_id)
         DO UPDATE SET
           name = EXCLUDED.name,
@@ -292,6 +301,7 @@ export class PostgresProfileStorage implements ProfileStorage {
           active_deck_name = EXCLUDED.active_deck_name,
           custom_deck = EXCLUDED.custom_deck,
           deck_library = EXCLUDED.deck_library,
+          imported_nfts = EXCLUDED.imported_nfts,
           owned_cards = EXCLUDED.owned_cards,
           packs_opened = EXCLUDED.packs_opened,
           updated_at = EXCLUDED.updated_at,
@@ -305,6 +315,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         normalized.activeDeckName,
         JSON.stringify(normalized.customDeck),
         JSON.stringify(normalized.deckLibrary),
+        JSON.stringify(normalized.importedNfts ?? []),
         JSON.stringify(normalized.ownedCards),
         normalized.packsOpened,
         profile.createdAt,

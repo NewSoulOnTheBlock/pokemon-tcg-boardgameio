@@ -40,6 +40,14 @@ export interface CustomDeck {
   updatedAt: string;
 }
 
+export interface ImportedNftRecord {
+  mintAddress: string;
+  cardId: string;
+  cardName: string;
+  importedAt: string;
+  confidence: 'app-mint' | 'attribute-match' | 'fuzzy-match';
+}
+
 export interface ProfileState {
   userId?: string;
   name: string;
@@ -51,6 +59,7 @@ export interface ProfileState {
   packsOpened: number;
   packPurchases: PackPurchase[];
   matchRecords: MatchRecord[];
+  importedNfts?: ImportedNftRecord[];
 }
 
 export interface StoredProfile extends ProfileState {

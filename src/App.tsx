@@ -12,6 +12,8 @@ import {
   persistMatchRecord,
   persistPackPurchase,
   persistProfile,
+  scanWalletForImports,
+  type ImportCandidate,
 } from './api/profiles';
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
@@ -30,6 +32,7 @@ import {
   collectionFromCards,
   collectionSize,
   type CustomDeck,
+  type ImportedNftRecord,
   maxCollections,
   type MatchLeaderboardEntry,
   type MatchRecord,
@@ -45,7 +48,7 @@ import {
 } from './wallet';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'bot' | 'match';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
 
@@ -462,13 +465,19 @@ function Shell({
           <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
         </button>
         <nav>
-          {(['home', 'profile', 'matchmaking', 'bot', 'boosters'] as Page[]).map((target) => (
+          {(['home', 'profile', 'matchmaking', 'bot', 'boosters', 'imports'] as Page[]).map((target) => (
             <button
               className={page === target ? 'nav-active' : ''}
               key={target}
               onClick={() => onNavigate(target)}
             >
-              {target === 'matchmaking' ? 'Matchmaking' : target === 'bot' ? 'Vs Bot' : target[0].toUpperCase() + target.slice(1)}
+              {target === 'matchmaking'
+                ? 'Matchmaking'
+                : target === 'bot'
+                  ? 'Vs Bot'
+                  : target === 'imports'
+                    ? 'Import'
+                    : target[0].toUpperCase() + target.slice(1)}
             </button>
           ))}
           <a className="nav-news" href={NEWS_URL} target="_blank" rel="noreferrer">News ↗</a>
@@ -591,6 +600,10 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
           <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
             <strong>Boosters</strong>
             <span>Open packs for {PACK_PRICE_SOL} SOL and grow your collection.</span>
+          </button>
+          <button className="home-menu-button" onClick={() => onNavigate('imports')}>
+            <strong>Import phygitals / Collector Crypt</strong>
+            <span>Scan your Solana wallet and pull NFT-backed Pokemon cards into the game.</span>
           </button>
           <a
             className="home-menu-button home-news-button"
@@ -1485,6 +1498,225 @@ function BotMatchPage({ profile, onExit }: { profile: ProfileState; onExit: () =
   );
 }
 
+function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void }) {
+  const walletAddress = profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined;
+  const alreadyImported = useMemo(
+    () => new Set((profile.importedNfts ?? []).map((entry) => entry.mintAddress)),
+    [profile.importedNfts],
+  );
+  const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [scanning, setScanning] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [scanError, setScanError] = useState('');
+  const [status, setStatus] = useState('');
+  const [scannedAddress, setScannedAddress] = useState<string | null>(null);
+
+  async function scan() {
+    if (!walletAddress) {
+      setScanError('Connect a Solana wallet on sign-in before scanning.');
+      return;
+    }
+    setScanError('');
+    setStatus('');
+    setScanning(true);
+    try {
+      const response = await scanWalletForImports(walletAddress);
+      setCandidates(response.candidates);
+      setScannedAddress(response.ownerAddress);
+      const presets = new Set<string>();
+      for (const candidate of response.candidates) {
+        if (candidate.cardId && !alreadyImported.has(candidate.mintAddress) && candidate.confidence !== 'fuzzy-match') {
+          presets.add(candidate.mintAddress);
+        }
+      }
+      setSelected(presets);
+      setStatus(`Found ${response.candidates.length} NFT${response.candidates.length === 1 ? '' : 's'} in your wallet.`);
+    } catch (err) {
+      setScanError(`Wallet scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function importSelected() {
+    const toImport = candidates.filter((c) =>
+      selected.has(c.mintAddress)
+      && c.cardId
+      && !alreadyImported.has(c.mintAddress),
+    );
+    if (toImport.length === 0) {
+      setScanError('Nothing to import. Select at least one matched NFT first.');
+      return;
+    }
+    setScanError('');
+    setImporting(true);
+    try {
+      const cardIds = toImport.map((c) => c.cardId!);
+      const newRecords: ImportedNftRecord[] = toImport.map((c) => ({
+        mintAddress: c.mintAddress,
+        cardId: c.cardId!,
+        cardName: c.cardName ?? c.nftName,
+        importedAt: new Date().toISOString(),
+        confidence: c.confidence === 'none' ? 'fuzzy-match' : c.confidence,
+      }));
+      const updated: ProfileState = {
+        ...profile,
+        ownedCards: addCardsToCollection(profile.ownedCards, cardIds),
+        importedNfts: [...(profile.importedNfts ?? []), ...newRecords],
+      };
+      const saved = await persistAndStore(updated);
+      onProfileChange(saved);
+      setSelected(new Set());
+      setStatus(`Imported ${toImport.length} card${toImport.length === 1 ? '' : 's'} into your collection.`);
+    } catch (err) {
+      setScanError(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function toggle(mintAddress: string, cardId: string | undefined) {
+    if (!cardId) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(mintAddress)) next.delete(mintAddress);
+      else next.add(mintAddress);
+      return next;
+    });
+  }
+
+  const importableCount = candidates.filter((c) => c.cardId && !alreadyImported.has(c.mintAddress)).length;
+
+  return (
+    <main className="content-page imports-page">
+      <section className="panel imports-panel">
+        <p className="eyebrow">Import</p>
+        <h1>Bring your phygitals on-chain into the game</h1>
+        <p>
+          Scan your connected Solana wallet for Pokemon NFTs (Collector Crypt phygitals, your own
+          booster pulls from this app, and any other NFT with Pokemon-card metadata). Pick which
+          to import and we'll add them to your in-game collection so they show up in the deckbuilder.
+        </p>
+        <div className="imports-stats">
+          <span>Wallet: <strong>{walletAddress ? shortAddr(walletAddress) : 'not connected'}</strong></span>
+          <span>Already imported: <strong>{(profile.importedNfts ?? []).length}</strong></span>
+          {scannedAddress && <span>Last scan: <strong>{shortAddr(scannedAddress)}</strong></span>}
+        </div>
+        <div className="imports-actions">
+          <button
+            className="primary-cta"
+            disabled={!walletAddress || scanning || importing}
+            onClick={scan}
+          >
+            {scanning ? 'Scanning Helius...' : 'Scan my wallet'}
+          </button>
+          {candidates.length > 0 && (
+            <button
+              disabled={importing || selected.size === 0}
+              onClick={importSelected}
+            >
+              {importing ? 'Importing...' : `Import ${selected.size} selected`}
+            </button>
+          )}
+        </div>
+        {status && <p className="success">{status}</p>}
+        {scanError && <p className="error">{scanError}</p>}
+        {!walletAddress && <p className="action-hint">Sign in with a Solana wallet to enable scanning.</p>}
+      </section>
+
+      {candidates.length > 0 && (
+        <section className="panel imports-results">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Scan results</p>
+              <h2>{candidates.length} NFT{candidates.length === 1 ? '' : 's'} · {importableCount} importable</h2>
+              <p className="section-subtitle">Auto-selected matches are highest confidence. Uncheck anything that doesn't look right.</p>
+            </div>
+          </div>
+          <div className="imports-grid">
+            {candidates.map((candidate) => {
+              const isImported = alreadyImported.has(candidate.mintAddress);
+              const canImport = Boolean(candidate.cardId) && !isImported;
+              const isSelected = selected.has(candidate.mintAddress);
+              return (
+                <article
+                  className={`imports-card imports-card-${candidate.confidence} ${isImported ? 'imports-card-already' : ''} ${isSelected ? 'imports-card-selected' : ''}`}
+                  key={candidate.mintAddress}
+                >
+                  <header className="imports-card-header">
+                    <span className={`imports-confidence imports-confidence-${candidate.confidence}`}>
+                      {candidate.confidence === 'app-mint' ? 'Booster pack mint'
+                        : candidate.confidence === 'attribute-match' ? 'Attribute match'
+                          : candidate.confidence === 'fuzzy-match' ? 'Fuzzy match'
+                            : 'No match'}
+                    </span>
+                    {isImported && <span className="imports-already-tag">Already imported</span>}
+                  </header>
+                  <div className="imports-card-art">
+                    {candidate.cardImage ? (
+                      <img src={candidate.cardImage} alt={candidate.cardName ?? candidate.nftName} loading="lazy" />
+                    ) : candidate.nftImage ? (
+                      <img src={candidate.nftImage} alt={candidate.nftName} loading="lazy" />
+                    ) : (
+                      <div className="imports-card-art-placeholder">no image</div>
+                    )}
+                  </div>
+                  <div className="imports-card-meta">
+                    <strong>{candidate.cardName ?? candidate.nftName}</strong>
+                    <span>{candidate.cardId ?? 'No matching card found'}</span>
+                    <a
+                      className="imports-card-mint"
+                      href={`https://solscan.io/token/${candidate.mintAddress}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={candidate.mintAddress}
+                    >
+                      Mint {shortAddr(candidate.mintAddress)} ↗
+                    </a>
+                  </div>
+                  <label className="imports-card-toggle">
+                    <input
+                      type="checkbox"
+                      disabled={!canImport}
+                      checked={isSelected}
+                      onChange={() => toggle(candidate.mintAddress, candidate.cardId)}
+                    />
+                    <span>{isImported ? 'Already in collection' : canImport ? 'Import this card' : 'Cannot match'}</span>
+                  </label>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {(profile.importedNfts ?? []).length > 0 && (
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">History</p>
+              <h2>{profile.importedNfts!.length} imported card{profile.importedNfts!.length === 1 ? '' : 's'}</h2>
+            </div>
+          </div>
+          <ul className="imports-history">
+            {[...profile.importedNfts!].reverse().slice(0, 25).map((record) => (
+              <li key={record.mintAddress}>
+                <strong>{record.cardName}</strong>
+                <span>{record.cardId}</span>
+                <span>{new Date(record.importedAt).toLocaleString()}</span>
+                <a href={`https://solscan.io/token/${record.mintAddress}`} target="_blank" rel="noreferrer">
+                  {shortAddr(record.mintAddress)} ↗
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </main>
+  );
+}
+
 function MatchClient({
   config,
   onExit,
@@ -1610,6 +1842,7 @@ export default function App() {
         />
       )}
       {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
+      {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
       {page === 'home' && <HomePage profile={profile} onNavigate={setPage} />}
     </Shell>
   );
