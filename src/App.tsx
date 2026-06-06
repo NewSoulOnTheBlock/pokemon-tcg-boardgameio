@@ -510,6 +510,10 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
 
   async function finish() {
     setError('');
+    if (!wallet) {
+      setError('Connect a wallet to enter the arena.');
+      return;
+    }
     setSigningIn(true);
     const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: name.trim() || 'PokemonTrainer', wallet };
     try {
@@ -525,9 +529,9 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
     <main className="signin-page">
       <section className="signin-card">
         <img className="signin-logo" src="/site-logo.png" alt="Pokemon Masters" />
-        <p className="eyebrow">Local wallet profile</p>
+        <p className="eyebrow">Wallet sign-in required</p>
         <h1>Pokemon TCG Arena</h1>
-        <p>Connect a browser wallet or continue with a trainer name. Your profile, collection, pack history, and match records are loaded from the game server.</p>
+        <p>Connect a Solana or EVM wallet to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
         <label>
           Trainer name
           <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -541,10 +545,14 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
             <span key={walletInfo.kind}>{walletInfo.label}: {walletInfo.installed ? 'installed' : 'not found'}</span>
           ))}
         </div>
-        {wallet && <p className="success">Connected {wallet.chain}: {shortAddr(wallet.address)}</p>}
+        {wallet ? (
+          <p className="success">Connected {wallet.chain}: {shortAddr(wallet.address)}</p>
+        ) : (
+          <p className="action-hint">No wallet connected yet — pick one above to unlock the arena.</p>
+        )}
         {error && <p className="error">{error}</p>}
-        <button className="primary-cta" disabled={signingIn} onClick={finish}>
-          {signingIn ? 'Loading profile...' : 'Enter Arena'}
+        <button className="primary-cta" disabled={signingIn || !wallet} onClick={finish}>
+          {signingIn ? 'Loading profile...' : wallet ? 'Enter Arena' : 'Connect a wallet to continue'}
         </button>
       </section>
     </main>
@@ -1794,7 +1802,12 @@ function MatchClient({
 
 export default function App() {
   const [profile, setProfile] = useState<ProfileState>(() => loadProfile());
-  const [page, setPage] = useState<Page>(() => (loadProfile().name ? 'home' : 'signin'));
+  const [page, setPage] = useState<Page>(() => {
+    const stored = loadProfile();
+    // Wallet-less profiles get bounced back to sign-in even if their name is
+    // cached — the arena is wallet-only now.
+    return stored.name && stored.wallet ? 'home' : 'signin';
+  });
   const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
 
   function updateProfile(next: ProfileState) {
@@ -1809,7 +1822,7 @@ export default function App() {
     setPage('signin');
   }
 
-  if (page === 'signin' || !profile.name) {
+  if (page === 'signin' || !profile.name || !profile.wallet) {
     return <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />;
   }
 
