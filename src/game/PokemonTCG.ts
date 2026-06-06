@@ -7,6 +7,7 @@ import {
   addCondition,
   appendLog,
   applyDamage,
+  applyMulliganBonus,
   beginPlayerTurn,
   canPayEnergyCost,
   checkAllKnockOuts,
@@ -198,11 +199,12 @@ const playTrainer: Move<PokemonTCGState> = ({ G, ctx, playerID }, handIndex: num
   }
 
   if (card.trainerType === 'Stadium') {
-    if (player.stadiumPlayedThisTurn || G.stadium?.name === card.name) return INVALID_MOVE;
+    if (player.stadiumPlayedThisTurn || G.stadium?.card.name === card.name) return INVALID_MOVE;
     if (G.stadium) {
-      G.players[opponentOf(pid)].discard.push(G.stadium);
+      // Old Stadium goes to ITS OWNER'S discard, not the opponent's.
+      G.players[G.stadium.owner].discard.push(G.stadium.card);
     }
-    G.stadium = card;
+    G.stadium = { card, owner: pid };
     player.stadiumPlayedThisTurn = true;
     appendLog(G, `Player ${pid} played Stadium ${card.name}.`);
     return;
@@ -301,17 +303,17 @@ const attack: Move<PokemonTCGState> = ({ G, ctx, events, random, playerID }, att
   if (!selectedAttack) return INVALID_MOVE;
   if (!canPayEnergyCost(attacker.attachedEnergy, selectedAttack.cost)) return INVALID_MOVE;
 
-  if (attacker.conditions.includes('confused')) {
-    const attacksNormally = random.Die(2) === 1;
-    if (!attacksNormally) {
-      attacker.damage += 30;
-      appendLog(G, `${attacker.card.name} hurt itself in confusion.`);
-      checkAllKnockOuts(G);
-      resolvePokemonCheckup(G, random);
-      events.endTurn();
-      return;
+    if (attacker.conditions.includes('confused')) {
+      const attacksNormally = random.Die(2) === 1;
+      if (!attacksNormally) {
+        attacker.damage += 30;
+        appendLog(G, `${attacker.card.name} hurt itself in confusion.`);
+        checkAllKnockOuts(G);
+        resolvePokemonCheckup(G, random, pid);
+        events.endTurn();
+        return;
+      }
     }
-  }
 
   if (selectedAttack.damage !== undefined) {
     const damage = applyDamage(G, attacker, defender, selectedAttack.damage);
@@ -322,7 +324,7 @@ const attack: Move<PokemonTCGState> = ({ G, ctx, events, random, playerID }, att
 
   resolveAttackEffect(G, selectedAttack, attacker, defender, player, random);
   checkAllKnockOuts(G);
-  resolvePokemonCheckup(G, random);
+  resolvePokemonCheckup(G, random, pid);
   events.endTurn();
 };
 
@@ -331,7 +333,7 @@ const pass: Move<PokemonTCGState> = ({ G, events, random, playerID }) => {
   if (!pid) return INVALID_MOVE;
 
   appendLog(G, `Player ${pid} passed.`);
-  resolvePokemonCheckup(G, random);
+  resolvePokemonCheckup(G, random, pid);
   events.endTurn();
 };
 
@@ -393,6 +395,12 @@ export const PokemonTCG: Game<PokemonTCGState> = {
         activePlayers: { all: Stage.NULL },
       },
       endIf: ({ G }) => G.players['0'].ready && G.players['1'].ready,
+      onEnd: ({ G }) => {
+        // After both players have placed Active + Bench, the opponent of
+        // whoever mulliganed more draws bonus cards (one per extra
+        // mulligan), per official Pokemon TCG rules.
+        applyMulliganBonus(G);
+      },
       next: 'play',
     },
     play: {

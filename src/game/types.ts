@@ -147,7 +147,7 @@ export interface PokemonTCGState {
   playOrder: PlayerID[];
   firstPlayer: PlayerID;
   turnsTaken: Record<PlayerID, number>;
-  stadium?: TrainerCard;
+  stadium?: { card: TrainerCard; owner: PlayerID };
   nextInstanceId: number;
   winner?: PlayerID;
   winReason?: string;

@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyDamage,
+  applyMulliganBonus,
   canPayEnergyCost,
   createPokemonInPlay,
   drawCards,
   isBasicPokemon,
   opponentOf,
   publicViewForPlayer,
+  resolvePokemonCheckup,
 } from './rules';
 import { cloneCard, makeDeck, STARTER_DECKS } from './cards';
 import type { EnergyCard, PokemonCard, PokemonTCGState } from './types';
@@ -108,4 +110,51 @@ describe('rules', () => {
     expect(viewForP0.players['1'].hand).toHaveLength(0);
     expect(viewForP0.players['1'].handCount).toBe(7);
   });
+
+  it('paralysis only recovers in the checkup after the OWNER\'s turn (Pokemon TCG rule)', () => {
+    // Per official rules: a Paralyzed Pokemon recovers during the Pokemon
+    // Checkup that follows its OWNER'S next turn. The checkup at the end
+    // of the opponent's turn (when paralysis was applied) must NOT recover.
+    const state = makeEmptyState();
+    const pokemonCard = cloneCard('charmander') as PokemonCard;
+    const active = createPokemonInPlay(state, pokemonCard, 1);
+    active.conditions = ['paralyzed'];
+    state.players['1'].active = active;
+
+    // Checkup at the end of player 0's turn (opponent of paralyzed pokemon)
+    // should NOT recover.
+    resolvePokemonCheckup(state, { Die: () => 1 }, '0');
+    expect(state.players['1'].active?.conditions).toContain('paralyzed');
+
+    // Checkup at the end of player 1's own turn SHOULD recover.
+    resolvePokemonCheckup(state, { Die: () => 1 }, '1');
+    expect(state.players['1'].active?.conditions).not.toContain('paralyzed');
+  });
+
+  it('applyMulliganBonus gives extra cards to the lower-mulligan player', () => {
+    const state = makeEmptyState();
+    state.players['0'].mulligans = 3;
+    state.players['1'].mulligans = 1;
+    state.players['1'].deck = makeDeck(STARTER_DECKS.Fire).slice(0, 5);
+    const before = state.players['1'].hand.length;
+
+    applyMulliganBonus(state);
+
+    expect(state.players['1'].hand.length - before).toBe(2);
+    expect(state.players['1'].deck.length).toBe(3);
+  });
+
+  it('applyMulliganBonus is a no-op when mulligan counts match', () => {
+    const state = makeEmptyState();
+    state.players['0'].mulligans = 2;
+    state.players['1'].mulligans = 2;
+    state.players['0'].deck = makeDeck(STARTER_DECKS.Grass).slice(0, 5);
+    state.players['1'].deck = makeDeck(STARTER_DECKS.Fire).slice(0, 5);
+
+    applyMulliganBonus(state);
+
+    expect(state.players['0'].hand).toHaveLength(0);
+    expect(state.players['1'].hand).toHaveLength(0);
+  });
 });
+

@@ -635,7 +635,7 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
           </p>
           <p>Viewing as Player {actingPlayer}. Hidden hands, decks, and Prize cards are filtered by boardgame.io playerView.</p>
         </div>
-        {G.stadium && <div className="stadium">Stadium: {G.stadium.name}</div>}
+        {G.stadium && <div className="stadium">Stadium: {G.stadium.card.name}</div>}
       </header>
 
       {gameover && (
@@ -723,7 +723,7 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
           onDrop={(event) => dropHandCardOnZone(event, actingPlayer, 'stadium')}
           placement={STADIUM_PLACEMENT}
         >
-          <MatStack count={G.stadium ? 1 : 0} label={G.stadium?.name ?? 'Stadium'} topCard={G.stadium} />
+          <MatStack count={G.stadium ? 1 : 0} label={G.stadium?.card.name ?? 'Stadium'} topCard={G.stadium?.card} />
         </MatZone>
       </section>
 

@@ -151,7 +151,7 @@ export function applyDamage(
 ): number {
   let damage = baseDamage;
 
-  if (G.stadium?.effect === 'stadiumPlus10') {
+  if (G.stadium?.card.effect === 'stadiumPlus10') {
     damage += 10;
   }
 
@@ -299,6 +299,7 @@ export function resolveAttackEffect(
 export function resolvePokemonCheckup(
   G: PokemonTCGState,
   random: { Die: (spotValue: number) => number },
+  endedTurnPlayer?: PlayerID,
 ): void {
   for (const playerID of PLAYER_IDS) {
     const active = G.players[playerID].active;
@@ -333,12 +334,43 @@ export function resolvePokemonCheckup(
     }
 
     if (active.conditions.includes('paralyzed')) {
-      active.conditions = active.conditions.filter((condition) => condition !== 'paralyzed');
-      appendLog(G, `${active.card.name} recovered from Paralysis.`);
+      // Per official rules: Paralysis recovers during the Pokemon Checkup
+      // that follows the OWNER'S next turn. If the checkup happens at the
+      // end of the opponent's turn (i.e. the turn the paralysis was applied
+      // on, or any subsequent opponent turn before our own), the Pokemon
+      // stays Paralyzed.
+      if (endedTurnPlayer === playerID) {
+        active.conditions = active.conditions.filter((condition) => condition !== 'paralyzed');
+        appendLog(G, `${active.card.name} recovered from Paralysis.`);
+      }
     }
   }
 
   checkAllKnockOuts(G);
+}
+
+/**
+ * Mulligan bonus: when one player had more mulligans than the other during
+ * opening-hand setup, the opponent draws (diff) extra cards after both
+ * players have placed Active + Bench. Per official rules they may bench
+ * any Basic Pokemon drawn this way; for simplicity we leave them in hand
+ * and let the player bench on turn 1.
+ */
+export function applyMulliganBonus(G: PokemonTCGState): void {
+  const p0Mulls = G.players['0'].mulligans;
+  const p1Mulls = G.players['1'].mulligans;
+  if (p0Mulls === p1Mulls) return;
+  const bonusPlayer: PlayerID = p0Mulls > p1Mulls ? '1' : '0';
+  const otherPlayer: PlayerID = bonusPlayer === '0' ? '1' : '0';
+  const diff = Math.abs(p0Mulls - p1Mulls);
+  const drawn = drawCards(G.players[bonusPlayer], diff);
+  if (drawn.length > 0) {
+    appendLog(
+      G,
+      `Player ${bonusPlayer} draws ${drawn.length} bonus card(s) ` +
+      `for Player ${otherPlayer}'s ${p0Mulls > p1Mulls ? p0Mulls : p1Mulls} mulligan(s).`,
+    );
+  }
 }
 
 export function beginPlayerTurn(
