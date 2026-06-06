@@ -9,6 +9,7 @@ interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
 }
 
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
+const HAND_CARD_DRAG_TYPE = 'application/x-pokemon-hand-card';
 
 interface ZonePlacement {
   left: number;
@@ -78,13 +79,21 @@ function cardDetail(card: Card): string {
   return card.trainerType;
 }
 
-function CardArt({ card }: { card: Card }) {
+function CardImage({
+  card,
+  frameClassName,
+  imageClassName,
+}: {
+  card: Card;
+  frameClassName: string;
+  imageClassName: string;
+}) {
   const thumbnail = card.images?.small ?? card.images?.large;
   const preview = card.images?.large ?? card.images?.small;
 
   if (!thumbnail) {
     return (
-      <div className="card-art-placeholder" aria-label={card.name}>
+      <div className={`${frameClassName} card-art-placeholder`} aria-label={card.name}>
         <strong>{card.name}</strong>
         <span>{card.kind}</span>
       </div>
@@ -92,8 +101,8 @@ function CardArt({ card }: { card: Card }) {
   }
 
   return (
-    <div className="card-art-frame">
-      <img className="card-art" src={thumbnail} alt={card.name} loading="lazy" />
+    <div className={frameClassName}>
+      <img className={imageClassName} src={thumbnail} alt={card.name} loading="lazy" />
       {preview && (
         <div className="card-hover-preview" aria-hidden="true">
           <img src={preview} alt="" loading="lazy" />
@@ -103,19 +112,32 @@ function CardArt({ card }: { card: Card }) {
   );
 }
 
+function CardArt({ card }: { card: Card }) {
+  return <CardImage card={card} frameClassName="card-art-frame" imageClassName="card-art" />;
+}
+
 function HandCard({
   card,
   children,
+  draggable = false,
   index,
+  onDragStart,
   selected = false,
 }: {
   card: Card;
   children?: React.ReactNode;
+  draggable?: boolean;
   index: number;
+  onDragStart?: (event: React.DragEvent<HTMLElement>) => void;
   selected?: boolean;
 }) {
   return (
-    <article className={`hand-card hand-card-${card.kind}${selected ? ' hand-card-selected' : ''}`} tabIndex={0}>
+    <article
+      className={`hand-card hand-card-${card.kind}${draggable ? ' hand-card-draggable' : ''}${selected ? ' hand-card-selected' : ''}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      tabIndex={0}
+    >
       <CardArt card={card} />
       <div className="hand-card-info">
         <span className="hand-card-index">Hand #{index + 1}</span>
@@ -168,30 +190,83 @@ function prizeStackCount(totalPrizeCount: number, slotIndex: number): number {
   return baseCount + (slotIndex < extraCount ? 1 : 0);
 }
 
-function MatZone({ className = '', placement, children }: { className?: string; placement: ZonePlacement; children: React.ReactNode }) {
+type DropZone = 'active' | 'bench' | 'stadium';
+
+function MatZone({
+  canDrop = false,
+  className = '',
+  onDrop,
+  placement,
+  children,
+}: {
+  canDrop?: boolean;
+  className?: string;
+  onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
+  placement: ZonePlacement;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={`mat-zone ${className}`} style={zoneStyle(placement)}>
+    <div
+      className={`mat-zone ${placement.rotate ? 'mat-zone-rotated' : ''} ${canDrop ? 'mat-zone-droppable' : ''} ${className}`}
+      onDragOver={canDrop ? (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+      } : undefined}
+      onDrop={onDrop}
+      style={zoneStyle(placement)}
+    >
       {children}
     </div>
   );
 }
 
-function MatPokemonCard({ pokemon, label }: { pokemon?: PokemonInPlay; label: string }) {
+function MatPokemonCard({ pokemon, label, previewCard }: { label: string; pokemon?: PokemonInPlay; previewCard?: Card }) {
   if (!pokemon) {
+    if (previewCard) {
+      return (
+        <div className="mat-card mat-pokemon-card mat-card-preview">
+          <CardImage card={previewCard} frameClassName="mat-card-art-frame" imageClassName="mat-card-image" />
+          <span className="mat-card-badge">Ready</span>
+        </div>
+      );
+    }
     return <div className="mat-card mat-card-empty">{label}</div>;
   }
 
   return (
     <div className="mat-card mat-pokemon-card">
-      <strong>{pokemon.card.name}</strong>
-      <span>{pokemon.damage}/{pokemon.card.hp} dmg</span>
-      <span>Energy {pokemon.attachedEnergy.length}</span>
+      <CardImage card={pokemon.card} frameClassName="mat-card-art-frame" imageClassName="mat-card-image" />
+      <div className="mat-card-badges">
+        <span>{pokemon.damage}/{pokemon.card.hp}</span>
+        <span>{pokemon.attachedEnergy.length} Energy</span>
+      </div>
+      {pokemon.attachedEnergy.length > 0 && (
+        <div className="mat-attached-energy">
+          {pokemon.attachedEnergy.slice(0, 4).map((energy, index) => (
+            <img
+              alt={energy.name}
+              key={`${energy.id}-${index}`}
+              src={energy.images?.small ?? energy.images?.large}
+            />
+          ))}
+          {pokemon.attachedEnergy.length > 4 && <span>+{pokemon.attachedEnergy.length - 4}</span>}
+        </div>
+      )}
       {pokemon.conditions.length > 0 && <span>{pokemon.conditions.join(', ')}</span>}
     </div>
   );
 }
 
-function MatStack({ count, label }: { count: number; label: string }) {
+function MatStack({ count, label, topCard }: { count: number; label: string; topCard?: Card }) {
+  if (topCard) {
+    return (
+      <div className="mat-card mat-stack mat-stack-with-card">
+        <CardImage card={topCard} frameClassName="mat-card-art-frame" imageClassName="mat-card-image" />
+        <span className="mat-card-badge">{label}: {count}</span>
+      </div>
+    );
+  }
+
   return (
     <div className={`mat-card mat-stack ${count === 0 ? 'mat-card-empty' : ''}`}>
       <strong>{label}</strong>
@@ -200,25 +275,40 @@ function MatStack({ count, label }: { count: number; label: string }) {
   );
 }
 
-function PlayerMatZones({ id, player }: { id: PlayerID; player: PlayerState }) {
+function PlayerMatZones({
+  canDrop = false,
+  id,
+  onDropToZone,
+  player,
+  setupPreview,
+}: {
+  canDrop?: boolean;
+  id: PlayerID;
+  onDropToZone?: (event: React.DragEvent<HTMLDivElement>, zone: DropZone, benchIndex?: number) => void;
+  player: PlayerState;
+  setupPreview?: {
+    active?: Card;
+    bench: Array<Card | undefined>;
+  };
+}) {
   const placements = PLAYER_MAT_PLACEMENTS[id];
   const prizeCount = player.prizeCount ?? player.prizeCards.length;
 
   return (
     <>
-      <MatZone className="mat-zone-active" placement={placements.active}>
-        <MatPokemonCard pokemon={player.active} label={`P${id} Active`} />
+      <MatZone canDrop={canDrop} className="mat-zone-active" onDrop={(event) => onDropToZone?.(event, 'active')} placement={placements.active}>
+        <MatPokemonCard pokemon={player.active} previewCard={setupPreview?.active} label={`P${id} Active`} />
       </MatZone>
       {placements.bench.map((placement, index) => (
-        <MatZone className="mat-zone-bench" key={`${id}-bench-${index}`} placement={placement}>
-          <MatPokemonCard pokemon={player.bench[index]} label={`Bench ${index + 1}`} />
+        <MatZone canDrop={canDrop} className="mat-zone-bench" key={`${id}-bench-${index}`} onDrop={(event) => onDropToZone?.(event, 'bench', index)} placement={placement}>
+          <MatPokemonCard pokemon={player.bench[index]} previewCard={setupPreview?.bench[index]} label={`Bench ${index + 1}`} />
         </MatZone>
       ))}
       <MatZone placement={placements.deck}>
         <MatStack count={player.deckCount ?? player.deck.length} label="Deck" />
       </MatZone>
       <MatZone placement={placements.discard}>
-        <MatStack count={player.discard.length} label="Trash" />
+        <MatStack count={player.discard.length} label="Trash" topCard={player.discard.at(-1)} />
       </MatZone>
       {placements.prizes.map((placement, index) => (
         <MatZone className="mat-zone-prize" key={`${id}-prize-${index}`} placement={placement}>
@@ -250,7 +340,8 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
   const isSetup = ctx.phase === 'setup';
   const gameover = ctx.gameover as { winner?: PlayerID; reason?: string } | undefined;
   const [openingActiveIndex, setOpeningActiveIndex] = useState<number | null>(null);
-  const [openingBenchIndexes, setOpeningBenchIndexes] = useState<number[]>([]);
+  const [openingBenchIndexes, setOpeningBenchIndexes] = useState<Array<number | undefined>>([]);
+  const [boardHint, setBoardHint] = useState('');
   const playmatImage = PLAYMAT_IMAGE_BY_ID[G.playmatId];
 
   useEffect(() => {
@@ -262,12 +353,19 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
   const toggleOpeningBench = (index: number) => {
     setOpeningBenchIndexes((current) => {
       if (current.includes(index)) {
-        return current.filter((existing) => existing !== index);
+        return current.map((existing) => existing === index ? undefined : existing);
       }
-      if (current.length >= 5) {
+      const next = [...current];
+      const openSlot = next.findIndex((existing) => existing === undefined);
+      if (openSlot === -1 && next.length >= 5) {
         return current;
       }
-      return [...current, index];
+      if (openSlot === -1) {
+        next.push(index);
+      } else {
+        next[openSlot] = index;
+      }
+      return next;
     });
   };
 
@@ -277,11 +375,252 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
     }
     moves.chooseOpeningPokemon(
       openingActiveIndex,
-      openingBenchIndexes.filter((index) => index !== openingActiveIndex),
+      openingBenchIndexes.filter((index): index is number => typeof index === 'number' && index !== openingActiveIndex),
     );
     setOpeningActiveIndex(null);
     setOpeningBenchIndexes([]);
   };
+
+  const startHandDrag = (event: React.DragEvent<HTMLElement>, handIndex: number, card: Card) => {
+    event.dataTransfer.effectAllowed = 'move';
+    const payload = JSON.stringify({ cardId: card.id, handIndex });
+    event.dataTransfer.setData(HAND_CARD_DRAG_TYPE, payload);
+    event.dataTransfer.setData('text/plain', payload);
+  };
+
+  const draggedHandIndex = (event: React.DragEvent<HTMLElement>): number | null => {
+    const payload = event.dataTransfer.getData(HAND_CARD_DRAG_TYPE) || event.dataTransfer.getData('text/plain');
+    if (!payload) return null;
+    try {
+      const parsed = JSON.parse(payload) as { handIndex?: unknown };
+      return typeof parsed.handIndex === 'number' ? parsed.handIndex : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const dropSetupCard = (handIndex: number, zone: DropZone, benchIndex?: number) => {
+    const card = player.hand[handIndex];
+    if (!card || card.kind !== 'pokemon' || card.stage !== 'Basic') {
+      setBoardHint('Opening setup only accepts Basic Pokemon from your hand.');
+      return;
+    }
+    if (zone === 'active') {
+      setOpeningActiveIndex(handIndex);
+      setOpeningBenchIndexes((current) => current.map((index) => index === handIndex ? undefined : index));
+      setBoardHint(`${card.name} selected as Active. Confirm opening Pokemon when ready.`);
+      return;
+    }
+    if (zone !== 'bench' || benchIndex === undefined) {
+      setBoardHint('Drop Basic Pokemon on your Active or Bench spaces during setup.');
+      return;
+    }
+
+    setOpeningActiveIndex((current) => current === handIndex ? null : current);
+    setOpeningBenchIndexes((current) => {
+      const next = Array.from({ length: Math.max(5, current.length) }, (_, index) => current[index]).map((index) => index === handIndex ? undefined : index);
+      if (benchIndex >= 5) {
+        return next;
+      }
+      next[benchIndex] = handIndex;
+      return next;
+    });
+    setBoardHint(`${card.name} selected for the Bench. Confirm opening Pokemon when ready.`);
+  };
+
+  const dropPlayCard = (handIndex: number, zone: DropZone, benchIndex?: number) => {
+    const card = player.hand[handIndex];
+    if (!card || !isCurrent) {
+      setBoardHint(`Wait for Player ${ctx.currentPlayer}'s turn before playing cards.`);
+      return;
+    }
+
+    if (zone === 'stadium') {
+      if (card.kind === 'trainer' && card.trainerType === 'Stadium') {
+        moves.playTrainer(handIndex);
+        setBoardHint(`Played ${card.name}.`);
+      } else {
+        setBoardHint('Only Stadium Trainer cards can be dropped on the Stadium spot.');
+      }
+      return;
+    }
+
+    if (card.kind === 'pokemon' && card.stage === 'Basic') {
+      if (zone !== 'bench') {
+        setBoardHint('Basic Pokemon can be dropped onto your Bench.');
+        return;
+      }
+      moves.benchBasic(handIndex);
+      setBoardHint(`Benched ${card.name}.`);
+      return;
+    }
+
+    if (card.kind === 'pokemon') {
+      moves.evolvePokemon(handIndex, zone, benchIndex);
+      setBoardHint(`Attempted to evolve with ${card.name}.`);
+      return;
+    }
+
+    if (card.kind === 'energy') {
+      moves.attachEnergy(handIndex, zone, benchIndex);
+      setBoardHint(`Attempted to attach ${card.name}.`);
+      return;
+    }
+
+    moves.playTrainer(handIndex, zone === 'bench'
+      ? { zone, benchIndex, switchBenchIndex: benchIndex }
+      : { zone: 'active' });
+    setBoardHint(`Played ${card.name}.`);
+  };
+
+  const dropHandCardOnZone = (event: React.DragEvent<HTMLDivElement>, targetPlayer: PlayerID, zone: DropZone, benchIndex?: number) => {
+    event.preventDefault();
+    if (targetPlayer !== actingPlayer && zone !== 'stadium') {
+      setBoardHint('Drop cards only on your side of the playmat.');
+      return;
+    }
+    const handIndex = draggedHandIndex(event);
+    if (handIndex === null) {
+      setBoardHint('Drag a card from your hand onto the playmat.');
+      return;
+    }
+    if (isSetup) {
+      dropSetupCard(handIndex, zone, benchIndex);
+      return;
+    }
+    dropPlayCard(handIndex, zone, benchIndex);
+  };
+
+  const setupPreview = isSetup && !player.ready
+    ? {
+      active: openingActiveIndex === null ? undefined : player.hand[openingActiveIndex],
+      bench: openingBenchIndexes.map((index) => typeof index === 'number' ? player.hand[index] : undefined),
+    }
+    : undefined;
+
+  const handPanel = isSetup ? (
+    <section className="actions hand-below-playmat">
+      <h2>Opening setup</h2>
+      {player.ready ? (
+        <p>Player {actingPlayer} is ready. Switch viewers so the other player can choose their opening Pokemon.</p>
+      ) : (
+        <>
+          <p>Drag one Basic Pokemon onto your Active spot and up to five more onto your Bench, then confirm.</p>
+          {boardHint && <p className="drop-hint">{boardHint}</p>}
+          <div className="hand-grid setup-hand-grid">
+            {player.hand.map((card, index) => {
+              const isOpeningBasic = card.kind === 'pokemon' && card.stage === 'Basic';
+              return (
+                <HandCard
+                  card={card}
+                  draggable={isOpeningBasic}
+                  index={index}
+                  key={`${card.id}-${index}`}
+                  onDragStart={(event) => startHandDrag(event, index, card)}
+                  selected={openingActiveIndex === index || openingBenchIndexes.includes(index)}
+                >
+                  {isOpeningBasic ? (
+                    <>
+                      <button onClick={() => setOpeningActiveIndex(index)}>
+                        {openingActiveIndex === index ? 'Active selected' : 'Set Active'}
+                      </button>
+                      <button onClick={() => toggleOpeningBench(index)} disabled={openingActiveIndex === index}>
+                        {openingBenchIndexes.includes(index) ? 'Remove from Bench' : 'Bench'}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="hand-card-note">Not a Basic Pokemon</span>
+                  )}
+                </HandCard>
+              );
+            })}
+          </div>
+          <button disabled={openingActiveIndex === null} onClick={confirmOpeningPokemon}>
+            Confirm opening Pokemon
+          </button>
+        </>
+      )}
+    </section>
+  ) : !gameover ? (
+    <section className="actions hand-below-playmat">
+      <h2>Player {actingPlayer} hand</h2>
+      {!isCurrent && <p>Waiting for Player {ctx.currentPlayer}.</p>}
+      <p className="action-hint">Drag cards from your hand onto your Active, Bench, or Stadium spaces. Hover or focus any card image to inspect it larger.</p>
+      {boardHint && <p className="drop-hint">{boardHint}</p>}
+      <div className="action-group action-group-hand">
+        {player.hand.length === 0 ? (
+          <p>Your hand is empty.</p>
+        ) : (
+          <div className="hand-grid">
+            {player.hand.map((card, index) => (
+              <HandCard
+                card={card}
+                draggable={isCurrent}
+                index={index}
+                key={`${card.id}-${index}`}
+                onDragStart={(event) => startHandDrag(event, index, card)}
+              >
+                {isCurrent && (
+                  <>
+                    {card.kind === 'pokemon' && card.stage === 'Basic' && (
+                      <button onClick={() => moves.benchBasic(index)}>Bench Basic</button>
+                    )}
+                    {card.kind === 'pokemon' && card.stage !== 'Basic' && (
+                      <>
+                        <button onClick={() => moves.evolvePokemon(index, 'active')}>Evolve Active</button>
+                        {player.bench.map((benchPokemon, benchIndex) => (
+                          <button key={benchPokemon.instanceId} onClick={() => moves.evolvePokemon(index, 'bench', benchIndex)}>
+                            Evolve Bench {benchIndex + 1}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {card.kind === 'energy' && (
+                      <>
+                        <button onClick={() => moves.attachEnergy(index, 'active')}>Attach to Active</button>
+                        {player.bench.map((benchPokemon, benchIndex) => (
+                          <button key={benchPokemon.instanceId} onClick={() => moves.attachEnergy(index, 'bench', benchIndex)}>
+                            Attach to Bench {benchIndex + 1}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {card.kind === 'trainer' && (
+                      <>
+                        <button onClick={() => moves.playTrainer(index, { zone: 'active' })}>Play</button>
+                        {player.bench.map((benchPokemon, benchIndex) => (
+                          <button key={benchPokemon.instanceId} onClick={() => moves.playTrainer(index, { zone: 'bench', benchIndex, switchBenchIndex: benchIndex })}>
+                            Play on Bench {benchIndex + 1}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </>
+                )}
+              </HandCard>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isCurrent && (
+        <div className="action-group">
+          <h3>Attack / retreat</h3>
+          {player.active?.card.attacks.map((attack, index) => (
+            <button key={attack.name} onClick={() => moves.attack(index)}>
+              Attack: {attack.name}
+            </button>
+          ))}
+          {player.bench.map((pokemon, index) => (
+            <button key={pokemon.instanceId} onClick={() => moves.retreat(index)}>
+              Retreat to Bench {index + 1}
+            </button>
+          ))}
+          <button className="danger" onClick={() => moves.pass()}>Pass turn</button>
+        </div>
+      )}
+    </section>
+  ) : null;
 
   return (
     <main>
@@ -300,125 +639,6 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
         </section>
       )}
 
-      {isSetup && (
-        <section className="actions">
-          <h2>Opening setup</h2>
-          {player.ready ? (
-            <p>Player {actingPlayer} is ready. Switch viewers so the other player can choose their opening Pokemon.</p>
-          ) : (
-            <>
-              <p>Choose exactly one Basic Pokemon as Active and up to five more Basic Pokemon for the Bench.</p>
-              <div className="hand-grid setup-hand-grid">
-                {player.hand.map((card, index) => {
-                  const isOpeningBasic = card.kind === 'pokemon' && card.stage === 'Basic';
-                  return (
-                    <HandCard
-                      card={card}
-                      index={index}
-                      key={`${card.id}-${index}`}
-                      selected={openingActiveIndex === index || openingBenchIndexes.includes(index)}
-                    >
-                      {isOpeningBasic ? (
-                        <>
-                          <button onClick={() => setOpeningActiveIndex(index)}>
-                            {openingActiveIndex === index ? 'Active selected' : 'Set Active'}
-                          </button>
-                          <button onClick={() => toggleOpeningBench(index)} disabled={openingActiveIndex === index}>
-                            {openingBenchIndexes.includes(index) ? 'Remove from Bench' : 'Bench'}
-                          </button>
-                        </>
-                      ) : (
-                        <span className="hand-card-note">Not a Basic Pokemon</span>
-                      )}
-                    </HandCard>
-                  );
-                })}
-              </div>
-              <button disabled={openingActiveIndex === null} onClick={confirmOpeningPokemon}>
-                Confirm opening Pokemon
-              </button>
-            </>
-          )}
-        </section>
-      )}
-
-      {!isSetup && !gameover && (
-        <section className="actions">
-          <h2>Match hand and turn actions for Player {actingPlayer}</h2>
-          {!isCurrent && <p>Waiting for Player {ctx.currentPlayer}.</p>}
-          <div className="action-group action-group-hand">
-            <h3>Your visible hand</h3>
-            <p className="action-hint">Hover or focus a card image to inspect the larger card art.</p>
-            {player.hand.length === 0 ? (
-              <p>Your hand is empty.</p>
-            ) : (
-              <div className="hand-grid">
-                {player.hand.map((card, index) => (
-                  <HandCard card={card} index={index} key={`${card.id}-${index}`}>
-                    {isCurrent && (
-                      <>
-                        {card.kind === 'pokemon' && card.stage === 'Basic' && (
-                          <button onClick={() => moves.benchBasic(index)}>Bench Basic</button>
-                        )}
-                        {card.kind === 'pokemon' && card.stage !== 'Basic' && (
-                          <>
-                            <button onClick={() => moves.evolvePokemon(index, 'active')}>Evolve Active</button>
-                            {player.bench.map((benchPokemon, benchIndex) => (
-                              <button key={benchPokemon.instanceId} onClick={() => moves.evolvePokemon(index, 'bench', benchIndex)}>
-                                Evolve Bench {benchIndex}
-                              </button>
-                            ))}
-                          </>
-                        )}
-                        {card.kind === 'energy' && (
-                          <>
-                            <button onClick={() => moves.attachEnergy(index, 'active')}>Attach to Active</button>
-                            {player.bench.map((benchPokemon, benchIndex) => (
-                              <button key={benchPokemon.instanceId} onClick={() => moves.attachEnergy(index, 'bench', benchIndex)}>
-                                Attach to Bench {benchIndex}
-                              </button>
-                            ))}
-                          </>
-                        )}
-                        {card.kind === 'trainer' && (
-                          <>
-                            <button onClick={() => moves.playTrainer(index, { zone: 'active' })}>Play</button>
-                            {player.bench.map((benchPokemon, benchIndex) => (
-                              <button key={benchPokemon.instanceId} onClick={() => moves.playTrainer(index, { zone: 'bench', benchIndex, switchBenchIndex: benchIndex })}>
-                                Play on Bench {benchIndex}
-                              </button>
-                            ))}
-                          </>
-                        )}
-                      </>
-                    )}
-                  </HandCard>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {isCurrent && (
-            <>
-              <div className="action-group">
-                <h3>Attack / retreat</h3>
-                {player.active?.card.attacks.map((attack, index) => (
-                  <button key={attack.name} onClick={() => moves.attack(index)}>
-                    Attack: {attack.name}
-                  </button>
-                ))}
-                {player.bench.map((pokemon, index) => (
-                  <button key={pokemon.instanceId} onClick={() => moves.retreat(index)}>
-                    Retreat to Bench {index}
-                  </button>
-                ))}
-                <button className="danger" onClick={() => moves.pass()}>Pass turn</button>
-              </div>
-            </>
-          )}
-        </section>
-      )}
-
       <div className="player-summaries">
         {PLAYER_IDS.map((id) => (
           <PlayerSummary key={id} id={id} player={G.players[id]} />
@@ -431,12 +651,26 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID }: Pokem
         style={{ backgroundImage: `url(${playmatImage})` }}
       >
         {PLAYER_IDS.map((id) => (
-          <PlayerMatZones key={id} id={id} player={G.players[id]} />
+          <PlayerMatZones
+            canDrop={id === actingPlayer && (isSetup ? !player.ready : isCurrent)}
+            key={id}
+            id={id}
+            onDropToZone={(event, zone, benchIndex) => dropHandCardOnZone(event, id, zone, benchIndex)}
+            player={G.players[id]}
+            setupPreview={id === actingPlayer ? setupPreview : undefined}
+          />
         ))}
-        <MatZone className="mat-zone-stadium" placement={STADIUM_PLACEMENT}>
-          <MatStack count={G.stadium ? 1 : 0} label={G.stadium?.name ?? 'Stadium'} />
+        <MatZone
+          canDrop={!isSetup && isCurrent}
+          className="mat-zone-stadium"
+          onDrop={(event) => dropHandCardOnZone(event, actingPlayer, 'stadium')}
+          placement={STADIUM_PLACEMENT}
+        >
+          <MatStack count={G.stadium ? 1 : 0} label={G.stadium?.name ?? 'Stadium'} topCard={G.stadium} />
         </MatZone>
       </section>
+
+      {handPanel}
 
       <section className="log">
         <h2>Game log</h2>
