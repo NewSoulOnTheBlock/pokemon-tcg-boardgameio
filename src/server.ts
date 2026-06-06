@@ -36,7 +36,9 @@ const db = databaseUrl
   ? new PostgresStorage({ connectionString: databaseUrl, ssl: postgresSslFromEnv() })
   : new FlatFile({ dir: storageDir, logging: false });
 const profileStorage = databaseUrl
-  ? new PostgresProfileStorage(databaseUrl, postgresSslFromEnv())
+  ? new PostgresProfileStorage(databaseUrl, postgresSslFromEnv(), {
+      leaderboardResetAt: process.env.LEADERBOARD_RESET_AT?.trim() || undefined,
+    })
   : new MemoryProfileStorage();
 const cardStorage: CardStorage = databaseUrl
   ? new PostgresCardStorage(databaseUrl, postgresSslFromEnv())

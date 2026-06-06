@@ -109,9 +109,31 @@ function storedProfileFromRow(row: {
 
 export class PostgresProfileStorage implements ProfileStorage {
   private readonly pool: Pool;
+  /**
+   * ISO timestamp of the last leaderboard reset. Match records started
+   * before this are silently dropped on persist so client caches can't
+   * resurrect them after a wipe.
+   */
+  private readonly resetEpoch?: number;
 
-  constructor(connectionString: string, ssl?: PoolConfig['ssl']) {
+  constructor(connectionString: string, ssl?: PoolConfig['ssl'], options?: { leaderboardResetAt?: string }) {
     this.pool = new Pool({ connectionString, ssl });
+    const epochIso = options?.leaderboardResetAt;
+    if (epochIso) {
+      const parsed = Date.parse(epochIso);
+      this.resetEpoch = Number.isFinite(parsed) ? parsed : undefined;
+      if (this.resetEpoch) {
+        console.log(`[profile-storage] leaderboard reset epoch active: ${new Date(this.resetEpoch).toISOString()} — match records started before this will be dropped on persist.`);
+      } else {
+        console.warn(`[profile-storage] LEADERBOARD_RESET_AT="${epochIso}" is not a valid ISO timestamp, ignoring.`);
+      }
+    }
+  }
+
+  private isBeforeReset(record: MatchRecord): boolean {
+    if (!this.resetEpoch) return false;
+    const started = Date.parse(record.startedAt);
+    return Number.isFinite(started) && started < this.resetEpoch;
   }
 
   async connect(): Promise<void> {
@@ -213,6 +235,14 @@ export class PostgresProfileStorage implements ProfileStorage {
   }
 
   async recordMatch(userId: string, record: MatchRecord): Promise<StoredProfile> {
+    if (this.isBeforeReset(record)) {
+      // Silently drop pre-reset records (e.g. stale records pushed up by a
+      // client that still has them cached locally). Returning the current
+      // profile keeps the client's persist call from breaking.
+      const existing = await this.findByUserId(userId);
+      if (!existing) throw new Error(`Profile not found: ${userId}`);
+      return existing;
+    }
     await this.pool.query(
       `
         INSERT INTO ${MATCHES_TABLE}
@@ -354,6 +384,7 @@ export class PostgresProfileStorage implements ProfileStorage {
 
   private async syncMatchRecords(userId: string, records: MatchRecord[]): Promise<void> {
     for (const record of records) {
+      if (this.isBeforeReset(record)) continue;
       await this.pool.query(
         `
           INSERT INTO ${MATCHES_TABLE}
