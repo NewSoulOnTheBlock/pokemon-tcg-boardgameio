@@ -79,6 +79,10 @@ server.router.post('/api/profiles/:userId/matches', koaBody(), async (ctx) => {
   ctx.body = await profileStorage.recordMatch(ctx.params.userId, record);
 });
 
+server.router.get('/api/leaderboard', async (ctx) => {
+  ctx.body = await profileStorage.listLeaderboard();
+});
+
 server.app.use(serve(distPath));
 server.app.use(async (ctx, next) => {
   await next();

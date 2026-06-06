@@ -323,6 +323,103 @@ button:disabled {
   gap: 18px;
 }
 
+.matchmaking-page {
+  align-items: center;
+}
+
+.matchmaking-center-panel,
+.leaderboard-panel {
+  box-sizing: border-box;
+  max-width: 900px;
+  width: min(900px, 100%);
+}
+
+.matchmaking-controls {
+  background: #f8fafc;
+  border: 1px solid #d8dfeb;
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 16px;
+}
+
+.matchmaking-create-controls {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(180px, 1fr)) auto;
+}
+
+.deck-select {
+  min-width: 0;
+}
+
+.empty-state {
+  color: #64748b;
+  font-weight: 700;
+  text-align: center;
+}
+
+.match-list {
+  display: grid;
+  gap: 12px;
+  margin: 0 auto;
+  max-width: 760px;
+}
+
+.match-card {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d8dfeb;
+  border-radius: 16px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.match-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.match-card span {
+  color: #64748b;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.leaderboard-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.leaderboard-table {
+  border-collapse: collapse;
+  overflow: hidden;
+  width: 100%;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.leaderboard-table th {
+  background: #0f172a;
+  color: white;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.leaderboard-table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
 .profile-page {
   box-sizing: border-box;
   max-width: none;
@@ -982,6 +1079,24 @@ button:disabled {
 
   .deckbuilder-layout {
     grid-template-columns: 1fr;
+  }
+
+  .matchmaking-create-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .match-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .leaderboard-table {
+    font-size: 0.86rem;
+  }
+
+  .leaderboard-table th,
+  .leaderboard-table td {
+    padding: 8px;
   }
 
   main {

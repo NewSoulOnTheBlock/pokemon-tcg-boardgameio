@@ -19,6 +19,15 @@ export interface MatchRecord {
   winner?: PlayerID;
 }
 
+export interface MatchLeaderboardEntry {
+  draws: number;
+  losses: number;
+  matches: number;
+  name: string;
+  userId: string;
+  wins: number;
+}
+
 export interface CustomDeck {
   cardIds: string[];
   createdAt: string;

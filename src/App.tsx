@@ -20,6 +20,7 @@ import {
   collectionSize,
   type CustomDeck,
   maxCollections,
+  type MatchLeaderboardEntry,
   type MatchRecord,
   type PackPurchase,
   type ProfileState,
@@ -46,6 +47,13 @@ interface MatchConfig {
 
 interface MatchSetupData extends PokemonTCGSetupData {
   deckLabels?: Record<PlayerID, string>;
+}
+
+interface DeckOption {
+  cardIds: string[];
+  id: string;
+  issues: string[];
+  label: string;
 }
 
 const PROFILE_KEY = 'pokemon-tcg-profile';
@@ -199,6 +207,10 @@ async function persistMatchRecord(profile: ProfileState, record: MatchRecord): P
   return saved;
 }
 
+async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
+  return apiRequest<MatchLeaderboardEntry[]>('/api/leaderboard', {});
+}
+
 function cardLabel(card: Card): string {
   if (card.kind === 'pokemon') return `${card.name} - ${card.stage} ${card.pokemonType}`;
   if (card.kind === 'energy') return `${card.name} - ${card.energyType}`;
@@ -311,6 +323,33 @@ function validateDeck(cards: string[]): string[] {
   }
 
   return issues;
+}
+
+function starterDeckOptions(): DeckOption[] {
+  return STARTER_ENERGY_TYPES.map((type) => ({
+    id: `starter:${type}`,
+    label: `${type} Starter`,
+    cardIds: STARTER_DECKS[type],
+    issues: [],
+  }));
+}
+
+function deckOptionsForProfile(profile: ProfileState): DeckOption[] {
+  const customDecks = profile.deckLibrary.map((deck) => ({
+    id: `custom:${deck.id}`,
+    label: deck.name,
+    cardIds: deck.cardIds,
+    issues: validateDeck(deck.cardIds),
+  }));
+  return [...starterDeckOptions(), ...customDecks];
+}
+
+function firstValidDeckId(options: DeckOption[]): string {
+  return options.find((option) => option.issues.length === 0)?.id ?? options[0]?.id ?? '';
+}
+
+function deckOptionById(options: DeckOption[], id: string): DeckOption | undefined {
+  return options.find((option) => option.id === id) ?? options.find((option) => option.issues.length === 0) ?? options[0];
 }
 
 function asPlayerID(playerID: string): PlayerID {
@@ -702,21 +741,36 @@ function MatchmakingPage({
   profile: ProfileState;
   onStartMatch: (config: MatchConfig) => void;
 }) {
-  const [playerDeckType, setPlayerDeckType] = useState<StarterEnergyType>('Grass');
-  const [opponentDeckType, setOpponentDeckType] = useState<StarterEnergyType>('Fire');
-  const [useCustomDeck, setUseCustomDeck] = useState(false);
+  const starterOptions = useMemo(() => starterDeckOptions(), []);
+  const deckOptions = useMemo(() => deckOptionsForProfile(profile), [profile]);
+  const [playerDeckId, setPlayerDeckId] = useState(() => firstValidDeckId(deckOptionsForProfile(profile)));
+  const [openSeatDeckId, setOpenSeatDeckId] = useState('starter:Fire');
+  const [acceptDeckId, setAcceptDeckId] = useState('starter:Fire');
   const [matches, setMatches] = useState<LobbyAPI.Match[]>([]);
+  const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
   const [busy, setBusy] = useState<'create' | 'refresh' | string | null>(null);
   const [error, setError] = useState('');
   const lobby = useMemo(() => new LobbyClient({ server: MULTIPLAYER_SERVER }), []);
-  const customIssues = validateDeck(profile.customDeck);
+  const selectedPlayerDeck = deckOptionById(deckOptions, playerDeckId);
+  const selectedOpenSeatDeck = deckOptionById(starterOptions, openSeatDeckId);
+  const selectedAcceptDeck = deckOptionById(starterOptions, acceptDeckId);
+
+  useEffect(() => {
+    if (!deckOptions.some((option) => option.id === playerDeckId)) {
+      setPlayerDeckId(firstValidDeckId(deckOptions));
+    }
+  }, [deckOptions, playerDeckId]);
 
   async function refreshMatches() {
     setError('');
     setBusy('refresh');
     try {
-      const { matches: listedMatches } = await lobby.listMatches(GAME_NAME, { isGameover: false });
+      const [{ matches: listedMatches }, leaderboardRows] = await Promise.all([
+        lobby.listMatches(GAME_NAME, { isGameover: false }),
+        fetchLeaderboard(),
+      ]);
       setMatches(listedMatches.filter((match) => Boolean(openSeat(match))));
+      setLeaderboard(leaderboardRows);
     } catch (err) {
       setError(`Could not reach multiplayer server at ${MULTIPLAYER_SERVER}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -741,17 +795,23 @@ function MatchmakingPage({
   }
 
   async function createMatch() {
-    const playerDeck = useCustomDeck ? profile.customDeck : STARTER_DECKS[playerDeckType];
-    const playerDeckLabel = useCustomDeck ? profile.activeDeckName : `${playerDeckType} Starter`;
-    const opponentDeckLabel = `${opponentDeckType} Starter`;
+    if (!selectedPlayerDeck || !selectedOpenSeatDeck) {
+      setError('Choose decks before creating a match.');
+      return;
+    }
+    if (selectedPlayerDeck.issues.length > 0) {
+      setError(`${selectedPlayerDeck.label} cannot be used yet: ${selectedPlayerDeck.issues.join(' ')}`);
+      return;
+    }
+
     const deckLabels: Record<PlayerID, string> = {
-      '0': playerDeckLabel,
-      '1': opponentDeckLabel,
+      '0': selectedPlayerDeck.label,
+      '1': selectedOpenSeatDeck.label,
     };
     const setupData: MatchSetupData = {
       seedDecks: {
-        '0': playerDeck,
-        '1': STARTER_DECKS[opponentDeckType],
+        '0': selectedPlayerDeck.cardIds,
+        '1': selectedOpenSeatDeck.cardIds,
       },
       deckLabels,
     };
@@ -766,7 +826,7 @@ function MatchmakingPage({
       const joined = await lobby.joinMatch(GAME_NAME, matchID, {
         playerID: '0',
         playerName: profile.name,
-        data: { deckLabel: playerDeckLabel },
+        data: { deckLabel: selectedPlayerDeck.label },
       });
       const playerID = asPlayerID(joined.playerID);
       const config = {
@@ -792,6 +852,11 @@ function MatchmakingPage({
       setError('That match is already full. Refresh the list and try another one.');
       return;
     }
+    const requiredDeckLabel = deckLabelForMatch(match, seat);
+    if (!selectedAcceptDeck || selectedAcceptDeck.label !== requiredDeckLabel) {
+      setError(`Select ${requiredDeckLabel} in the Accept as dropdown before joining this match.`);
+      return;
+    }
 
     setError('');
     setBusy(match.matchID);
@@ -799,7 +864,7 @@ function MatchmakingPage({
       const joined = await lobby.joinMatch(GAME_NAME, match.matchID, {
         playerID: seat,
         playerName: profile.name,
-        data: { deckLabel: deckLabelForMatch(match, seat) },
+        data: { deckLabel: selectedAcceptDeck.label },
       });
       const playerID = asPlayerID(joined.playerID);
       const config = {
@@ -821,53 +886,47 @@ function MatchmakingPage({
   }
 
   return (
-    <main className="content-page">
-      <section className="panel">
-        <p className="eyebrow">Matchmaking</p>
-        <h1>Create a match or accept a challenge</h1>
-        <p>Network matchmaking uses the boardgame.io lobby server at <strong>{MULTIPLAYER_SERVER}</strong>. The creator seeds both decks, joins as Player 0, and the acceptor joins as Player 1.</p>
-        <label className="checkbox-row">
-          <input
-            checked={useCustomDeck}
-            disabled={customIssues.length > 0}
-            onChange={(event) => setUseCustomDeck(event.target.checked)}
-            type="checkbox"
-          />
-          Use saved profile deck ({profile.activeDeckName})
-        </label>
-        <DeckChoice title="Your starter deck" value={playerDeckType} onChange={setPlayerDeckType} disabled={useCustomDeck} />
-        <DeckChoice title="Acceptor starter deck" value={opponentDeckType} onChange={setOpponentDeckType} />
-        <button className="primary-cta" disabled={busy !== null} onClick={createMatch}>
-          {busy === 'create' ? 'Creating match...' : 'Create online match'}
-        </button>
-        {error && <p className="error">{error}</p>}
-      </section>
-
-      <section className="panel">
+    <main className="content-page matchmaking-page">
+      <section className="panel matchmaking-center-panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Open challenges</p>
-            <h2>Accept someone else's match</h2>
+            <p className="eyebrow">Matchmaking</p>
+            <h1>Available matches</h1>
           </div>
           <button disabled={busy !== null} onClick={refreshMatches}>
             {busy === 'refresh' ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
+        <div className="matchmaking-controls">
+          <div className="matchmaking-create-controls">
+            <DeckSelect title="Start as" value={playerDeckId} options={deckOptions} onChange={setPlayerDeckId} />
+            <DeckSelect title="Open seat deck" value={openSeatDeckId} options={starterOptions} onChange={setOpenSeatDeckId} />
+            <button className="primary-cta" disabled={busy !== null || !selectedPlayerDeck || selectedPlayerDeck.issues.length > 0} onClick={createMatch}>
+              {busy === 'create' ? 'Creating...' : 'Create match'}
+            </button>
+          </div>
+          <DeckSelect title="Accept as" value={acceptDeckId} options={starterOptions} onChange={setAcceptDeckId} />
+        </div>
+        {error && <p className="error">{error}</p>}
         {matches.length === 0 ? (
-          <p>No open matches yet. Create one here, or have another player create one and refresh.</p>
+          <p className="empty-state">No open matches yet. Create one, or have another player create one and refresh.</p>
         ) : (
           <div className="match-list">
             {matches.map((match) => {
+              const seat = openSeat(match);
               const creator = playerInMatch(match, '0')?.name ?? 'Waiting for creator';
               const acceptor = playerInMatch(match, '1')?.name ?? 'Open seat';
+              const requiredDeckLabel = seat ? deckLabelForMatch(match, seat) : 'No open seat';
+              const canAcceptSelectedDeck = Boolean(seat && selectedAcceptDeck?.label === requiredDeckLabel);
               return (
                 <article className="match-card" key={match.matchID}>
                   <div>
                     <strong>{deckLabelForMatch(match, '0')} vs {deckLabelForMatch(match, '1')}</strong>
                     <span>Match {match.matchID}</span>
                     <span>Player 0: {creator} | Player 1: {acceptor}</span>
+                    <span>Open seat requires: {requiredDeckLabel}</span>
                   </div>
-                  <button disabled={busy !== null} onClick={() => acceptMatch(match)}>
+                  <button disabled={busy !== null || !canAcceptSelectedDeck} onClick={() => acceptMatch(match)}>
                     {busy === match.matchID ? 'Joining...' : 'Accept match'}
                   </button>
                 </article>
@@ -876,39 +935,67 @@ function MatchmakingPage({
           </div>
         )}
       </section>
+
+      <section className="panel leaderboard-panel">
+        <div>
+          <p className="eyebrow">Leaderboard</p>
+          <h2>Wins / losses for all players</h2>
+        </div>
+        {leaderboard.length === 0 ? (
+          <p className="empty-state">No player records yet.</p>
+        ) : (
+          <table className="leaderboard-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Player</th>
+                <th>Wins</th>
+                <th>Losses</th>
+                <th>Draws</th>
+                <th>Matches</th>
+              </tr>
+            </thead>
+            <tbody>
+              {leaderboard.map((entry, index) => (
+                <tr key={entry.userId}>
+                  <td>{index + 1}</td>
+                  <td>{entry.name}</td>
+                  <td>{entry.wins}</td>
+                  <td>{entry.losses}</td>
+                  <td>{entry.draws}</td>
+                  <td>{entry.matches}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
     </main>
   );
 }
 
-function DeckChoice({
+function DeckSelect({
   title,
   value,
-  disabled = false,
+  options,
   onChange,
 }: {
   title: string;
-  value: StarterEnergyType;
-  disabled?: boolean;
-  onChange: (type: StarterEnergyType) => void;
+  value: string;
+  options: DeckOption[];
+  onChange: (id: string) => void;
 }) {
   return (
-    <section className="deck-choice">
-      <h2>{title}</h2>
-      <div className="starter-grid">
-        {STARTER_ENERGY_TYPES.map((type) => (
-          <button
-            className={value === type ? 'starter-selected' : ''}
-            disabled={disabled}
-            key={type}
-            onClick={() => onChange(type)}
-            style={{ '--energy': ENERGY_TYPE_META[type].hex, '--ink': ENERGY_TYPE_META[type].ink } as React.CSSProperties}
-          >
-            <strong>{type}</strong>
-            <span>{ENERGY_TYPE_META[type].description}</span>
-          </button>
+    <label className="deck-select">
+      {title}
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option disabled={option.issues.length > 0} key={option.id} value={option.id}>
+            {option.label}{option.issues.length > 0 ? ' (fix deck)' : ''}
+          </option>
         ))}
-      </div>
-    </section>
+      </select>
+    </label>
   );
 }
 

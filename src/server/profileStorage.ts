@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Pool, type PoolConfig } from 'pg';
-import type { MatchRecord, PackPurchase, ProfileState, StoredProfile } from '../shared/profile';
+import type { MatchLeaderboardEntry, MatchRecord, PackPurchase, ProfileState, StoredProfile } from '../shared/profile';
 import { loginKeyForProfile, maxCollections } from '../shared/profile';
 
 interface ProfileStorage {
@@ -9,6 +9,7 @@ interface ProfileStorage {
   saveProfile(userId: string, profile: ProfileState): Promise<StoredProfile>;
   recordPack(userId: string, purchase: PackPurchase, profile: ProfileState): Promise<StoredProfile>;
   recordMatch(userId: string, record: MatchRecord): Promise<StoredProfile>;
+  listLeaderboard(): Promise<MatchLeaderboardEntry[]>;
 }
 
 const PROFILES_TABLE = 'app_profiles';
@@ -236,6 +237,24 @@ export class PostgresProfileStorage implements ProfileStorage {
     return this.saveStoredProfile({ ...existing, matchRecords: [...records.values()], updatedAt: nowIso() });
   }
 
+  async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
+    const { rows } = await this.pool.query<MatchLeaderboardEntry>(`
+      SELECT
+        p.user_id AS "userId",
+        p.name,
+        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw'))::int AS matches,
+        COUNT(*) FILTER (WHERE m.result = 'win')::int AS wins,
+        COUNT(*) FILTER (WHERE m.result = 'loss')::int AS losses,
+        COUNT(*) FILTER (WHERE m.result = 'draw')::int AS draws
+      FROM ${PROFILES_TABLE} p
+      LEFT JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
+      GROUP BY p.user_id, p.name
+      ORDER BY wins DESC, losses ASC, draws DESC, matches DESC, p.name ASC
+      LIMIT 50
+    `);
+    return rows;
+  }
+
   private async findByLoginKey(loginKey: string): Promise<StoredProfile | undefined> {
     const { rows } = await this.pool.query(`SELECT * FROM ${PROFILES_TABLE} WHERE login_key = $1`, [loginKey]);
     return rows[0] ? storedProfileFromRow(rows[0]) : undefined;
@@ -395,6 +414,23 @@ export class MemoryProfileStorage implements ProfileStorage {
     const records = new Map(existing.matchRecords.map((candidate) => [`${candidate.matchID}:${candidate.playerID}`, candidate]));
     records.set(`${record.matchID}:${record.playerID}`, record);
     return this.saveStoredProfile({ ...existing, matchRecords: [...records.values()], updatedAt: nowIso() });
+  }
+
+  async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
+    return [...this.profiles.values()]
+      .map((profile) => {
+        const completed = profile.matchRecords.filter((record) => record.result !== 'in_progress');
+        return {
+          userId: profile.userId,
+          name: profile.name,
+          matches: completed.length,
+          wins: completed.filter((record) => record.result === 'win').length,
+          losses: completed.filter((record) => record.result === 'loss').length,
+          draws: completed.filter((record) => record.result === 'draw').length,
+        };
+      })
+      .sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || b.matches - a.matches || a.name.localeCompare(b.name))
+      .slice(0, 50);
   }
 
   private saveStoredProfile(profile: StoredProfile): StoredProfile {
