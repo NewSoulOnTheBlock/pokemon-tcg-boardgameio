@@ -260,6 +260,11 @@ class RealPhygitalsClient implements PhygitalsClient {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       Accept: 'application/json',
+      // Phygitals sits behind Cloudflare with bot protection on. Node's
+      // default fetch User-Agent (undici/*) gets flagged and returns
+      // a 403 WAF challenge page even with a valid X-API-Key. Sending
+      // a real browser UA lets the request through.
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (withApiKey) headers['X-API-Key'] = this.apiKey;
