@@ -1865,6 +1865,11 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
           <CollectionTab profile={profile} totalUniqueCardsInLibrary={totalUniqueCardsInLibrary} />
         </div>
       )}
+
+      <footer className="phygitals-powered-by" aria-label="Powered by Phygitals">
+        <span className="phygitals-powered-by-text">Powered by</span>
+        <img src="/phygitals-logo.png" alt="Phygitals" className="phygitals-powered-by-logo" />
+      </footer>
     </main>
   );
 }

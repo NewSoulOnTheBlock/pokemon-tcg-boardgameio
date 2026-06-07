@@ -5362,3 +5362,43 @@ button:disabled {
 }
 .daily-pack-card-rare strong { color: #facc15; }
 .daily-pack-card-uncommon strong { color: #93c5fd; }
+
+/* ===== Phygitals "Powered by" footer ============================== */
+.phygitals-powered-by {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  justify-content: center;
+  margin-top: 64px;
+  padding: 48px 24px 32px;
+  position: relative;
+  text-align: center;
+}
+.phygitals-powered-by::before {
+  background: radial-gradient(ellipse at center, rgba(168, 85, 247, 0.18), transparent 65%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+.phygitals-powered-by-text {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  position: relative;
+  text-transform: uppercase;
+}
+.phygitals-powered-by-logo {
+  display: block;
+  filter: drop-shadow(0 4px 24px rgba(168, 85, 247, 0.35));
+  height: auto;
+  max-width: 640px;
+  position: relative;
+  width: 80%;
+}
+@media (max-width: 720px) {
+  .phygitals-powered-by-logo { width: 92%; }
+  .phygitals-powered-by-text { font-size: 0.85rem; }
+}
