@@ -467,8 +467,9 @@ export const PokemonTCG: Game<PokemonTCGState> = {
       const pid = ensurePlayer(playerID);
       if (!pid) return [];
       const player = G.players[pid];
+      const opponent = G.players[opponentOf(pid)];
 
-      // ----- Setup phase: pick an Active Basic + optionally bench more ---
+      // ----- Setup phase: pick an Active Basic + bench up to 5 more ------
       if (ctx.phase === 'setup') {
         if (player.ready) return [];
         const basicIndexes: number[] = [];
@@ -477,7 +478,9 @@ export const PokemonTCG: Game<PokemonTCGState> = {
         });
         if (basicIndexes.length === 0) return [];
         const [activeIndex, ...benchCandidates] = basicIndexes;
-        const benchIndexes = benchCandidates.slice(0, 2);
+        // Official rules allow up to 5 Bench Pokemon in setup. Bench all
+        // available so the bot has backups when its Active is KO'd.
+        const benchIndexes = benchCandidates.slice(0, 5);
         return [{ move: 'chooseOpeningPokemon', args: [activeIndex, benchIndexes] }];
       }
 
@@ -487,8 +490,14 @@ export const PokemonTCG: Game<PokemonTCGState> = {
       }
 
       const moves: Array<{ move: string; args?: unknown[] }> = [];
+      const benchSlots: Array<{ zone: 'bench'; benchIndex: number; pokemon: typeof player.bench[number] }> =
+        player.bench.map((pokemon, benchIndex) => ({ zone: 'bench' as const, benchIndex, pokemon }));
+      const activeSlot = player.active ? { zone: 'active' as const, pokemon: player.active } : undefined;
+      const allSlots: Array<{ zone: 'active' | 'bench'; benchIndex?: number; pokemon: typeof player.bench[number] }> = [];
+      if (activeSlot) allSlots.push({ zone: 'active', pokemon: activeSlot.pokemon });
+      benchSlots.forEach((slot) => allSlots.push(slot));
 
-      // Bench any Basics we're still holding so we have backups.
+      // ----- Bench Basics --------------------------------------------------
       if (player.bench.length < 5) {
         player.hand.forEach((card, index) => {
           if (isBasicPokemon(card)) {
@@ -497,16 +506,127 @@ export const PokemonTCG: Game<PokemonTCGState> = {
         });
       }
 
-      // Attach one Energy to the Active Pokemon if we have one and haven't yet.
-      if (player.active && !player.energyAttachedThisTurn) {
-        const energyIndex = player.hand.findIndex(isEnergy);
-        if (energyIndex >= 0) {
-          moves.push({ move: 'attachEnergy', args: [energyIndex, 'active'] });
-        }
+      // ----- Evolve --------------------------------------------------------
+      // Allowed only on the 2nd+ turn for this player, and only on a target
+      // that has been in play since before this turn and hasn't evolved this
+      // turn. The move handler re-validates so we just enumerate plausible
+      // hand × target combinations.
+      if (G.turnsTaken[pid] > 1) {
+        player.hand.forEach((card, handIndex) => {
+          if (!isPokemon(card) || !card.evolvesFrom) return;
+          allSlots.forEach((slot) => {
+            if (slot.pokemon.card.name !== card.evolvesFrom) return;
+            if (slot.pokemon.enteredTurn === ctx.turn) return;
+            if (slot.pokemon.evolvedTurn === ctx.turn) return;
+            const args: unknown[] = slot.zone === 'active'
+              ? [handIndex, 'active']
+              : [handIndex, 'bench', slot.benchIndex];
+            moves.push({ move: 'evolvePokemon', args });
+          });
+        });
       }
 
-      // Attack with any attack we can afford.
-      if (player.active) {
+      // ----- Attach 1 Energy to any of our Pokemon -------------------------
+      if (!player.energyAttachedThisTurn) {
+        player.hand.forEach((card, index) => {
+          if (!isEnergy(card)) return;
+          if (player.active) {
+            moves.push({ move: 'attachEnergy', args: [index, 'active'] });
+          }
+          player.bench.forEach((_, benchIndex) => {
+            moves.push({ move: 'attachEnergy', args: [index, 'bench', benchIndex] });
+          });
+        });
+      }
+
+      // ----- Play Trainers -------------------------------------------------
+      // Enumerate every Trainer in hand with a target plausible for its
+      // effect. The playTrainer handler re-validates (supporter-per-turn,
+      // first-turn supporter block, stadium duplicates, tool slot, etc.).
+      const isFirstTurnForUs = ctx.currentPlayer === G.firstPlayer && G.turnsTaken[pid] === 1;
+      player.hand.forEach((card, handIndex) => {
+        if (!isTrainer(card)) return;
+
+        if (card.trainerType === 'Supporter') {
+          if (player.supporterPlayedThisTurn || isFirstTurnForUs) return;
+        }
+
+        if (card.trainerType === 'Stadium') {
+          if (player.stadiumPlayedThisTurn) return;
+          if (G.stadium?.card.name === card.name) return;
+          moves.push({ move: 'playTrainer', args: [handIndex] });
+          return;
+        }
+
+        if (card.trainerType === 'Pokemon Tool') {
+          // Attach to any Pokemon that doesn't already have a tool.
+          allSlots.forEach((slot) => {
+            if (slot.pokemon.tool) return;
+            const target = slot.zone === 'active'
+              ? { zone: 'active' as const }
+              : { zone: 'bench' as const, benchIndex: slot.benchIndex };
+            moves.push({ move: 'playTrainer', args: [handIndex, target] });
+          });
+          return;
+        }
+
+        // Item / Supporter effects. Target depends on the effect.
+        switch (card.effect) {
+          case 'heal30': {
+            allSlots.forEach((slot) => {
+              if (slot.pokemon.damage <= 0) return;
+              const target = slot.zone === 'active'
+                ? { zone: 'active' as const }
+                : { zone: 'bench' as const, benchIndex: slot.benchIndex };
+              moves.push({ move: 'playTrainer', args: [handIndex, target] });
+            });
+            break;
+          }
+          case 'switch': {
+            if (!player.active || player.bench.length === 0) break;
+            player.bench.forEach((_, benchIndex) => {
+              moves.push({ move: 'playTrainer', args: [handIndex, { zone: 'bench', benchIndex, switchBenchIndex: benchIndex }] });
+            });
+            break;
+          }
+          case 'searchBasicToBench': {
+            if (player.bench.length >= 5) break;
+            if (!player.deck.some(isBasicPokemon)) break;
+            moves.push({ move: 'playTrainer', args: [handIndex] });
+            break;
+          }
+          case 'draw3':
+          case 'research':
+            moves.push({ move: 'playTrainer', args: [handIndex] });
+            break;
+          default:
+            // Unknown effect — skip so the bot doesn't waste it as INVALID.
+            break;
+        }
+      });
+
+      // ----- Retreat -------------------------------------------------------
+      if (
+        player.active
+        && !player.retreatedThisTurn
+        && !player.active.conditions.includes('asleep')
+        && !player.active.conditions.includes('paralyzed')
+        && player.active.attachedEnergy.length >= player.active.card.retreatCost
+        && player.bench.length > 0
+      ) {
+        player.bench.forEach((_, benchIndex) => {
+          moves.push({ move: 'retreat', args: [benchIndex] });
+        });
+      }
+
+      // ----- Attack --------------------------------------------------------
+      if (
+        player.active
+        && opponent.active
+        && !isFirstTurnAttackBlocked(G, ctx)
+        && !player.active.conditions.includes('asleep')
+        && !player.active.conditions.includes('paralyzed')
+      ) {
         player.active.card.attacks.forEach((candidate, index) => {
           if (canPayEnergyCost(player.active!.attachedEnergy, candidate.cost)) {
             moves.push({ move: 'attack', args: [index] });
@@ -514,7 +634,7 @@ export const PokemonTCG: Game<PokemonTCGState> = {
         });
       }
 
-      // Always allow a pass as a fallback.
+      // Pass is always available as a safety valve.
       moves.push({ move: 'pass' });
 
       return moves;

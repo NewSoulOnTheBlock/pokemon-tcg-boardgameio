@@ -207,4 +207,92 @@ describe('PokemonTCG', () => {
     // The off-turn player should be marked as loser (current player wins).
     expect(G.winner).not.toBe(offTurnPlayer);
   });
+
+  it('bot enumerate covers every rules-legal move (bench, evolve, attach, trainer, retreat, attack)', () => {
+    // Hand-craft a play-phase state where the current player has options for
+    // every action category. Verifies that the bot's `enumerate` returns
+    // each move so RandomBot has a chance to play by all the rules — not
+    // just bench-and-attack as before.
+    const baseG = setupState(fullSetupDataForTests());
+    const G: PokemonTCGState = structuredClone(baseG);
+
+    // Make the current player (P0) have:
+    //   • An Active Sprigatito with a Grass energy (eligible to attack basic + retreat)
+    //   • A Bench Sprigatito
+    //   • Hand with: Floragato (evolves Sprigatito), Grass energy, Potion (heal),
+    //     Sprigatito (more Basic to bench), Switch (trainer with bench target).
+    const sprigatito = CARD_LIBRARY['sprigatito'];
+    const floragato = CARD_LIBRARY['floragato'];
+    const grassEnergy = CARD_LIBRARY['grass_energy'];
+    const potion = CARD_LIBRARY['potion'];
+    const switchCard = CARD_LIBRARY['switch'];
+    expect(sprigatito).toBeDefined();
+    expect(floragato).toBeDefined();
+    expect(grassEnergy).toBeDefined();
+    expect(potion).toBeDefined();
+    expect(switchCard).toBeDefined();
+
+    G.players['0'].active = {
+      instanceId: 'sprigatito-active',
+      card: cloneCard('sprigatito'),
+      evolution: [cloneCard('sprigatito')],
+      attachedEnergy: [cloneCard('grass_energy') as typeof grassEnergy],
+      damage: 20, // so Potion is a useful enumeration target
+      conditions: [],
+      enteredTurn: 0,
+    } as PokemonTCGState['players']['0']['active'];
+    G.players['0'].bench = [{
+      instanceId: 'sprigatito-bench',
+      card: cloneCard('sprigatito'),
+      evolution: [cloneCard('sprigatito')],
+      attachedEnergy: [],
+      damage: 0,
+      conditions: [],
+      enteredTurn: 0,
+    } as NonNullable<PokemonTCGState['players']['0']['active']>];
+    G.players['0'].hand = [
+      cloneCard('floragato'),
+      cloneCard('grass_energy'),
+      cloneCard('potion'),
+      cloneCard('sprigatito'),
+      cloneCard('switch'),
+    ];
+    G.players['1'].active = G.players['1'].active ?? {
+      instanceId: 'opp-active',
+      card: cloneCard('sprigatito'),
+      evolution: [cloneCard('sprigatito')],
+      attachedEnergy: [],
+      damage: 0,
+      conditions: [],
+      enteredTurn: 0,
+    } as NonNullable<PokemonTCGState['players']['0']['active']>;
+    G.turnsTaken['0'] = 3; // past the no-evolve-T1 + no-attack-T1 windows
+    G.players['0'].ready = true;
+    G.players['1'].ready = true;
+    G.firstPlayer = '1'; // ensures P0 isn't blocked by first-turn rules
+
+    const enumerate = PokemonTCG.ai?.enumerate;
+    expect(enumerate).toBeDefined();
+    const rawMoves = enumerate!(G, { phase: 'play', currentPlayer: '0', turn: 5 } as any, '0');
+    // ai.enumerate returns a union of { move, args } | { event, args } | etc.
+    // We only emit { move, args } entries, so narrow with a runtime guard.
+    const moves = rawMoves.filter((entry): entry is { move: string; args?: unknown[] } => 'move' in entry);
+    const names = new Set(moves.map((m) => m.move));
+
+    expect(names.has('benchBasic')).toBe(true);
+    expect(names.has('evolvePokemon')).toBe(true);
+    expect(names.has('attachEnergy')).toBe(true);
+    expect(names.has('playTrainer')).toBe(true);
+    expect(names.has('retreat')).toBe(true);
+    expect(names.has('attack')).toBe(true);
+    expect(names.has('pass')).toBe(true);
+
+    // attachEnergy should target BOTH the active and the bench slot, not
+    // just active (previous bug).
+    const energyMoves = moves.filter((m) => m.move === 'attachEnergy');
+    const targetsBench = energyMoves.some((m) => m.args?.[1] === 'bench');
+    const targetsActive = energyMoves.some((m) => m.args?.[1] === 'active');
+    expect(targetsActive).toBe(true);
+    expect(targetsBench).toBe(true);
+  });
 });
