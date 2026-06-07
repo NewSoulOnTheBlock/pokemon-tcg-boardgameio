@@ -68,7 +68,6 @@ export function QuestCard({
       </div>
       <div className="quest-reward-row">
         <span className="quest-reward">+{template.rewardXP} XP</span>
-        <span className="quest-reward quest-reward-coins">🪙 {template.rewardCoins}</span>
         <button
           className={`quest-claim-button quest-claim-button-${state}`}
           disabled={!done || claimed}

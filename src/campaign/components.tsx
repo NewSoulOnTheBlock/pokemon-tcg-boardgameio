@@ -146,14 +146,6 @@ export function ChampionPanel({ progress, onBattle }: { progress: CampaignProgre
 }
 
 export function CampaignRewardsPanel({ progress }: { progress: CampaignProgress }) {
-  const totalBoosters = progress.defeatedOpponents.reduce((sum, id) => {
-    if (id.startsWith('gym-giovanni')) return sum + 2;
-    if (id.startsWith('e4-lance')) return sum + 3;
-    if (id === 'champion-blue') return sum + 5;
-    if (id.startsWith('e4-')) return sum + 2;
-    if (id.startsWith('gym-')) return sum + 1;
-    return sum;
-  }, 0);
   return (
     <section className="panel campaign-rewards-panel">
       <p className="eyebrow">Rewards earned</p>
@@ -163,8 +155,8 @@ export function CampaignRewardsPanel({ progress }: { progress: CampaignProgress 
           <span>Badges</span>
         </div>
         <div className="campaign-reward">
-          <strong>{totalBoosters}</strong>
-          <span>Booster Packs earned (placeholder — claim flow TBD)</span>
+          <strong>{progress.defeatedOpponents.length}</strong>
+          <span>Opponents defeated</span>
         </div>
         <div className="campaign-reward">
           <strong>{progress.championDefeated ? 'Yes 👑' : 'Not yet'}</strong>

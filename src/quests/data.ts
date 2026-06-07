@@ -56,26 +56,21 @@ export function getLevelAndProgress(totalXP: number): {
 export interface LevelReward {
   description: string;
   emoji: string;
-  /** Cosmetic-only — we don't have an in-game currency wallet. */
-  coins?: number;
-  /** Placeholder: free booster pack drop would need server economy. */
-  boosters?: number;
 }
 
-/** Per-level rewards spec. Every level grants placeholder coins; every
- *  5th, 10th, and 25th level layer in extra cosmetic placeholders. */
+/** Per-level rewards. We don't have a real in-game economy (no coins,
+ *  no pack inventory, no cosmetics asset pipeline), so the only thing
+ *  worth showing on level-up is the milestone itself. Once an economy
+ *  ships, swap these strings for actual grants. */
 export function getLevelRewards(level: number): LevelReward[] {
   const rewards: LevelReward[] = [
-    { description: `+100 Coins`, emoji: '🪙', coins: 100 },
+    { description: 'Trainer level milestone unlocked', emoji: '🏅' },
   ];
-  if (level % 25 === 0) {
-    rewards.push({ description: 'Exclusive Card Back', emoji: '🎴' });
-  }
-  if (level % 10 === 0) {
-    rewards.push({ description: 'Exclusive Avatar Frame', emoji: '🖼' });
-  }
   if (level % 5 === 0) {
-    rewards.push({ description: '+1 Booster Pack (placeholder)', emoji: '📦', boosters: 1 });
+    rewards.push({ description: 'Trainer dossier title bump', emoji: '🎖' });
+  }
+  if (level % 25 === 0) {
+    rewards.push({ description: 'Master tier achieved', emoji: '👑' });
   }
   return rewards;
 }
