@@ -123,6 +123,17 @@ import {
   type BoosterTabId,
 } from './boosters/components';
 import {
+  HomeQuestWidget,
+  LevelUpModal,
+  QuestCenter,
+  awardXPAndPersist,
+} from './quests/components';
+import {
+  xpForCampaignWin,
+  xpForMatchResult,
+  XP_REWARDS,
+} from './quests/data';
+import {
   getTelegramUser,
   initTelegramWebApp,
   isTelegramMiniApp,
@@ -751,6 +762,11 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
             <span>Packs</span>
           </div>
         </div>
+        <HomeQuestWidget
+          profile={profile}
+          walletAddress={profile.wallet?.address}
+          onOpenQuests={() => onNavigate('profile')}
+        />
         <div className="home-button-stack">
           <button className="home-menu-button primary-cta" onClick={() => onNavigate('matchmaking')}>
             <strong>Matchmaking</strong>
@@ -1176,6 +1192,12 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
               </div>
             </section>
           )}
+        </div>
+      )}
+
+      {activeTab === 'quests' && (
+        <div className="profile-tab-pane">
+          <QuestCenter profile={profile} walletAddress={profile.wallet?.address} />
         </div>
       )}
 
@@ -1902,6 +1924,8 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       };
       const saved = await persistPackAndStore(updated, purchase);
       onProfileChange(saved);
+      // Auto-award XP for opening a pack.
+      awardXPAndPersist(walletAddress, XP_REWARDS.packOpened);
       setPack(redeemed.pack as unknown as BoosterPull[]);
       setOpenedSetId(set.id);
       setMintSummary(redeemed.mints);
@@ -2051,6 +2075,7 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
     });
   }
 
+  const [campaignLevelUpTo, setCampaignLevelUpTo] = useState<number | null>(null);
   function recordCampaignMatchComplete(opponent: CampaignOpponent, payload: { winner?: PlayerID }) {
     if (payload.winner !== '0') return; // player is always seat 0 in CPU matches
     const wasAlreadyDefeated = progress.defeatedOpponents.includes(opponent.id);
@@ -2058,7 +2083,12 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
     if (next === progress) return;
     setProgress(next);
     saveCampaignProgress(walletAddress, next);
-    if (!wasAlreadyDefeated) setVictoryAward(opponent);
+    if (!wasAlreadyDefeated) {
+      setVictoryAward(opponent);
+      // First-time campaign wins grant XP per tier.
+      const awarded = awardXPAndPersist(walletAddress, xpForCampaignWin(opponent.tier));
+      if (awarded.newLevel) setCampaignLevelUpTo(awarded.newLevel);
+    }
   }
 
   const CampaignBattleBoard = useMemo(() => {
@@ -2136,6 +2166,9 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
 
       {victoryAward && (
         <VictoryRewardModal opponent={victoryAward} onDismiss={() => setVictoryAward(null)} />
+      )}
+      {campaignLevelUpTo !== null && (
+        <LevelUpModal newLevel={campaignLevelUpTo} onDismiss={() => setCampaignLevelUpTo(null)} />
       )}
     </main>
   );
@@ -2373,6 +2406,7 @@ function MatchClient({
 }) {
   const [recordedGameover, setRecordedGameover] = useState(false);
   const [prizeClaim, setPrizeClaim] = useState<ClaimedPrize | null>(null);
+  const [levelUpTo, setLevelUpTo] = useState<number | null>(null);
   const recordMatchCompletion = useCallback(async ({ reason, winner, winnerWallet }: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => {
     if (recordedGameover) {
       return;
@@ -2401,6 +2435,14 @@ function MatchClient({
     };
     const saved = await persistMatchAndStore(profile, record);
     onProfileChange(saved);
+
+    // Auto-award trainer XP (multiplayer matches always grant; CPU
+    // matches go through the campaign flow which has its own award).
+    if (result === 'win' || result === 'loss' || result === 'draw') {
+      const xp = xpForMatchResult(config.matchType, result === 'draw' ? 'loss' : result);
+      const awarded = awardXPAndPersist(profile.wallet?.address, xp);
+      if (awarded.newLevel) setLevelUpTo(awarded.newLevel);
+    }
 
     // Free prize card for winning. Server enforces once-per-match via
     // app_match_records.prize_claimed. Skip if the player didn't sign
@@ -2468,6 +2510,9 @@ function MatchClient({
         matchID={config.matchID}
         playerID={config.playerID}
       />
+      {levelUpTo !== null && (
+        <LevelUpModal newLevel={levelUpTo} onDismiss={() => setLevelUpTo(null)} />
+      )}
     </div>
   );
 }

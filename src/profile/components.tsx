@@ -12,10 +12,11 @@ import type { Achievement, RegionProgressResult, TypeBreakdownEntry } from './da
 
 // ===== Tabs ===========================================================
 
-export type ProfileTabId = 'profile' | 'collection' | 'decks' | 'match-history' | 'achievements' | 'leaderboard';
+export type ProfileTabId = 'profile' | 'collection' | 'decks' | 'match-history' | 'achievements' | 'leaderboard' | 'quests';
 
 export const PROFILE_TABS: Array<{ id: ProfileTabId; label: string; icon: string }> = [
   { id: 'profile', label: 'Profile', icon: '🎮' },
+  { id: 'quests', label: 'Quests', icon: '🎯' },
   { id: 'collection', label: 'Collection', icon: '🃏' },
   { id: 'decks', label: 'Decks', icon: '📚' },
   { id: 'match-history', label: 'Match History', icon: '⚔' },
