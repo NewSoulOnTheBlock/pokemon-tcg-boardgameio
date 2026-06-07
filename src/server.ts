@@ -474,6 +474,20 @@ server.router.get('/api/phygitals/status', (ctx) => {
 server.router.get('/api/phygitals/debug', async (ctx) => {
   const apiKey = process.env.PHYGITALS_API_KEY?.trim() ?? '';
   const baseUrl = process.env.PHYGITALS_BASE_URL?.trim() || 'https://api.phygitals.com';
+  const browserHeaders: Record<string, string> = {
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"macOS"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
+    Referer: 'https://phygitals.com/',
+    Origin: 'https://phygitals.com',
+  };
   const probe = async (label: string, headers: Record<string, string>) => {
     try {
       const res = await fetch(`${baseUrl}/api/vm/available`, { headers });
@@ -482,7 +496,8 @@ server.router.get('/api/phygitals/debug', async (ctx) => {
         label,
         status: res.status,
         contentType: res.headers.get('content-type'),
-        bodyPreview: text.slice(0, 600),
+        cfRay: res.headers.get('cf-ray'),
+        bodyPreview: text.slice(0, 240),
       };
     } catch (err) {
       return { label, error: (err as Error).message };
@@ -494,8 +509,9 @@ server.router.get('/api/phygitals/debug', async (ctx) => {
     apiKeyLength: apiKey.length,
     baseUrl,
     probes: await Promise.all([
-      probe('no-auth', { Accept: 'application/json' }),
-      probe('with-key', apiKey ? { Accept: 'application/json', 'X-API-Key': apiKey } : { Accept: 'application/json' }),
+      probe('bare', { Accept: 'application/json' }),
+      probe('browser', browserHeaders),
+      probe('browser+key', { ...browserHeaders, 'X-API-Key': apiKey }),
     ]),
   };
 });

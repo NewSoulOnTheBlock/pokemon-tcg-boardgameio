@@ -258,13 +258,23 @@ class RealPhygitalsClient implements PhygitalsClient {
 
   private async apiCall<T>(method: 'GET' | 'POST', path: string, body?: unknown, withApiKey = true): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+    // Phygitals sits behind Cloudflare with strict bot protection. Node's
+    // default fetch User-Agent (undici/*) and Render's outbound IPs get
+    // 403'd by Cloudflare's WAF. Send a full browser fingerprint to slip
+    // past the JS challenge.
     const headers: Record<string, string> = {
-      Accept: 'application/json',
-      // Phygitals sits behind Cloudflare with bot protection on. Node's
-      // default fetch User-Agent (undici/*) gets flagged and returns
-      // a 403 WAF challenge page even with a valid X-API-Key. Sending
-      // a real browser UA lets the request through.
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      Referer: 'https://phygitals.com/',
+      Origin: 'https://phygitals.com',
     };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (withApiKey) headers['X-API-Key'] = this.apiKey;
