@@ -481,6 +481,36 @@ export async function fetchPhygitalsBuyerStatus(): Promise<PhygitalsBuyerStatus>
 }
 
 /**
+ * Preflight: verifies Phygitals is reachable from our server + the
+ * pack is in stock. MUST be called before payTreasuryUsdc — if this
+ * 5xxs we know the user shouldn't pay anything yet.
+ */
+export async function preflightPhygitalsBuy(args: {
+  packId: string;
+  amount: number;
+  currency?: 'usdc' | 'usdt';
+}): Promise<{ pack: { id: string; mint_price: number }; expectedAmount: number; treasuryPubkey: string }> {
+  const res = await fetch(apiUrl('/api/phygitals-buyer/preflight'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  let parsed: unknown = null;
+  if (text) {
+    try { parsed = JSON.parse(text); }
+    catch { parsed = text; }
+  }
+  if (!res.ok) {
+    const msg = (parsed && typeof parsed === 'object' && 'error' in parsed)
+      ? String((parsed as { error: unknown }).error)
+      : `Preflight failed (${res.status})`;
+    throw new PhygitalsApiError(res.status, parsed, msg);
+  }
+  return parsed as { pack: { id: string; mint_price: number }; expectedAmount: number; treasuryPubkey: string };
+}
+
+/**
  * Build + sign the USDC transfer the user pays to the treasury wallet.
  * Returns the on-chain signature; pass it to serverBuyPhygitalsPack().
  */

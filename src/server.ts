@@ -264,6 +264,39 @@ server.router.get('/api/phygitals-buyer/status', (ctx) => {
   ctx.body = { enabled: phygitalsBuyer.enabled, treasuryPubkey: phygitalsBuyer.treasuryPubkey };
 });
 
+/**
+ * Preflight: verify Phygitals is reachable + the pack is in stock
+ * BEFORE asking the user to sign a payment. If this fails the user
+ * has not paid anything and we can return the error cleanly.
+ */
+server.router.post('/api/phygitals-buyer/preflight', jsonBody, async (ctx) => {
+  const body = ctx.request.body as {
+    packId?: string;
+    amount?: number;
+    currency?: 'usdc' | 'usdt';
+  } | undefined;
+  if (!body?.packId || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
+    ctx.throw(400, 'packId and amount are required');
+    return;
+  }
+  try {
+    const result = await phygitalsBuyer.preflight({
+      packId: body.packId,
+      amount: body.amount!,
+      currency: body.currency,
+    });
+    ctx.body = result;
+  } catch (err) {
+    if (err instanceof PhygitalsBuyerError) {
+      ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
+      ctx.type = 'application/json';
+      ctx.body = err.body && typeof err.body === 'object' ? err.body : { error: err.message };
+      return;
+    }
+    throw err;
+  }
+});
+
 server.router.post('/api/phygitals-buyer/buy', jsonBody, async (ctx) => {
   const body = ctx.request.body as {
     buyerWallet?: string;

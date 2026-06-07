@@ -81,9 +81,17 @@ export class PhygitalsBuyerError extends Error {
 export interface PhygitalsBuyerService {
   enabled: boolean;
   treasuryPubkey: string;
+  /** Preflight: confirms Phygitals is reachable + the pack exists +
+   *  is in stock, BEFORE asking the user to pay. */
+  preflight(args: {
+    packId: string;
+    amount: number;
+    currency?: 'usdc' | 'usdt';
+  }): Promise<{ pack: { id: string; mint_price: number; rewards: Array<{ mint: string; amount: number }> }; expectedAmount: number; treasuryPubkey: string }>;
   /** Verify a user's USDC payment landed in our treasury and matches
    *  the expected pack price, then execute the Phygitals buy with the
-   *  bound API wallet. Returns the pulled NFTs. */
+   *  bound API wallet. Returns the pulled NFTs. Auto-refunds the user
+   *  if the Phygitals call fails after their payment is verified. */
   buy(args: {
     buyerWallet: string;
     packId: string;
@@ -96,6 +104,13 @@ export interface PhygitalsBuyerService {
 class DisabledPhygitalsBuyer implements PhygitalsBuyerService {
   enabled = false as const;
   treasuryPubkey = '';
+  async preflight(): Promise<never> {
+    throw new PhygitalsBuyerError(
+      503,
+      null,
+      'Phygitals server-buy is not configured. Set PHYGITALS_API_KEY + PHYGITALS_BUYER_SECRET_KEY on the server.',
+    );
+  }
   async buy(): Promise<never> {
     throw new PhygitalsBuyerError(
       503,
@@ -227,6 +242,88 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
     }
   }
 
+  /**
+   * Pre-flight check before asking the user to pay. Verifies Phygitals
+   * is reachable from the server AND the requested pack exists + is in
+   * stock. Throws a PhygitalsBuyerError with the appropriate status
+   * if anything's wrong, so the client knows NOT to ask the user for
+   * a payment signature yet.
+   */
+  async preflight(args: {
+    packId: string;
+    amount: number;
+    currency?: 'usdc' | 'usdt';
+  }): Promise<{ pack: { id: string; mint_price: number; rewards: Array<{ mint: string; amount: number }> }; expectedAmount: number; treasuryPubkey: string }> {
+    const currency = args.currency ?? 'usdc';
+    const paymentMint = CURRENCY_MINTS[currency];
+    if (!paymentMint) {
+      throw new PhygitalsBuyerError(400, null, `Unsupported currency: ${currency}`);
+    }
+    const packs = await this.fetchPacks();
+    const pack = packs.find((p) => p.id === args.packId || p.slug === args.packId);
+    if (!pack) {
+      throw new PhygitalsBuyerError(404, null, `Pack not found: ${args.packId}`);
+    }
+    if (pack.in_stock === false || pack.enable === false) {
+      throw new PhygitalsBuyerError(400, null, 'Pack is out of stock');
+    }
+    const maxPerMint = Math.max(1, pack.max_per_mint ?? 10);
+    if (!Number.isInteger(args.amount) || args.amount < 1 || args.amount > maxPerMint) {
+      throw new PhygitalsBuyerError(400, null, `Amount must be between 1 and ${maxPerMint}`);
+    }
+    const mintPrice = Number(pack.mint_price ?? 0);
+    const expectedAmount = args.amount * mintPrice * 1e6;
+    return {
+      pack: {
+        id: pack.id,
+        mint_price: mintPrice,
+        rewards: (pack.rewards_mint_addresses ?? []).map((mint, i) => ({
+          mint,
+          amount: Number(pack.rewards_amounts?.[i] ?? 0),
+        })),
+      },
+      expectedAmount,
+      treasuryPubkey: this.treasuryPubkey,
+    };
+  }
+
+  /**
+   * Refund a user payment by sending the same USDC amount back to
+   * their wallet. Called automatically when the Phygitals buy fails
+   * after we've already confirmed the user paid.
+   */
+  private async refundUser(args: {
+    buyerWallet: string;
+    paymentMint: PublicKey;
+    amount: number;
+    reason: string;
+  }): Promise<string | null> {
+    try {
+      const buyer = new PublicKey(args.buyerWallet);
+      const buyerAta = Token.getAssociatedTokenAddressSync(args.paymentMint, buyer, false);
+      const treasuryAta = Token.getAssociatedTokenAddressSync(args.paymentMint, this.treasury.publicKey, false);
+      const refundIx = Token.createTransferInstruction(treasuryAta, buyerAta, this.treasury.publicKey, args.amount);
+      const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+      const tx = new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: this.treasury.publicKey,
+          recentBlockhash: blockhash,
+          instructions: [
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 200 }),
+            refundIx,
+          ],
+        }).compileToV0Message(),
+      );
+      tx.sign([this.treasury]);
+      const sig = await this.connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+      console.error(`[phygitals-buyer] refunded ${args.amount / 1e6} ${args.paymentMint.equals(USDC_MINT) ? 'USDC' : 'USDT'} to ${args.buyerWallet} (reason: ${args.reason}) sig=${sig}`);
+      return sig;
+    } catch (err) {
+      console.error(`[phygitals-buyer] REFUND FAILED for ${args.buyerWallet}: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
   async buy(args: {
     buyerWallet: string;
     packId: string;
@@ -240,6 +337,10 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       throw new PhygitalsBuyerError(400, null, `Unsupported currency: ${currency}`);
     }
 
+    // Step 0: re-fetch packs + signer pubkeys. We already preflight-
+    // checked the catalog before the user paid, but Phygitals can
+    // de-list a pack between the preflight and now. Re-checking
+    // protects against that race.
     const [packs, pubkeys] = await Promise.all([this.fetchPacks(), this.fetchSignerPubkeys()]);
     const pack = packs.find((p) => p.id === args.packId || p.slug === args.packId);
     if (!pack) {
@@ -264,7 +365,55 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       paymentMint,
     });
 
-    // Step 2: build + sign + submit the Phygitals buy with our wallet.
+    // From this point on, the user has paid. Any failure must trigger
+    // a refund so we don't strand their money.
+    try {
+      return await this.executePhygitalsBuy({
+        pack,
+        pubkeys,
+        amount: args.amount,
+        currency,
+        paymentMint,
+        expectedAmount,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[phygitals-buyer] post-payment buy failed, refunding ${args.buyerWallet}: ${reason}`);
+      const refundSig = await this.refundUser({
+        buyerWallet: args.buyerWallet,
+        paymentMint,
+        amount: expectedAmount,
+        reason,
+      });
+      if (err instanceof PhygitalsBuyerError) {
+        throw new PhygitalsBuyerError(
+          err.status,
+          { ...((err.body as object) ?? {}), refunded: Boolean(refundSig), refundSignature: refundSig },
+          `${err.message} — your USDC has been ${refundSig ? 'refunded' : 'flagged for manual refund'}.`,
+        );
+      }
+      throw new PhygitalsBuyerError(
+        502,
+        { refunded: Boolean(refundSig), refundSignature: refundSig },
+        `Phygitals buy failed (${reason}) — your USDC has been ${refundSig ? 'refunded' : 'flagged for manual refund'}.`,
+      );
+    }
+  }
+
+  /**
+   * The actual Phygitals buy + poll. Only called after we've verified
+   * the user paid us. Wrapped by buy() so any failure here triggers
+   * the auto-refund.
+   */
+  private async executePhygitalsBuy(args: {
+    pack: { id: string; mint_price?: number | string; rewards_mint_addresses?: string[]; rewards_amounts?: Array<number | string> };
+    pubkeys: { solanaFeePayer: string; vmBuyback: string };
+    amount: number;
+    currency: 'usdc' | 'usdt';
+    paymentMint: PublicKey;
+    expectedAmount: number;
+  }): Promise<{ nfts: PhygitalsPullItem[]; sessionId?: string; publicId?: string; txHash?: string }> {
+    const { pack, pubkeys, amount, currency, paymentMint, expectedAmount } = args;
     const buyer = this.treasury.publicKey;
     const feePayerPk = new PublicKey(pubkeys.solanaFeePayer);
     const vmBuybackPk = new PublicKey(pubkeys.vmBuyback);
@@ -292,7 +441,7 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       const sourceAta = Token.getAssociatedTokenAddressSync(mintPublicKey, vmBuybackPk, false);
       return [
         Token.createAssociatedTokenAccountIdempotentInstruction(feePayerPk, destAta, buyer, mintPublicKey),
-        Token.createTransferInstruction(sourceAta, destAta, vmBuybackPk, reward.amount * args.amount),
+        Token.createTransferInstruction(sourceAta, destAta, vmBuybackPk, reward.amount * amount),
       ];
     });
 
@@ -326,7 +475,7 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       body: JSON.stringify({
         txs: [Array.from(tx.serialize())],
         claw_id: pack.id,
-        amount: args.amount,
+        amount,
         currency,
         chain: 'solana',
       }),

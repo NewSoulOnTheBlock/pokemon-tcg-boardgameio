@@ -21,6 +21,7 @@ import {
   finishPhygitalsSellback,
   initPhygitalsSellback,
   payTreasuryUsdc,
+  preflightPhygitalsBuy,
   serverBuyPhygitalsPack,
   PhygitalsApiError,
   type PhygitalsPack,
@@ -293,7 +294,7 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
 }) {
   const [amount, setAmount] = useState(1);
   const [currency, setCurrency] = useState<'usdc' | 'usdt'>('usdc');
-  const [busy, setBusy] = useState<'pay' | 'submit' | null>(null);
+  const [busy, setBusy] = useState<'preflight' | 'pay' | 'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pulled, setPulled] = useState<PhygitalsPullItem[] | null>(null);
   const [treasuryPubkey, setTreasuryPubkey] = useState<string | null>(null);
@@ -318,6 +319,16 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
     }
     setError(null);
     try {
+      // Step 0: preflight check — if Phygitals isn't reachable from our
+      // server (Cloudflare WAF, rate limit, pack delisted), abort here
+      // BEFORE the user pays anything.
+      setBusy('preflight');
+      await preflightPhygitalsBuy({
+        packId: pack.id,
+        amount,
+        currency,
+      });
+
       // Step 1: user signs a USDC transfer to our treasury wallet.
       setBusy('pay');
       const paymentSignature = await payTreasuryUsdc({
@@ -330,7 +341,9 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
 
       // Step 2: server verifies the payment + executes the actual
       // Phygitals buy with its API-bound wallet. Pulled NFTs land
-      // in the treasury wallet; we track ownership in-app.
+      // in the treasury wallet; we track ownership in-app. If the
+      // Phygitals call fails after this point, the server auto-refunds
+      // the user and surfaces a "your USDC has been refunded" message.
       setBusy('submit');
       const result = await serverBuyPhygitalsPack({
         buyerWallet,
@@ -407,11 +420,13 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
                   ? 'Connect wallet'
                   : !treasuryPubkey
                     ? 'Loading…'
-                    : busy === 'pay'
-                      ? 'Approve payment in wallet…'
-                      : busy === 'submit'
-                        ? 'Pulling cards…'
-                        : `Buy ${amount} pull${amount === 1 ? '' : 's'}`}
+                    : busy === 'preflight'
+                      ? 'Checking availability…'
+                      : busy === 'pay'
+                        ? 'Approve payment in wallet…'
+                        : busy === 'submit'
+                          ? 'Pulling cards…'
+                          : `Buy ${amount} pull${amount === 1 ? '' : 's'}`}
               </button>
             </div>
             {error && <p className="error">{error}</p>}
