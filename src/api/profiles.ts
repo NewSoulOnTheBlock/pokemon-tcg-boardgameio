@@ -81,67 +81,9 @@ export async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
   return request<MatchLeaderboardEntry[]>('/api/leaderboard');
 }
 
-export interface FreeBoosterPull {
-  card: {
-    id: string;
-    name: string;
-    rarity?: string;
-    images?: { small?: string; large?: string };
-  };
-  slot: 'Common' | 'Uncommon' | 'Rare';
-}
-
-export interface FreeBoosterResult {
-  pack: FreeBoosterPull[];
-  set: { id: string; name: string; series: string };
-  source: string;
-  claimedAt: string;
-}
-
-export class DailyClaimError extends Error {
-  retryAfterMs: number;
-  constructor(retryAfterMs: number, message?: string) {
-    super(message ?? `Daily free pack already claimed. Try again in ${Math.ceil(retryAfterMs / 1000 / 3600)}h.`);
-    this.name = 'DailyClaimError';
-    this.retryAfterMs = retryAfterMs;
-  }
-}
-
-/**
- * Claim a free Pokemon TCG booster pack. The server roll is local-only
- * (no on-chain mint). `source: 'daily'` is gated to one claim per
- * ~22 hours; other sources (quest rewards, level-ups) bypass the
- * cooldown and rely on the client-side eligibility check.
- */
-export async function claimFreeBooster(input: {
-  userId?: string;
-  walletAddress?: string;
-  setId?: string;
-  source?: string;
-}): Promise<FreeBoosterResult> {
-  const response = await fetch(apiUrl('/api/boosters/claim-free'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  const text = await response.text();
-  let parsed: unknown = null;
-  if (text) {
-    try { parsed = JSON.parse(text); }
-    catch { parsed = null; }
-  }
-  if (response.status === 429) {
-    const retryAfterMs = (parsed && typeof parsed === 'object' && 'retryAfterMs' in parsed && typeof (parsed as { retryAfterMs: unknown }).retryAfterMs === 'number')
-      ? (parsed as { retryAfterMs: number }).retryAfterMs
-      : 22 * 60 * 60 * 1000;
-    throw new DailyClaimError(retryAfterMs);
-  }
-  if (!response.ok) {
-    const msg = (parsed && typeof parsed === 'object' && 'error' in parsed) ? String((parsed as { error: unknown }).error) : `Claim failed (${response.status})`;
-    throw new ApiError(response.status, msg);
-  }
-  return parsed as FreeBoosterResult;
-}
+// Free in-game booster claim was removed. The Boosters page is now
+// Phygitals-only (browse + buy + sellback via the verbatim
+// buy-with-crypto-v6 reference port). See src/api/phygitals.ts.
 
 export interface ClaimedPrize {
   alreadyClaimed: boolean;

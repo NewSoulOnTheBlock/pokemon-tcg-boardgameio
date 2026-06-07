@@ -339,7 +339,13 @@ export async function preparePhygitalsBuy(args: {
     ...((rewardsTransferIxGroups as unknown[]).flat() as Ix[]),
   ];
   const message = new TransactionMessage({
-    payerKey: feePayerPk,
+    // The buyer is the natural fee payer here — they're the only
+    // signer this browser-flow has. The reference partner script
+    // uses Phygitals' solanaFeePayer because it runs server-side
+    // with both keypairs in scope; we don't have access to Phygitals'
+    // keypair from the browser, so flipping to buyer-as-fee-payer
+    // matches the only signature we can actually produce.
+    payerKey: buyer,
     recentBlockhash: blockhash,
     instructions: allIxs,
   }).compileToV0Message([HARDCODED_LOOKUP_TABLE]);

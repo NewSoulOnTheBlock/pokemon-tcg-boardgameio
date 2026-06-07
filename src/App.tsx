@@ -19,7 +19,6 @@ import {
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
-import { DailyFreePack } from './boosters/DailyFreePack';
 import { PhygitalsHero, PhygitalsMyPullsTab, PhygitalsShopTab, recordPhygitalsPulls } from './phygitals/PhygitalsStorefront';
 import {
   CARD_LIBRARY,
@@ -736,7 +735,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   );
 }
 
-function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void; onNavigate: (page: Page) => void }) {
+function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: (page: Page) => void }) {
   const stats = useMemo(() => {
     const records = profile.matchRecords ?? [];
     const wins = records.filter((record) => record.result === 'win').length;
@@ -769,7 +768,6 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
             <span>Packs</span>
           </div>
         </div>
-        <DailyFreePack profile={profile} onProfileChange={onProfileChange} />
         <HomeQuestWidget
           profile={profile}
           walletAddress={profile.wallet?.address}
@@ -1204,7 +1202,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
 
       {activeTab === 'quests' && (
         <div className="profile-tab-pane">
-          <QuestCenter profile={profile} walletAddress={profile.wallet?.address} onProfileChange={onProfileChange} />
+          <QuestCenter profile={profile} walletAddress={profile.wallet?.address} />
         </div>
       )}
 
@@ -2501,7 +2499,7 @@ export default function App() {
         )}
         {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
-        {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
+        {page === 'home' && <HomePage profile={profile} onNavigate={setPage} />}
       </Shell>
       {/* Boosters page already shows the big "Powered by Phygitals" footer,
           so we skip the corner badge there to avoid double-branding. */}

@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
 import type { ProfileState } from '../shared/profile';
-import { addCardsToCollection, type PackPurchase } from '../shared/profile';
-import { claimFreeBooster, persistPackPurchase, type FreeBoosterResult } from '../api/profiles';
 import {
   DAILY_CHEST_XP,
   claimDailyChest,
@@ -98,14 +96,14 @@ export function DailyCompletionChest({
       <div className="daily-chest-icon" aria-hidden="true">{claimed ? '✅' : allDone ? '🎁' : '🔒'}</div>
       <div>
         <strong>Daily Completion Chest</strong>
-        <p>Clear all 3 daily quests to unlock +{DAILY_CHEST_XP} XP <strong>and</strong> a bonus free Pokémon TCG booster pack.</p>
+        <p>Clear all 3 daily quests to unlock a +{DAILY_CHEST_XP} XP bonus.</p>
       </div>
       <button
         className="quest-claim-button"
         disabled={!allDone || claimed}
         onClick={onClaim}
       >
-        {claimed ? '✓ Claimed' : allDone ? `Claim +${DAILY_CHEST_XP} XP + pack` : 'Locked'}
+        {claimed ? '✓ Claimed' : allDone ? `Claim +${DAILY_CHEST_XP} XP` : 'Locked'}
       </button>
     </article>
   );
@@ -148,19 +146,15 @@ export function QuestCenter({
   profile,
   walletAddress,
   onProgressChange,
-  onProfileChange,
 }: {
   profile: ProfileState;
   walletAddress?: string;
   onProgressChange?: () => void;
-  onProfileChange?: (profile: ProfileState) => void;
 }) {
   const [progress, setProgress] = useState<TrainerProgress>(() => loadTrainerProgress(walletAddress));
   const [state, setState] = useState<DailyQuestState>(() => loadDailyQuestState(walletAddress, profile));
   const [resetIn, setResetIn] = useState<number>(() => msUntilNextReset());
   const [levelUpAt, setLevelUpAt] = useState<number | null>(null);
-  const [chestReveal, setChestReveal] = useState<FreeBoosterResult | null>(null);
-  const [chestError, setChestError] = useState<string | null>(null);
 
   // Reload when wallet changes.
   useEffect(() => {
@@ -205,36 +199,6 @@ export function QuestCenter({
     const after = getLevelAndProgress(result.progress.totalXP).level;
     if (after > before) setLevelUpAt(after);
     onProgressChange?.();
-
-    // Bonus: the chest also awards one free Pokemon TCG booster pack. We
-    // claim it server-side with source='quest-chest' so it bypasses the
-    // 22h cooldown that gates the home-page daily claim.
-    setChestError(null);
-    void claimFreeBooster({
-      userId: profile.userId,
-      walletAddress,
-      source: 'quest-chest',
-    })
-      .then(async (free) => {
-        setChestReveal(free);
-        const cardIds = free.pack.map((entry) => entry.card.id);
-        const purchase: PackPurchase = {
-          signature: `quest-chest-${free.claimedAt}`,
-          openedAt: free.claimedAt,
-          cardIds,
-        };
-        const updated: ProfileState = {
-          ...profile,
-          ownedCards: addCardsToCollection(profile.ownedCards, cardIds),
-          packsOpened: profile.packsOpened + 1,
-          packPurchases: [...profile.packPurchases, purchase],
-        };
-        const saved = await persistPackPurchase(updated, purchase);
-        onProfileChange?.(saved);
-      })
-      .catch((err) => {
-        setChestError((err as Error).message);
-      });
   }
 
   return (
@@ -255,28 +219,6 @@ export function QuestCenter({
         ))}
       </div>
       <DailyCompletionChest allDone={allDone} claimed={state.chestClaimed} onClaim={handleChestClaim} />
-      {chestError && <p className="error">{chestError}</p>}
-      {chestReveal && (
-        <section className="panel daily-pack-panel">
-          <div className="daily-pack-reveal">
-            <div className="daily-pack-reveal-header">
-              <strong>🎁 Bonus pack from {chestReveal.set.name}</strong>
-              <button onClick={() => setChestReveal(null)}>Close</button>
-            </div>
-            <div className="daily-pack-reveal-grid">
-              {chestReveal.pack.map((entry, index) => (
-                <article key={`${entry.card.id}-${index}`} className={`daily-pack-card daily-pack-card-${entry.slot.toLowerCase()}`}>
-                  {entry.card.images?.small && (
-                    <img src={entry.card.images.small} alt={entry.card.name} loading="lazy" />
-                  )}
-                  <strong>{entry.card.name}</strong>
-                  <span>{entry.slot}{entry.card.rarity ? ` · ${entry.card.rarity}` : ''}</span>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
       {levelUpAt !== null && (
         <LevelUpModal newLevel={levelUpAt} onDismiss={() => setLevelUpAt(null)} />
       )}

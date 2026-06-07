@@ -10,7 +10,6 @@ import { loadBundledCards } from './game/cards-server-bootstrap';
 import { PokemonTCG } from './game/PokemonTCG';
 import type { Card } from './game/types';
 import { MemoryCardStorage, PostgresCardStorage, type CardStorage } from './server/cardStorage';
-import { buildBoosterableSets, rollBoosterPack } from './server/boosters';
 import { createNftMinter, type NftMinter } from './server/nftMinter';
 import { buildSetNameIndex, scanWalletForPokemonNfts } from './server/nftScanner';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
@@ -254,87 +253,10 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
   };
 });
 
-/**
- * Free in-game booster pack. Pokemon TCG cards (NOT Phygitals) are
- * issued by the server as a normal deck-eligible card collection — no
- * payment, no on-chain mint. Phygitals packs (the paid real-card flow)
- * live under /api/phygitals/* instead.
- *
- * Rate-limited per (userId | wallet) on a UTC-day basis so the daily
- * claim button can be the canonical entry point.
- *
- * Other free-pack issuance paths (quest claims, level-up rewards, etc.)
- * call this same endpoint with an optional `source` tag so we can keep
- * a single roller + audit log.
- */
-const claimRateLimit = new Map<string, number>(); // key -> last claim epoch ms
-const CLAIM_COOLDOWN_MS = 22 * 60 * 60 * 1000; // 22h so timezone slop doesn't lock a user out of "their" day
-
-server.router.post('/api/boosters/claim-free', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { userId?: string; walletAddress?: string; setId?: string; source?: string } | undefined;
-  const key = (body?.userId?.trim() || body?.walletAddress?.trim() || '').toLowerCase();
-  if (!key) {
-    ctx.throw(400, 'userId or walletAddress is required to claim the daily pack.');
-    return;
-  }
-  const source = body?.source?.trim() || 'daily';
-
-  // Quest-driven claims bypass the cooldown — they're already gated by
-  // the quest-progress check on the client. The "daily" source is the
-  // one we enforce.
-  if (source === 'daily') {
-    const lastClaimed = claimRateLimit.get(key);
-    if (lastClaimed && Date.now() - lastClaimed < CLAIM_COOLDOWN_MS) {
-      const retryMs = CLAIM_COOLDOWN_MS - (Date.now() - lastClaimed);
-      ctx.status = 429;
-      ctx.set('Retry-After', String(Math.ceil(retryMs / 1000)));
-      ctx.body = { error: 'Daily free pack already claimed', retryAfterMs: retryMs };
-      return;
-    }
-    claimRateLimit.set(key, Date.now());
-  }
-
-  // Pick the set: respect explicit setId if given, otherwise rotate
-  // through the newest boosterable sets so the daily claim isn't always
-  // the same theme.
-  const sets = buildBoosterableSets();
-  let set = body?.setId ? sets.find((candidate) => candidate.id === body.setId) : undefined;
-  if (!set) {
-    set = sets[Math.floor(Math.random() * Math.min(5, sets.length))];
-  }
-  if (!set) {
-    ctx.throw(500, 'No boosterable sets configured.');
-    return;
-  }
-
-  // Roll the pack with a non-deterministic seed; free packs don't get
-  // an on-chain mint so we don't need the (paymentSignature, memo)
-  // determinism the old pay-to-open flow relied on.
-  const seed = `free-${source}-${key}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const pack = rollBoosterPack(set, seed);
-
-  ctx.body = {
-    pack,
-    set: { id: set.id, name: set.name, series: set.series },
-    source,
-    claimedAt: new Date().toISOString(),
-  };
-});
-
-// Legacy: the pump.fun pay-to-open booster flow has been removed in
-// favour of free in-game packs (claim-free above) + Phygitals (paid
-// graded-card storefront, /api/phygitals/*). Keep a 410 here so any
-// old client bundle still in someone's cache fails fast with a clear
-// message instead of hanging on a deleted endpoint.
-server.router.post('/api/boosters/redeem', (ctx) => {
-  ctx.status = 410;
-  ctx.body = { error: 'Booster purchases have moved. Use /api/boosters/claim-free for free in-game packs or /api/phygitals/* for the Phygitals shop.' };
-});
-
-server.router.post('/api/boosters/invoice', (ctx) => {
-  ctx.status = 410;
-  ctx.body = { error: 'Booster purchases have moved. Use /api/boosters/claim-free for free in-game packs or /api/phygitals/* for the Phygitals shop.' };
-});
+// All in-app booster routes have been removed. The Boosters page is
+// now Phygitals-only — browse + buy + sellback go directly from the
+// browser to api.phygitals.com via the CORS-proxy Cloudflare Worker.
+// See src/api/phygitals.ts + src/phygitals/PhygitalsStorefront.tsx.
 
 server.router.post('/api/login', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState } | undefined;
