@@ -209,7 +209,7 @@ function PhygitalsPackCard({ pack, onOpen }: { pack: PhygitalsPack; onOpen: () =
         <div className="phygitals-pack-pricing">
           <div className="phygitals-pack-price">
             <span className="label">Per pull</span>
-            <strong>{formatUsd(pack.mint_price)}</strong>
+            <strong>{formatUsd(Number(pack.mint_price))}</strong>
           </div>
           <div className="phygitals-pack-price">
             <span className="label">EV</span>
@@ -252,7 +252,7 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
   const [error, setError] = useState<string | null>(null);
   const [pulled, setPulled] = useState<PhygitalsPullItem[] | null>(null);
   const maxAmount = Math.max(1, pack.max_per_mint ?? 10);
-  const totalCost = (pack.mint_price ?? 0) * amount;
+  const totalCost = Number(pack.mint_price ?? 0) * amount;
   const buyerWallet = profile.wallet?.address;
 
   const handleBuy = useCallback(async () => {

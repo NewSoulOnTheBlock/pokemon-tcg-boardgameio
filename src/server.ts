@@ -18,7 +18,6 @@ import { MemoryProfileStorage, PostgresProfileStorage, type ProfileStorage } fro
 import { rollPrizeCard } from './server/prizes';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
-import { awaitPurchase as awaitPhygitalsPurchase, createPhygitalsClient, PhygitalsError, type PhygitalsClient } from './server/phygitalsClient';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -50,7 +49,6 @@ const cardStorage: CardStorage = databaseUrl
 const lobbyChat: LobbyChatStore = databaseUrl
   ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
   : new MemoryLobbyChatStore();
-const phygitals: PhygitalsClient = createPhygitalsClient();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
@@ -430,222 +428,10 @@ server.router.post('/api/lobby/chat', jsonBody, async (ctx) => {
   }
 });
 
-/**
- * Phygitals Partner API proxy (Jun 2026 surface). The server holds the
- * phy_… X-API-Key and proxies / co-signs calls so the browser never
- * sees the key. The current Phygitals API is built around CLIENT-SIGNED
- * Solana transactions — the server builds the unsigned tx, the user
- * signs with Phantom, and we forward the signed bytes to Phygitals.
- *
- * Surface mapping:
- *   GET  /api/phygitals/status            -> {enabled, baseUrl}
- *   GET  /api/phygitals/packs             -> Phygitals GET /api/vm/available
- *   POST /api/phygitals/buy/prepare       -> build unsigned buy tx for client to sign
- *   POST /api/phygitals/buy/submit        -> forward signed tx to Phygitals POST /api/vm/buy/crypto
- *   POST /api/phygitals/buy/status        -> Phygitals POST /api/vm/buy/status
- *   POST /api/phygitals/sellback/init     -> Phygitals POST /api/marketplace/transaction/take-claw-bid-init
- *   POST /api/phygitals/sellback/finish   -> Phygitals POST /api/marketplace/transaction/take-claw-bid-finish
- *
- * Inventory, ship*, recent-pulls, chase, card-detail are NOT supported
- * by the current Phygitals surface; we no longer expose them.
- */
-function handlePhygitalsError(ctx: Context, err: unknown): void {
-  if (err instanceof PhygitalsError) {
-    ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
-    ctx.type = 'application/json';
-    ctx.body = err.body && typeof err.body === 'object' ? err.body : { error: err.message };
-    return;
-  }
-  throw err;
-}
-
-server.router.get('/api/phygitals/status', (ctx) => {
-  ctx.body = { enabled: phygitals.enabled, baseUrl: phygitals.baseUrl };
-});
-
-/**
- * Debug endpoint: makes the raw GET /api/vm/available call directly
- * from the server using global fetch, and returns the full response
- * status + first 600 chars of the body. Used to diagnose 403s where
- * the same request works locally but fails from Render.
- *
- * Safe to leave in production — does not reveal the API key.
- */
-server.router.get('/api/phygitals/debug', async (ctx) => {
-  const apiKey = process.env.PHYGITALS_API_KEY?.trim() ?? '';
-  const baseUrl = process.env.PHYGITALS_BASE_URL?.trim() || 'https://api.phygitals.com';
-  const browserHeaders: Record<string, string> = {
-    Accept: 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"macOS"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
-    Referer: 'https://phygitals.com/',
-    Origin: 'https://phygitals.com',
-  };
-  const probe = async (label: string, headers: Record<string, string>) => {
-    try {
-      const res = await fetch(`${baseUrl}/api/vm/available`, { headers });
-      const text = await res.text();
-      return {
-        label,
-        status: res.status,
-        contentType: res.headers.get('content-type'),
-        cfRay: res.headers.get('cf-ray'),
-        bodyPreview: text.slice(0, 240),
-      };
-    } catch (err) {
-      return { label, error: (err as Error).message };
-    }
-  };
-  ctx.body = {
-    apiKeyPresent: apiKey.length > 0,
-    apiKeyPrefix: apiKey.slice(0, 8),
-    apiKeyLength: apiKey.length,
-    baseUrl,
-    probes: await Promise.all([
-      probe('bare', { Accept: 'application/json' }),
-      probe('browser', browserHeaders),
-      probe('browser+key', { ...browserHeaders, 'X-API-Key': apiKey }),
-    ]),
-  };
-});
-
-server.router.get('/api/phygitals/packs', async (ctx) => {
-  try {
-    ctx.body = { packs: await phygitals.listPacks() };
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-/**
- * Step 1 of the buy flow. Client sends {buyerWallet, packId, amount,
- * currency}; server builds the unsigned Solana tx (token transfer +
- * rewards-mint ATA creation + transfers) and returns it as base64.
- * Client deserializes, signs with Phantom, then calls /buy/submit.
- */
-server.router.post('/api/phygitals/buy/prepare', jsonBody, async (ctx) => {
-  const body = ctx.request.body as {
-    buyerWallet?: string;
-    packId?: string;
-    amount?: number;
-    currency?: 'usdc' | 'usdt';
-  } | undefined;
-  if (!body?.buyerWallet || !body.packId || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
-    ctx.throw(400, 'buyerWallet, packId, and amount >= 1 are required');
-    return;
-  }
-  try {
-    const prepared = await phygitals.prepareBuy({
-      buyerWallet: body.buyerWallet,
-      packId: body.packId,
-      amount: body.amount!,
-      currency: body.currency ?? 'usdc',
-    });
-    ctx.body = prepared;
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-/**
- * Step 2 of the buy flow. Client posts the signed-tx bytes (number[])
- * back; we forward to Phygitals' /api/vm/buy/crypto and (if the
- * response doesn't already include the NFTs inline) poll
- * /api/vm/buy/status until fulfilled.
- */
-server.router.post('/api/phygitals/buy/submit', jsonBody, async (ctx) => {
-  const body = ctx.request.body as {
-    packId?: string;
-    amount?: number;
-    currency?: 'usdc' | 'usdt';
-    signedTxBytes?: number[];
-  } | undefined;
-  if (!body?.packId || !Number.isFinite(body.amount) || !Array.isArray(body.signedTxBytes)) {
-    ctx.throw(400, 'packId, amount, and signedTxBytes are required');
-    return;
-  }
-  try {
-    const submitResult = await phygitals.submitBuy({
-      packId: body.packId,
-      amount: body.amount!,
-      currency: body.currency ?? 'usdc',
-      signedTxBytes: body.signedTxBytes,
-    });
-    // If Phygitals returned the NFTs immediately, hand them back.
-    // Otherwise poll status to get the fulfilled envelope.
-    if (submitResult.nfts && submitResult.nfts.length > 0) {
-      ctx.body = { session_id: submitResult.session_id, nfts: submitResult.nfts };
-      return;
-    }
-    if (!submitResult.session_id) {
-      ctx.throw(502, 'Phygitals returned neither session_id nor inline NFTs');
-      return;
-    }
-    const fulfilled = await awaitPhygitalsPurchase(phygitals, submitResult.session_id);
-    ctx.body = { ...fulfilled, session_id: submitResult.session_id };
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-server.router.post('/api/phygitals/buy/status', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { session_id?: string } | undefined;
-  if (!body?.session_id) {
-    ctx.throw(400, 'session_id is required');
-    return;
-  }
-  try {
-    ctx.body = await phygitals.buyStatus({ session_id: body.session_id });
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-/**
- * Step 1 of the sellback flow. Client sends the mint_address of the
- * item to sell back; Phygitals returns a session_id + an array of
- * unsigned VersionedTransactions for the client to sign with Phantom.
- */
-server.router.post('/api/phygitals/sellback/init', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { mint_address?: string } | undefined;
-  if (!body?.mint_address) {
-    ctx.throw(400, 'mint_address is required');
-    return;
-  }
-  try {
-    ctx.body = await phygitals.takeClawBidInit({ mint_address: body.mint_address });
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-/**
- * Step 2 of the sellback flow. Client posts back the session_id + the
- * array of signed-tx byte arrays. Phygitals submits them and returns
- * the marketplace result.
- */
-server.router.post('/api/phygitals/sellback/finish', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { session_id?: string; signedTxBytes?: Array<number[]> } | undefined;
-  if (!body?.session_id || !Array.isArray(body.signedTxBytes) || body.signedTxBytes.length === 0) {
-    ctx.throw(400, 'session_id and signedTxBytes (non-empty array) are required');
-    return;
-  }
-  try {
-    ctx.body = await phygitals.takeClawBidFinish({
-      session_id: body.session_id,
-      signedTxBytes: body.signedTxBytes,
-    });
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
+// Phygitals storefront now calls api.phygitals.com directly from the
+// browser — see src/api/phygitals.ts. Their Cloudflare WAF blocks
+// Render's outbound IPs, so server-side proxying isn't viable. The
+// VITE_PHYGITALS_API_KEY env var holds the (read+sell scoped) key.
 
 /**
  * Free prize card for the winner of a multiplayer match. Idempotent per

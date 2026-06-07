@@ -38,15 +38,24 @@ services:
         value: /tmp/bgio-storage
       # Phygitals Partner API key (https://dev.phygitals.com). Production
       # key from partners@phygitals.com — required for the Boosters page
-      # storefront (browse, buy, vault, sellback, ship). Without it the
-      # /api/phygitals/* endpoints respond 503 and the Shop tab shows
-      # an empty state.
-      - key: PHYGITALS_API_KEY
+      # storefront (browse, buy, sellback).
+      #
+      # NOTE: VITE_PHYGITALS_API_KEY is a Vite client-side env var — it
+      # ends up in the browser bundle and is visible to anyone with
+      # DevTools. The server can't proxy these calls because Phygitals'
+      # Cloudflare WAF blocks Render's outbound IPs at the edge.
+      # Only use a key scoped to vm.buy.crypto + marketplace.take-claw-bid
+      # (NEVER an admin/treasury key).
+      - key: VITE_PHYGITALS_API_KEY
         sync: false
-      # Defaults to https://api.phygitals.com (production). Set to
-      # https://api.phygitals.com/_ to point at the sandbox.
-      - key: PHYGITALS_BASE_URL
+      # Defaults to https://api.phygitals.com (production).
+      - key: VITE_PHYGITALS_BASE_URL
         value: https://api.phygitals.com
+      # Optional: override the Solana RPC the client uses to read the
+      # token accounts when building the buy tx. Helius/Alchemy recommended
+      # for higher rate limits.
+      - key: VITE_SOLANA_RPC_URL
+        sync: false
 
 databases:
   - name: pokemon-tcg-db
