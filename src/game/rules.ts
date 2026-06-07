@@ -393,6 +393,107 @@ export function resolveAttackEffect(
       appendLog(G, `${attack.name}: flipped until tails, discarded ${discardedCount} energy from ${defender.card.name}.`);
       break;
     }
+    case 'coinUntilTailsBaseDamage': {
+      let heads = 0;
+      while (random.Die(2) === 1) {
+        heads += 1;
+        if (heads > 30) break; // safety against pathological RNG streaks
+      }
+      const total = heads * effect.perHead;
+      if (total > 0) {
+        defender.damage += total;
+      }
+      appendLog(G, `${attack.name}: flipped until tails, ${heads} heads -> ${total} damage.`);
+      break;
+    }
+    case 'damageOppBench': {
+      // Pick the lowest-HP opponent bench Pokemon as the target. Without
+      // a stage break we can't surface a chooser to the user; lowest-HP
+      // heuristic matches what most players would pick anyway (finish
+      // off the most-damaged threat).
+      if (opponent && opponent.bench.length > 0) {
+        const candidate = opponent.bench.reduce((best, current) =>
+          (current.card.hp - current.damage) < (best.card.hp - best.damage) ? current : best,
+        );
+        candidate.damage += effect.amount;
+        appendLog(G, `${attack.name}: +${effect.amount} damage to benched ${candidate.card.name}.`);
+      }
+      break;
+    }
+    case 'discardOppEnergy': {
+      if (opponent && defender.attachedEnergy.length > 0) {
+        const removed = defender.attachedEnergy.splice(0, Math.min(effect.count, defender.attachedEnergy.length));
+        opponent.discard.push(...removed);
+        appendLog(G, `${attack.name}: discarded ${removed.length} energy from ${defender.card.name}.`);
+      }
+      break;
+    }
+    case 'searchNamedBasicToBench': {
+      // Search deck for any Basic Pokemon matching the attacker's NAME
+      // family — i.e. another copy of the same Basic. Closest behaviour
+      // to "Call for Family" / "Sprout" / similar Base-set effects
+      // without parsing the specific name out of the attack text.
+      if (player.bench.length < 5) {
+        const targetName = attacker.card.name;
+        const deckIndex = player.deck.findIndex((c) =>
+          c.kind === 'pokemon' && c.stage === 'Basic' && c.name === targetName,
+        );
+        if (deckIndex !== -1) {
+          const [pulled] = player.deck.splice(deckIndex, 1);
+          if (pulled.kind === 'pokemon' && pulled.stage === 'Basic') {
+            // Inline the creation since createPokemonInPlay isn't in scope
+            // here without a turn ref; reuse the attacker's enteredTurn so
+            // it acts like a fresh play.
+            player.bench.push({
+              instanceId: `pokemon-${G.nextInstanceId}`,
+              card: pulled,
+              evolution: [pulled],
+              attachedEnergy: [],
+              damage: 0,
+              conditions: [],
+              enteredTurn: attacker.enteredTurn,
+            });
+            G.nextInstanceId += 1;
+            if (random.Shuffle) player.deck = random.Shuffle(player.deck);
+            appendLog(G, `${attack.name}: pulled ${pulled.name} onto the Bench.`);
+          }
+        }
+      }
+      break;
+    }
+    case 'selfSwitch': {
+      if (player.active && player.bench.length > 0) {
+        // Swap active with first bench Pokemon — same fall-through as
+        // when the player retreats without ceremony. Doesn't cost energy
+        // (this is the attack-driven switch, not a normal retreat).
+        const oldActive = player.active;
+        const [newActive] = player.bench.splice(0, 1, oldActive);
+        clearSpecialConditions(oldActive);
+        player.active = newActive;
+        appendLog(G, `${attack.name}: switched to ${newActive.card.name}.`);
+      }
+      break;
+    }
+    case 'opponentChoosesSwitch': {
+      // The TCG rule says the opponent chooses; without a stage break
+      // we approximate "they'd pick the strongest/healthiest backup"
+      // (highest current HP). For our purposes this is good enough and
+      // keeps the attack from being a no-op.
+      if (opponent && opponent.active && opponent.bench.length > 0) {
+        let bestIndex = 0;
+        let bestHp = -1;
+        opponent.bench.forEach((bp, idx) => {
+          const hp = bp.card.hp - bp.damage;
+          if (hp > bestHp) { bestHp = hp; bestIndex = idx; }
+        });
+        const oldActive = opponent.active;
+        const [newActive] = opponent.bench.splice(bestIndex, 1, oldActive);
+        clearSpecialConditions(oldActive);
+        opponent.active = newActive;
+        appendLog(G, `${attack.name}: opponent switched in ${newActive.card.name}.`);
+      }
+      break;
+    }
     case 'damagePerOwnDamageCounter': {
       const counters = Math.floor(attacker.damage / 10);
       const bonus = counters * effect.perCounter;

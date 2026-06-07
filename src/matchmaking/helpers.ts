@@ -59,20 +59,19 @@ export interface TrainerStats {
 
 export function getTrainerStats(profile: ProfileState): TrainerStats {
   const records = profile.matchRecords ?? [];
-  const ranked = records.filter((r) =>
-    (r.matchType === 'Ranked' || r.matchType === 'Wager') && r.result !== 'in_progress',
-  );
-  const rankedWins = ranked.filter((r) => r.result === 'win').length;
-  const rankedLosses = ranked.filter((r) => r.result === 'loss').length;
-  const rankedDraws = ranked.filter((r) => r.result === 'draw').length;
-  const casualMatches = records.filter((r) =>
-    (r.matchType ?? 'Casual') !== 'Ranked' && (r.matchType ?? 'Casual') !== 'Wager' && r.result !== 'in_progress',
-  ).length;
-  const totalMatches = ranked.length + casualMatches;
-  const winRate = ranked.length > 0 ? Math.round((rankedWins / ranked.length) * 100) : 0;
+  // Every completed match counts toward the W/L record, regardless of
+  // matchType (Casual, Ranked, Wager) and regardless of whether the
+  // opponent was a human or a CPU/gym leader.
+  const completed = records.filter((r) => r.result !== 'in_progress');
+  const rankedWins = completed.filter((r) => r.result === 'win').length;
+  const rankedLosses = completed.filter((r) => r.result === 'loss').length;
+  const rankedDraws = completed.filter((r) => r.result === 'draw').length;
+  const casualMatches = 0; // legacy field; matchType no longer affects W/L
+  const totalMatches = completed.length;
+  const winRate = completed.length > 0 ? Math.round((rankedWins / completed.length) * 100) : 0;
   const { level, xp, nextLevelXp } = getTrainerLevel(profile);
   const rank = getTrainerRank(rankedWins);
-  return { level, xp, nextLevelXp, rank, rankedWins, rankedLosses, rankedDraws, rankedTotal: ranked.length, casualMatches, totalMatches, winRate };
+  return { level, xp, nextLevelXp, rank, rankedWins, rankedLosses, rankedDraws, rankedTotal: completed.length, casualMatches, totalMatches, winRate };
 }
 
 export function rankFromLeaderboard(wins: number): TrainerRank {
@@ -83,8 +82,8 @@ export function rankFromLeaderboard(wins: number): TrainerRank {
  *  existing escrow flow; the others are practice formats that don't
  *  affect leaderboard or trigger wallet flows. */
 export const MATCH_TYPE_OPTIONS: Array<{ value: MatchType; label: string; description: string }> = [
-  { value: 'Casual', label: 'Casual', description: 'No leaderboard impact. Just for fun.' },
-  { value: 'Ranked', label: 'Ranked', description: 'Counts toward leaderboard W/L record.' },
+  { value: 'Casual', label: 'Casual', description: 'Counts toward W/L record. Just for fun.' },
+  { value: 'Ranked', label: 'Ranked', description: 'Counts toward W/L record. Same as Casual.' },
   { value: 'Wager', label: 'Wager', description: 'SOL or $POKETCG payout — settle off-app.' },
   { value: 'Theme Deck', label: 'Theme Deck', description: 'Practice format with thematic decks.' },
   { value: 'Unlimited', label: 'Unlimited', description: 'Anything-goes practice.' },

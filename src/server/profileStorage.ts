@@ -301,22 +301,23 @@ export class PostgresProfileStorage implements ProfileStorage {
   }
 
   async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
-    // Casual matches are explicitly excluded so they show up in personal
-    // history but don't affect the public ranking. Ranked + Wager both count.
-    // INNER JOIN + HAVING keeps profiles with zero ranked games out of the
+    // Every completed match counts toward the W/L record on the
+    // leaderboard, regardless of matchType (Casual, Ranked, Wager) or
+    // whether the opponent was a human or a CPU/gym leader. INNER JOIN
+    // + HAVING keeps profiles with zero completed matches out of the
     // leaderboard so it doesn't show every signed-up user at 0/0/0/0.
     const { rows } = await this.pool.query<MatchLeaderboardEntry>(`
       SELECT
         p.user_id AS "userId",
         p.name,
-        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type IN ('Ranked', 'Wager'))::int AS matches,
-        COUNT(*) FILTER (WHERE m.result = 'win' AND m.match_type IN ('Ranked', 'Wager'))::int AS wins,
-        COUNT(*) FILTER (WHERE m.result = 'loss' AND m.match_type IN ('Ranked', 'Wager'))::int AS losses,
-        COUNT(*) FILTER (WHERE m.result = 'draw' AND m.match_type IN ('Ranked', 'Wager'))::int AS draws
+        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw'))::int AS matches,
+        COUNT(*) FILTER (WHERE m.result = 'win')::int AS wins,
+        COUNT(*) FILTER (WHERE m.result = 'loss')::int AS losses,
+        COUNT(*) FILTER (WHERE m.result = 'draw')::int AS draws
       FROM ${PROFILES_TABLE} p
       INNER JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
       GROUP BY p.user_id, p.name
-      HAVING COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type IN ('Ranked', 'Wager')) > 0
+      HAVING COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw')) > 0
       ORDER BY wins DESC, losses ASC, draws DESC, matches DESC, p.name ASC
       LIMIT 50
     `);
@@ -570,21 +571,21 @@ export class MemoryProfileStorage implements ProfileStorage {
   async listLeaderboard(): Promise<MatchLeaderboardEntry[]> {
     return [...this.profiles.values()]
       .map((profile) => {
-        // Casual matches are tracked in the user's personal history but
-        // explicitly excluded from the leaderboard, mirroring the Postgres
-        // listLeaderboard() query above.
-        const ranked = profile.matchRecords.filter(
-          (record) => record.result !== 'in_progress' && (record.matchType ?? 'Ranked') !== 'Casual',
+        // Every completed match counts toward the W/L record, regardless
+        // of matchType. Mirrors the Postgres listLeaderboard() query above.
+        const completed = profile.matchRecords.filter(
+          (record) => record.result !== 'in_progress',
         );
         return {
           userId: profile.userId,
           name: profile.name,
-          matches: ranked.length,
-          wins: ranked.filter((record) => record.result === 'win').length,
-          losses: ranked.filter((record) => record.result === 'loss').length,
-          draws: ranked.filter((record) => record.result === 'draw').length,
+          matches: completed.length,
+          wins: completed.filter((record) => record.result === 'win').length,
+          losses: completed.filter((record) => record.result === 'loss').length,
+          draws: completed.filter((record) => record.result === 'draw').length,
         };
       })
+      .filter((entry) => entry.matches > 0)
       .sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || b.matches - a.matches || a.name.localeCompare(b.name))
       .slice(0, 50);
   }

@@ -52,15 +52,21 @@ export type AttackEffect =
   | { type: 'coinFlipsAllHeadsOrFail'; numCoins: number }
   | { type: 'coinFlipDiscardOppEnergy' }
   | { type: 'coinUntilTailsDiscardOppEnergy' }
+  | { type: 'coinUntilTailsBaseDamage'; perHead: number }
   | { type: 'damagePerOwnDamageCounter'; perCounter: number }
   | { type: 'damagePerOpponentEnergy'; perEnergy: number }
   | { type: 'damagePerOpponentRetreatColorless'; perColorless: number }
   | { type: 'damageIfHasTool'; bonus: number }
   | { type: 'damageIgnoreDefenderEffects' }
+  | { type: 'damageOppBench'; amount: number }
+  | { type: 'discardOppEnergy'; count: number }
   | { type: 'discardOwnEnergy'; count: number; energyType?: PokemonType }
   | { type: 'discardAllOwnEnergy' }
   | { type: 'discardStadium' }
   | { type: 'searchAndAttachEnergy'; count: number; energyType: PokemonType }
+  | { type: 'searchNamedBasicToBench' }
+  | { type: 'selfSwitch' }
+  | { type: 'opponentChoosesSwitch' }
   | { type: 'selfMillDeck'; count: number };
 
 /** Card metadata held in CARD_LIBRARY. Only fields that are actually read at
@@ -114,7 +120,12 @@ export interface TrainerCard extends BaseCard {
     | 'switch'
     | 'searchBasicToBench'
     | 'stadiumPlus10'
-    | 'toolMinus10';
+    | 'toolMinus10'
+    | 'pokeBall'           // Coin flip: heads, search deck for any Pokemon
+    | 'greatBall'          // Look at top 7, take 1 Pokemon, shuffle rest
+    | 'energyRetrieval'    // Discard 1 card from hand, retrieve up to 2 basic energy from discard
+    | 'rareCandy'          // Evolve Basic → Stage 2 directly (skip Stage 1)
+    | 'bossOrders';        // Switch in opponent's benched Pokemon
 }
 
 export type Card = PokemonCard | EnergyCard | TrainerCard;

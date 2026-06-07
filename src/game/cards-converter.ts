@@ -272,6 +272,38 @@ function inferAttackEffect(attack: SourceAttack): AttackEffect | undefined {
     return { type: 'coinUntilTailsDiscardOppEnergy' };
   }
 
+  // ----- Coin-until-tails times N damage (Geodude Stone Barrage) ------
+  const untilTailsDamageMatch = text.match(/flip a coin until you get tails\.?\s*this attack does (\d+) damage times the number of heads/);
+  if (untilTailsDamageMatch) {
+    return { type: 'coinUntilTailsBaseDamage', perHead: Number(untilTailsDamageMatch[1]) };
+  }
+
+  // ----- Damage to one of opponent's benched Pokémon (Hitmonlee Stretch Kick) ----
+  const oppBenchDamageMatch = text.match(/choose 1 of (?:them|your opponent['']s benched pok[eé]mon).*?this attack does (\d+) damage to it/);
+  if (oppBenchDamageMatch) {
+    return { type: 'damageOppBench', amount: Number(oppBenchDamageMatch[1]) };
+  }
+
+  // ----- Discard 1 energy from defending Pokémon unconditional (Golduck Hyper Beam)
+  if (text.match(/(?:if the defending pok[eé]mon has any energy cards attached to it,?\s*)?choose 1 of them and discard it/)) {
+    return { type: 'discardOppEnergy', count: 1 };
+  }
+
+  // ----- Search deck for a Pokémon named X (Bellsprout Call for Family, Oddish Sprout) ----
+  if (text.match(/search your deck for a basic pok[eé]mon named .+ and put it onto your bench/)) {
+    return { type: 'searchNamedBasicToBench' };
+  }
+
+  // ----- Self switch (Exeggutor Teleport, Granbull Timid Tackle's switch component) ----
+  if (text.match(/switch (?:this pok[eé]mon|granbull|exeggutor|[a-z']+) with 1 of your benched pok[eé]mon/)) {
+    return { type: 'selfSwitch' };
+  }
+
+  // ----- Opponent picks bench to switch in (Pidgey Whirlwind, Honchkrow Whirlwind) ----
+  if (text.match(/(?:your opponent|he or she)\s+(?:chooses|switches).*?(?:1 of (?:his or her|their) benched pok[eé]mon|defending pok[eé]mon with 1 of (?:his or her|their) benched pok[eé]mon)/)) {
+    return { type: 'opponentChoosesSwitch' };
+  }
+
   // ----- Coin-multi-heads damage (Doduo Fury Attack) -------------------
   const multiCoinDamageMatch = text.match(/flip (\d+) coins?\.?\s*this attack does (\d+) damage times the number of heads/);
   if (multiCoinDamageMatch) {
@@ -441,6 +473,11 @@ function trainerEffectFor(source: SourceCard): TrainerCard['effect'] {
   if (text.includes('draw 3 card')) return 'draw3';
   if (name === 'switch') return 'switch';
   if (name === 'nest ball' || text.includes('search your deck for a basic pokemon')) return 'searchBasicToBench';
+  if (name === 'poke ball' || name === 'pokeball' || (text.includes('flip a coin') && text.includes('search your deck for any basic pokemon or evolution'))) return 'pokeBall';
+  if (name === 'great ball' || text.includes('look at the top 7 cards of your deck')) return 'greatBall';
+  if (name === 'energy retrieval' || text.includes('basic energy cards from your discard pile')) return 'energyRetrieval';
+  if (name === 'rare candy' || text.includes('stage 2 card in your hand that evolves from that pokemon')) return 'rareCandy';
+  if (name === 'bosss orders' || name === 'boss orders' || text.includes('switch in 1 of your opponent')) return 'bossOrders';
   if (name === 'training court') return 'stadiumPlus10';
   if (name === 'bravery charm' || name === 'sturdy charm') return 'toolMinus10';
   return undefined;

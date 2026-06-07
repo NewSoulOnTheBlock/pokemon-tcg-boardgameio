@@ -984,9 +984,8 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
           <StatSection title="Battle stats">
             <StatCard label="Wins" value={stats.rankedWins} />
             <StatCard label="Losses" value={stats.rankedLosses} />
-            <StatCard label="Win rate" value={`${stats.winRate}%`} hint={`${stats.rankedTotal} ranked`} />
-            <StatCard label="Ranked record" value={`${stats.rankedWins}-${stats.rankedLosses}${stats.rankedDraws ? `-${stats.rankedDraws}` : ''}`} />
-            <StatCard label="Casual matches" value={stats.casualMatches} />
+            <StatCard label="Win rate" value={`${stats.winRate}%`} hint={`${stats.totalMatches} matches`} />
+            <StatCard label="Record" value={`${stats.rankedWins}-${stats.rankedLosses}${stats.rankedDraws ? `-${stats.rankedDraws}` : ''}`} />
             <StatCard label="Total matches" value={stats.totalMatches} />
           </StatSection>
 
@@ -2047,7 +2046,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
   );
 }
 
-function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: () => void }) {
+function GymChallengePage({ profile, onProfileChange, onExit }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void; onExit: () => void }) {
   const deckOptions = useMemo(() => deckOptionsForProfile(profile), [profile]);
   const [deckId, setDeckId] = useState(() => firstValidDeckId(deckOptions));
   const walletAddress = profile.wallet?.address;
@@ -2078,7 +2077,41 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
   }
 
   const [campaignLevelUpTo, setCampaignLevelUpTo] = useState<number | null>(null);
-  function recordCampaignMatchComplete(opponent: CampaignOpponent, payload: { winner?: PlayerID }) {
+  const [recordedGymMatches, setRecordedGymMatches] = useState<Set<string>>(() => new Set());
+  async function recordCampaignMatchComplete(opponent: CampaignOpponent, payload: { winner?: PlayerID }) {
+    if (!activeMatch) return;
+    const matchKey = `${activeMatch.seed}:0`;
+
+    // Always persist the gym match into the user's record — single-player
+    // matches now count toward W/L like multiplayer ones. Use a local
+    // de-dupe Set so React StrictMode / double-fires don't double-record.
+    if (!recordedGymMatches.has(matchKey)) {
+      setRecordedGymMatches((prev) => new Set(prev).add(matchKey));
+      const result: MatchRecord['result'] =
+        payload.winner === '0' ? 'win' : payload.winner === '1' ? 'loss' : 'draw';
+      const now = new Date().toISOString();
+      const gymRecord: MatchRecord = {
+        matchID: activeMatch.seed,
+        matchType: 'Casual',
+        playerID: '0',
+        playerDeckLabel: activeMatch.playerDeck.label,
+        opponentDeckLabel: `${opponent.name} (${opponent.themeLabel})`,
+        result,
+        winner: payload.winner,
+        reason: 'gym-challenge',
+        startedAt: now,
+        completedAt: now,
+      };
+      try {
+        const saved = await persistMatchAndStore(profile, gymRecord);
+        onProfileChange(saved);
+      } catch (error) {
+        // Persisting a gym record failing isn't fatal — local progress
+        // still advances. Just log it so we can see it in DevTools.
+        console.warn('[gym] failed to persist match record:', error);
+      }
+    }
+
     if (payload.winner !== '0') return; // player is always seat 0 in CPU matches
     const wasAlreadyDefeated = progress.defeatedOpponents.includes(opponent.id);
     const next = applyWin(progress, opponent);
@@ -2595,7 +2628,7 @@ export default function App() {
     return (
       <>
         {music}
-        <GymChallengePage profile={profile} onExit={() => setPage('home')} />
+        <GymChallengePage profile={profile} onProfileChange={updateProfile} onExit={() => setPage('home')} />
       </>
     );
   }

@@ -270,6 +270,114 @@ const playTrainer: Move<PokemonTCGState> = ({ G, ctx, random, playerID }, handIn
       appendLog(G, `Player ${pid} searched ${basic.name} onto the Bench.`);
       break;
     }
+    case 'pokeBall': {
+      // Coin flip. On heads, find any Pokémon (Basic or Evolution) in
+      // deck and put it in hand. On tails, the card is just discarded.
+      const heads = random.Die(2) === 1;
+      if (heads) {
+        const deckIndex = player.deck.findIndex(isPokemon);
+        if (deckIndex !== -1) {
+          const [pulled] = player.deck.splice(deckIndex, 1);
+          player.hand.push(pulled);
+          player.deck = random.Shuffle(player.deck);
+          appendLog(G, `Player ${pid} flipped heads on Poké Ball and found ${pulled.name}.`);
+        } else {
+          appendLog(G, `Player ${pid} flipped heads on Poké Ball, but found no Pokémon in deck.`);
+        }
+      } else {
+        appendLog(G, `Player ${pid} flipped tails on Poké Ball.`);
+      }
+      player.discard.push(card);
+      break;
+    }
+    case 'greatBall': {
+      // Look at top 7 of deck, take the first Pokémon found, shuffle
+      // the rest back. Faithful to the printed text (one Pokémon, not
+      // a choice between multiples — we can't surface a picker mid-move
+      // without a stage break, so first-match is the simplification).
+      const top = player.deck.splice(0, Math.min(7, player.deck.length));
+      const pokemonIndex = top.findIndex(isPokemon);
+      let found: Card | undefined;
+      if (pokemonIndex !== -1) {
+        [found] = top.splice(pokemonIndex, 1);
+        player.hand.push(found);
+      }
+      // Shuffle the remaining looked-at cards back into the deck.
+      player.deck.push(...top);
+      player.deck = random.Shuffle(player.deck);
+      player.discard.push(card);
+      if (found) {
+        appendLog(G, `Player ${pid} used Great Ball and found ${found.name}.`);
+      } else {
+        appendLog(G, `Player ${pid} used Great Ball — no Pokémon in the top 7.`);
+      }
+      break;
+    }
+    case 'energyRetrieval': {
+      // Cost: discard one OTHER card from hand (i.e. not the trainer
+      // itself, which we've already removed via removeFromHand).
+      // Reward: retrieve up to 2 basic Energy from discard. If the hand
+      // is empty, the card has no legal target -> INVALID_MOVE.
+      if (player.hand.length === 0) return INVALID_MOVE;
+      const costIndex = player.hand.findIndex((handCard) => handCard.id !== card.id);
+      if (costIndex === -1) return INVALID_MOVE;
+      const [discarded] = player.hand.splice(costIndex, 1);
+      player.discard.push(discarded);
+      // Pull up to 2 basic Energy from discard back to hand.
+      let retrieved = 0;
+      for (let i = player.discard.length - 1; i >= 0 && retrieved < 2; i -= 1) {
+        const candidate = player.discard[i];
+        if (candidate.kind === 'energy' && candidate.basic) {
+          player.discard.splice(i, 1);
+          player.hand.push(candidate);
+          retrieved += 1;
+        }
+      }
+      player.discard.push(card);
+      appendLog(G, `Player ${pid} used Energy Retrieval, discarded ${discarded.name}, retrieved ${retrieved} energy.`);
+      break;
+    }
+    case 'rareCandy': {
+      // Evolve a Basic Pokémon directly to Stage 2 from hand. Caller
+      // must pass `target` pointing at the Basic in play, and the next
+      // matching Stage 2 in hand is what gets stapled on top. Same
+      // turn-restriction logic as a normal evolution.
+      const targetPokemon = getTarget(player, target?.zone ?? 'active', target?.benchIndex);
+      if (!targetPokemon) return INVALID_MOVE;
+      if (targetPokemon.card.stage !== 'Basic') return INVALID_MOVE;
+      if (targetPokemon.enteredTurn === ctx.turn) return INVALID_MOVE;
+      if (G.turnsTaken[pid] <= 1) return INVALID_MOVE;
+      const stage2Index = player.hand.findIndex((handCard) =>
+        isPokemon(handCard)
+        && handCard.stage === 'Stage 2'
+        && (handCard.evolvesFrom !== undefined),
+      );
+      if (stage2Index === -1) return INVALID_MOVE;
+      const [stage2Card] = player.hand.splice(stage2Index, 1);
+      if (!isPokemon(stage2Card)) return INVALID_MOVE;
+      targetPokemon.evolution.push(stage2Card);
+      targetPokemon.card = stage2Card;
+      targetPokemon.evolvedTurn = ctx.turn;
+      clearSpecialConditions(targetPokemon);
+      player.discard.push(card);
+      appendLog(G, `Player ${pid} used Rare Candy to evolve ${targetPokemon.card.name}.`);
+      break;
+    }
+    case 'bossOrders': {
+      // Supporter rules already validated above. Switch in any of the
+      // opponent's Benched Pokémon to their Active spot. Target is the
+      // bench index on the OPPONENT's bench (target.benchIndex when
+      // zone === 'bench').
+      const opponent = G.players[opponentOf(pid)];
+      const benchIndex = target?.benchIndex ?? 0;
+      if (!opponent.active || benchIndex < 0 || benchIndex >= opponent.bench.length) return INVALID_MOVE;
+      const [newActive] = opponent.bench.splice(benchIndex, 1, opponent.active);
+      clearSpecialConditions(opponent.active);
+      opponent.active = newActive;
+      player.discard.push(card);
+      appendLog(G, `Player ${pid} used Boss's Orders to drag ${newActive.card.name} into the Active spot.`);
+      break;
+    }
     default:
       return INVALID_MOVE;
   }
