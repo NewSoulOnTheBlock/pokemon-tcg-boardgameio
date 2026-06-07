@@ -185,7 +185,7 @@ export async function preparePhygitalsBuy(args: {
   const currency = args.currency ?? 'usdc';
   const [{
     PublicKey, Connection, TransactionMessage, VersionedTransaction,
-    ComputeBudgetProgram, AddressLookupTableAccount,
+    ComputeBudgetProgram,
   }, Token] = await Promise.all([
     import('@solana/web3.js'),
     import('@solana/spl-token'),
@@ -195,45 +195,13 @@ export async function preparePhygitalsBuy(args: {
   const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
   const paymentMint = currency === 'usdc' ? USDC_MINT : USDT_MINT;
 
-  // Hardcoded Phygitals Address Lookup Table — mirrors their reference
-  // partner script and the prior server-side implementation.
+  // Phygitals' partner Address Lookup Table — fetched LIVE each buy.
+  // The previous hardcoded snapshot went stale as Phygitals extended
+  // the table (more addresses added on-chain), which broke their
+  // transaction-fingerprint check ("fingerprint mismatch"). Fetching
+  // live guarantees our compiled v0 message uses the same ALT state
+  // their backend uses to reconstruct + hash the canonical tx.
   const LOOKUP_TABLE_KEY = new PublicKey('H5yQkXsVg9X21MvngdhCvzavTR9FC1R22Rm5sx8BERyJ');
-  const LOOKUP_TABLE_ADDRESSES = [
-    '62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS',
-    'Fufk5zDZao3YiEa8ZCaU319U8BuX84gEbHCsrc2ye9uq',
-    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
-    'AyW32YPRoy7YvsfJmotMiEv3qMQyqvTJLgpfdiWG8vyd',
-    '8d56BJgENF7v9A6YJnMinXqrQb7KKLxMhe3WmUf1Pa4N',
-    'hAsrSYBkzdaz4r3EJ6pwxNL1YbGbM5c1jNuhLV6Uzqi',
-    'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
-    'cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK',
-    '11111111111111111111111111111111',
-    'GCKQVnqNiPSwYNNWYR2BbRXQPhKdNrQtCCaQR2cEyznd',
-    '3kVjWDszwTz6aFzBVPsfGschFFCKDgG4tLNkH8QgLeUN',
-    'BMXiYRt6XMHVMG39My9c1ptPiocZzbGJ5hbVkD2W2Bid',
-    'EDkeaWtLoh2AHbkBVvykw4b3Z5i9AJ3aP89hyYjrqtGK',
-    'JDh7eiWiUWtiWn623iybHqjQ6AQ6c2Czz8m6ZxwSCkta',
-    'BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY',
-    'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
-    '8c4LJmTnDi3pAsqXELwpYJKjxjHCnQ1mzWqfLLkNe5CD',
-    'DQPERZ9e86pNJ4mhUnCEP8V75yxZofsipoVrRWT5Wdxd',
-    'CCryptWBYktukHDQ2vHGtVcmtjXxYzvw8XNVY64YN2Yf',
-    'BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM',
-    'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
-    'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',
-    'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',
-    'eBJLFYPxJmMGKuFwpDWkzxZeUrad92kZRC5BJLpzyT9',
-  ].map((a) => new PublicKey(a));
-  const lookupTable = new AddressLookupTableAccount({
-    key: LOOKUP_TABLE_KEY,
-    state: {
-      deactivationSlot: BigInt('18446744073709551615'),
-      lastExtendedSlot: 382933344,
-      lastExtendedSlotStartIndex: 16,
-      authority: new PublicKey('62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS'),
-      addresses: LOOKUP_TABLE_ADDRESSES,
-    },
-  });
 
   const pubkeys = await fetchPhygitalsSignerPubkeys();
   const packs = await fetchPhygitalsPacks();
@@ -264,6 +232,15 @@ export async function preparePhygitalsBuy(args: {
       : pubkeys.vmBuyback;
 
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+
+  // Fetch the live ALT state. If unavailable for any reason we fall
+  // back to a no-ALT compile — message will be larger but functionally
+  // identical, and Phygitals' backend should still recompute a
+  // matching fingerprint since they re-decode the raw tx bytes.
+  const liveLookupTable = await connection
+    .getAddressLookupTable(LOOKUP_TABLE_KEY)
+    .then((r) => r.value)
+    .catch(() => null);
 
   async function getTokenAccountForMint(owner: string, mint: InstanceType<typeof PublicKey>): Promise<InstanceType<typeof PublicKey>> {
     const ownerPk = new PublicKey(owner);
@@ -317,7 +294,7 @@ export async function preparePhygitalsBuy(args: {
     payerKey: feePayerPk,
     recentBlockhash: blockhash,
     instructions: [addPriorityFee, paymentIx, ...rewardsTransferIxGroups.flat()],
-  }).compileToV0Message([lookupTable]);
+  }).compileToV0Message(liveLookupTable ? [liveLookupTable] : []);
   const tx = new VersionedTransaction(message);
 
   const serialized = tx.serialize();
