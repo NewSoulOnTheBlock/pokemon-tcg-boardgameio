@@ -242,23 +242,30 @@ export async function preparePhygitalsBuy(args: {
     .then((r) => r.value)
     .catch(() => null);
 
-  async function getTokenAccountForMint(owner: string, mint: InstanceType<typeof PublicKey>): Promise<InstanceType<typeof PublicKey>> {
-    const ownerPk = new PublicKey(owner);
-    const accounts = await connection.getParsedTokenAccountsByOwner(ownerPk, { mint });
-    if (accounts.value.length === 0) {
+  // Phygitals' backend re-derives the expected token-transfer
+  // instruction using the canonical ATA (getAssociatedTokenAddressSync),
+  // NOT an RPC lookup. If the buyer has an old non-ATA USDC account
+  // or multiple USDC accounts, `getParsedTokenAccountsByOwner` may
+  // return a different account first, producing a different
+  // transaction-fingerprint than what Phygitals expects. Always use
+  // the canonical ATA for both sides of the payment + rewards.
+  async function ensureAtaExists(owner: string, mint: InstanceType<typeof PublicKey>, ata: InstanceType<typeof PublicKey>): Promise<void> {
+    const info = await connection.getAccountInfo(ata);
+    if (!info) {
       throw new PhygitalsApiError(
         400,
         null,
-        `Wallet ${owner} has no ${currency.toUpperCase()} token account. Fund the wallet first.`,
+        `Wallet ${owner} has no ${mint.equals(USDC_MINT) ? 'USDC' : mint.equals(USDT_MINT) ? 'USDT' : mint.toBase58()} associated token account. Fund the wallet first.`,
       );
     }
-    return accounts.value[0]!.pubkey;
   }
 
-  const [senderAta, receiverAta] = await Promise.all([
-    getTokenAccountForMint(args.buyerWallet, paymentMint),
-    getTokenAccountForMint(paymentReceiver, paymentMint),
-  ]);
+  const senderAta = Token.getAssociatedTokenAddressSync(paymentMint, buyer, false);
+  const receiverAta = Token.getAssociatedTokenAddressSync(paymentMint, new PublicKey(paymentReceiver), false);
+  // Only check the BUYER side exists — receiver wallets (Phygitals')
+  // may use Token-2022 or special ATAs which we can't introspect, but
+  // they'll always exist if the pack is enabled.
+  await ensureAtaExists(args.buyerWallet, paymentMint, senderAta);
 
   const paymentIx = Token.createTransferInstruction(senderAta, receiverAta, buyer, priceInToken);
 
@@ -266,25 +273,24 @@ export async function preparePhygitalsBuy(args: {
     mint,
     amount: Number(pack.rewards_amounts?.[i] ?? 0),
   }));
-  const rewardsTransferIxGroups = await Promise.all(
-    rewards.map(async (reward) => {
-      const mintPublicKey = new PublicKey(reward.mint);
-      const destAta = Token.getAssociatedTokenAddressSync(mintPublicKey, buyer, false);
-      const createDestAtaIx = Token.createAssociatedTokenAccountIdempotentInstruction(
-        feePayerPk,
-        destAta,
-        buyer,
-        mintPublicKey,
-      );
-      const transferIx = Token.createTransferInstruction(
-        await getTokenAccountForMint(pubkeys.vmBuyback, mintPublicKey),
-        destAta,
-        vmBuybackPk,
-        reward.amount * args.amount,
-      );
-      return [createDestAtaIx, transferIx];
-    }),
-  );
+  const rewardsTransferIxGroups = rewards.map((reward) => {
+    const mintPublicKey = new PublicKey(reward.mint);
+    const destAta = Token.getAssociatedTokenAddressSync(mintPublicKey, buyer, false);
+    const sourceAta = Token.getAssociatedTokenAddressSync(mintPublicKey, vmBuybackPk, false);
+    const createDestAtaIx = Token.createAssociatedTokenAccountIdempotentInstruction(
+      feePayerPk,
+      destAta,
+      buyer,
+      mintPublicKey,
+    );
+    const transferIx = Token.createTransferInstruction(
+      sourceAta,
+      destAta,
+      vmBuybackPk,
+      reward.amount * args.amount,
+    );
+    return [createDestAtaIx, transferIx];
+  });
 
   const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
     microLamports: 100 + Math.floor(Math.random() * 300),
