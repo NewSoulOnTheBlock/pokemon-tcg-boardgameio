@@ -104,6 +104,25 @@ import {
   VictoryRewardModal,
 } from './campaign/components';
 import {
+  applyFilterAndSort,
+  computeSetCompletion,
+  getRarityEffectClass,
+  groupSetsByEra,
+  type BoosterFilter,
+  type BoosterSort,
+  type SetMetaLike,
+} from './boosters/helpers';
+import {
+  BoosterEmptyState,
+  BoosterEraSection,
+  BoosterFiltersBar,
+  BoosterHero,
+  BoosterTabs,
+  CollectionTab,
+  RecentOpeningsTab,
+  type BoosterTabId,
+} from './boosters/components';
+import {
   getTelegramUser,
   initTelegramWebApp,
   isTelegramMiniApp,
@@ -1801,18 +1820,24 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
   const [error, setError] = useState('');
   const [buyingSetId, setBuyingSetId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [filterMode, setFilterMode] = useState<BoosterFilter>('all');
+  const [sortMode, setSortMode] = useState<BoosterSort>('newest');
+  const [activeTab, setActiveTab] = useState<BoosterTabId>('shop');
   const [mintSummary, setMintSummary] = useState<Array<{ cardId: string; mintAddress: string; signature: string }>>([]);
 
-  const visibleSets = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return BOOSTERABLE_SETS;
-    return BOOSTERABLE_SETS.filter((set) =>
-      set.name.toLowerCase().includes(needle) ||
-      set.series.toLowerCase().includes(needle) ||
-      (set.ptcgoCode ?? '').toLowerCase().includes(needle),
+  const filteredSets = useMemo(() => {
+    return applyFilterAndSort(
+      BOOSTERABLE_SETS,
+      filterMode,
+      sortMode,
+      filter,
+      (set) => computeSetCompletion(profile, set, CARD_LIBRARY as Record<string, Card>),
     );
-  }, [filter]);
+  }, [filter, filterMode, sortMode, profile]);
 
+  const erasGrouped = useMemo(() => groupSetsByEra(filteredSets), [filteredSets]);
+  const featuredSet = BOOSTERABLE_SETS[0]; // newest set is the default feature
+  const totalUniqueCardsInLibrary = Object.keys(CARD_LIBRARY).length;
   const openedSet = openedSetId ? BOOSTERABLE_SET_BY_ID.get(openedSetId) : undefined;
 
   async function buyPackForSet(set: BoosterableSet) {
@@ -1831,9 +1856,6 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       const invoice = await buildBoosterInvoice(walletAddress);
 
       // 2. User signs + submits the transaction through their wallet.
-      //    The dynamic import can 404 if the user's cached index.html
-      //    references a stale chunk hash from a previous deploy. Detect
-      //    that and force a reload so they get the fresh bundle.
       let signAndSendBase64Transaction: typeof import('./walletPayment')['signAndSendBase64Transaction'];
       try {
         ({ signAndSendBase64Transaction } = await import('./walletPayment'));
@@ -1880,8 +1902,6 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
       };
       const saved = await persistPackAndStore(updated, purchase);
       onProfileChange(saved);
-      // Server-rolled pack uses a lightweight Card shape; cast to satisfy
-      // the existing BoosterPull display in the reveal panel.
       setPack(redeemed.pack as unknown as BoosterPull[]);
       setOpenedSetId(set.id);
       setMintSummary(redeemed.mints);
@@ -1893,26 +1913,32 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
     }
   }
 
+  function handleBuyAgain(setId: string) {
+    const set = BOOSTERABLE_SET_BY_ID.get(setId);
+    if (set) void buyPackForSet(set);
+  }
+
   return (
     <main className="content-page boosters-page">
-      <section className="panel boosters-panel">
-        <p className="eyebrow">Boosters</p>
-        <h1>Buy cards available in game while deckbuilding!</h1>
-        <p>Each pack pulls 8 cards exclusively from the set you choose — 4 Commons, 3 Uncommons, 1 Rare. Payments flow through the Pokemon Masters pump.fun tokenized agent at {PACK_PRICE_LABEL} per pack, and every pulled card is minted as a Metaplex Core NFT straight to your connected Solana wallet.</p>
-        <div className="booster-stats">
-          <span>Packs opened: <strong>{profile.packsOpened}</strong></span>
-          <span>Collection: <strong>{collectionSize(profile.ownedCards)}</strong> cards / <strong>{Object.keys(profile.ownedCards).length}</strong> unique</span>
-          <span>Price: <strong>{PACK_PRICE_LABEL}</strong></span>
-        </div>
-        {status && <p className="success">{status}</p>}
-        {error && <p className="error">{error}</p>}
-      </section>
+      <BoosterHero
+        profile={profile}
+        featuredSet={featuredSet}
+        priceLabel={PACK_PRICE_LABEL}
+        onBuy={() => featuredSet && buyPackForSet(featuredSet)}
+        onJumpToCollection={() => setActiveTab('collection')}
+      />
 
+      <BoosterTabs active={activeTab} onChange={setActiveTab} />
+
+      {status && <p className="success">{status}</p>}
+      {error && <p className="error">{error}</p>}
+
+      {/* Reveal panel shows on every tab when a pack was just opened. */}
       {pack && openedSet && (
         <section className="panel booster-reveal">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Latest pull</p>
+              <p className="eyebrow">✨ Latest pull</p>
               <h2>{openedSet.name}</h2>
               <p className="section-subtitle">{openedSet.series} · {new Date(openedSet.releaseDate).getFullYear()}</p>
             </div>
@@ -1922,7 +1948,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
             {pack.map(({ card, slot }, index) => {
               const mint = mintSummary.find((m) => m.cardId === card.id);
               return (
-                <article className="booster-card" key={`${card.id}-${index}`}>
+                <article className={`booster-card ${getRarityEffectClass(card.rarity)}`} key={`${card.id}-${index}`}>
                   <DeckbuilderCardArt card={card} />
                   <strong>{card.name}</strong>
                   <span>{cardLabel(card)}</span>
@@ -1939,56 +1965,58 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
         </section>
       )}
 
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Sets</p>
-            <h2>Choose a set</h2>
-            <p className="section-subtitle">{BOOSTERABLE_SETS.length} sets available · sorted newest first</p>
-          </div>
-          <input
-            className="set-filter"
-            placeholder="Filter by set, series, or code..."
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
+      {activeTab === 'shop' && (
+        <div className="profile-tab-pane">
+          <BoosterFiltersBar
+            search={filter}
+            filter={filterMode}
+            sort={sortMode}
+            onSearch={setFilter}
+            onFilter={setFilterMode}
+            onSort={setSortMode}
+          />
+          {filteredSets.length === 0 ? (
+            <BoosterEmptyState
+              title="No booster sets match your search"
+              description="Try clearing your filters or searching for a different era."
+              actionLabel="Clear filters"
+              onAction={() => { setFilter(''); setFilterMode('all'); setSortMode('newest'); }}
+            />
+          ) : (
+            erasGrouped.map((group) => (
+              <BoosterEraSection
+                key={group.era.id}
+                era={group.era}
+                sets={group.sets}
+                profile={profile}
+                cardLibrary={CARD_LIBRARY as Record<string, Card>}
+                priceLabel={PACK_PRICE_LABEL}
+                buyingSetId={buyingSetId}
+                onBuy={(set) => buyPackForSet(set as BoosterableSet)}
+              />
+            ))
+          )}
+        </div>
+      )}
+
+      {activeTab === 'open-packs' && (
+        <div className="profile-tab-pane">
+          <RecentOpeningsTab
+            profile={profile}
+            cardLibrary={CARD_LIBRARY as Record<string, Card>}
+            setMetaById={BOOSTERABLE_SET_BY_ID as Map<string, SetMetaLike & { logo?: string }>}
+            onBuyAgain={handleBuyAgain}
+            buyingSetId={buyingSetId}
+            priceLabel={PACK_PRICE_LABEL}
           />
         </div>
-        {visibleSets.length === 0 ? (
-          <p className="empty-state">No sets match "{filter}".</p>
-        ) : (
-          <div className="set-pack-grid">
-            {visibleSets.map((set) => {
-              const releaseYear = Number.parseInt(set.releaseDate.slice(0, 4), 10) || '';
-              return (
-                <article className="set-pack-card" key={set.id}>
-                  <div className="set-pack-art">
-                    {set.logo ? (
-                      <img className="set-pack-logo" src={set.logo} alt={`${set.name} logo`} loading="lazy" />
-                    ) : (
-                      <div className="set-pack-logo-fallback">{set.name}</div>
-                    )}
-                    {set.symbol && (
-                      <img className="set-pack-symbol" src={set.symbol} alt="" loading="lazy" />
-                    )}
-                  </div>
-                  <div className="set-pack-meta">
-                    <strong>{set.name}</strong>
-                    <span>{set.series}{releaseYear ? ` · ${releaseYear}` : ''}</span>
-                    <span>{set.totalCards} cards in pool</span>
-                  </div>
-                  <button
-                    className="primary-cta set-pack-buy"
-                    disabled={buyingSetId !== null}
-                    onClick={() => buyPackForSet(set)}
-                  >
-                    {buyingSetId === set.id ? 'Opening...' : `Open · ${PACK_PRICE_LABEL}`}
-                  </button>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      )}
+
+      {activeTab === 'collection' && (
+        <div className="profile-tab-pane">
+          <CollectionTab profile={profile} totalUniqueCardsInLibrary={totalUniqueCardsInLibrary} />
+        </div>
+      )}
     </main>
   );
 }
