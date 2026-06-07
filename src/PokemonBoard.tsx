@@ -1,7 +1,10 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
+import { ActionBar } from './components/ActionBar';
+import { BattleLogSidebar } from './components/BattleLogSidebar';
 import { CardImage as SharedCardImage } from './components/CardImage';
 import { MatchChatPanel } from './components/MatchChatPanel';
+import { PlayerHUD } from './components/PlayerHUD';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
 import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
@@ -657,34 +660,75 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
     </section>
   ) : null;
 
+  // Stadium theme — derive from the player's deck label so the
+  // background subtly matches what they're playing.
+  function themeForLabel(label?: string): string {
+    if (!label) return 'stadium-theme-neutral';
+    const lower = label.toLowerCase();
+    if (lower.includes('grass') || lower.includes('forest')) return 'stadium-theme-grass';
+    if (lower.includes('fire') || lower.includes('volcanic')) return 'stadium-theme-fire';
+    if (lower.includes('water') || lower.includes('ocean')) return 'stadium-theme-water';
+    if (lower.includes('lightning') || lower.includes('electric')) return 'stadium-theme-electric';
+    if (lower.includes('psychic') || lower.includes('cosmic')) return 'stadium-theme-psychic';
+    if (lower.includes('fighting')) return 'stadium-theme-fighting';
+    if (lower.includes('darkness')) return 'stadium-theme-dark';
+    if (lower.includes('metal') || lower.includes('steel')) return 'stadium-theme-metal';
+    if (lower.includes('fairy')) return 'stadium-theme-fairy';
+    if (lower.includes('dragon')) return 'stadium-theme-dragon';
+    return 'stadium-theme-neutral';
+  }
+  const selfThemeClass = themeForLabel(G.deckLabels?.[actingPlayer]);
+  const opponentPlayerID: PlayerID = actingPlayer === '0' ? '1' : '0';
+  const opponentTheme = themeForLabel(G.deckLabels?.[opponentPlayerID]);
+  const battleArenaClass = `battle-arena ${selfThemeClass} battle-arena-opponent-${opponentTheme.replace('stadium-theme-', '')}`;
+
+  const canRetreatNow = Boolean(
+    player.active
+    && !player.retreatedThisTurn
+    && player.active.attachedEnergy.length >= player.active.card.retreatCost
+    && player.bench.length > 0,
+  );
+  const firstTurnAttackBlocked = ctx.currentPlayer === G.firstPlayer && G.turnsTaken[actingPlayer] === 1;
+
   return (
-    <main>
+    <main className={battleArenaClass}>
       <MatchChatPanel
         chatMessages={chatMessages}
         sendChatMessage={sendChatMessage}
         selfPlayerID={actingPlayer}
         selfName={playerName}
-        opponentName={G.deckLabels?.[actingPlayer === '0' ? '1' : '0']}
+        opponentName={G.deckLabels?.[opponentPlayerID]}
       />
-      <header className="hero">
-        <div>
-          <h1>{G.matchName}</h1>
-          <p>
-            <span className={`match-type-badge match-type-badge-${G.matchType}`}>{G.matchType}</span>
-            {' '}Phase <strong>{ctx.phase ?? 'play'}</strong>
-            {' · '}Current turn <strong>P{ctx.currentPlayer}</strong>
-            {' · '}Playmat <strong>{G.playmatId}</strong>
-          </p>
-          <p>Viewing as Player {actingPlayer}. Hidden hands, decks, and Prize cards are filtered by boardgame.io playerView.</p>
-        </div>
-        {G.stadium && <div className="stadium">Stadium: {G.stadium.card.name}</div>}
-      </header>
 
-      {gameover && (
-        <section className="gameover">
-          {gameover.winner !== undefined ? `Player ${gameover.winner} wins.` : 'Match ended in a draw.'} {gameover.reason}
-        </section>
-      )}
+      <div className="battle-screen">
+        <div className="battle-screen-main">
+          <header className="battle-screen-header">
+            <div>
+              <h1 className="battle-screen-title">{G.matchName}</h1>
+              <p className="battle-screen-subtitle">
+                <span className={`match-type-badge match-type-badge-${G.matchType.replace(/\s+/g, '-')}`}>{G.matchType}</span>
+                {' · '}Playing as <strong>P{actingPlayer}</strong>
+                {G.stadium && <> · Stadium: <strong>{G.stadium.card.name}</strong></>}
+              </p>
+            </div>
+          </header>
+
+          {gameover && (
+            <section className="gameover">
+              {gameover.winner !== undefined ? `Player ${gameover.winner} wins.` : 'Match ended in a draw.'} {gameover.reason}
+            </section>
+          )}
+
+          {/* Opponent HUD at the top */}
+          <PlayerHUD
+            id={opponentPlayerID}
+            player={G.players[opponentPlayerID]}
+            trainerName={G.deckLabels?.[opponentPlayerID]}
+            walletAddress={G.walletAddresses?.[opponentPlayerID]}
+            isCurrentTurn={ctx.currentPlayer === opponentPlayerID && !gameover}
+            isSelf={false}
+            position="top"
+          />
 
       {gameover && isWager && !wagerDismissed && (
         <div className="wager-modal-backdrop" role="dialog" aria-modal="true" aria-label="Wager settlement">
@@ -776,7 +820,7 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
         </div>
       )}
 
-      <div className="player-summaries">
+      <div className="player-summaries-hidden" hidden>
         {PLAYER_IDS.map((id) => (
           <PlayerSummary key={id} id={id} player={G.players[id]} />
         ))}
@@ -807,16 +851,43 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
         </MatZone>
       </section>
 
+      {/* Self HUD between playmat and hand */}
+      <PlayerHUD
+        id={actingPlayer}
+        player={player}
+        trainerName={playerName ?? G.deckLabels?.[actingPlayer]}
+        walletAddress={playerWallet ?? G.walletAddresses?.[actingPlayer]}
+        isCurrentTurn={isCurrent && !gameover}
+        isSelf={true}
+        position="bottom"
+      />
+
       {handPanel}
 
-      <section className="log">
-        <h2>Game log</h2>
-        <ol>
-          {G.log.map((line, index) => (
-            <li key={`${line}-${index}`}>{line}</li>
-          ))}
-        </ol>
-      </section>
+      {!isSetup && !gameover && (
+        <ActionBar
+          player={player}
+          isCurrent={isCurrent}
+          isFirstTurnAttackBlocked={firstTurnAttackBlocked}
+          canRetreat={canRetreatNow}
+          onAttack={(idx) => moves.attack(idx)}
+          onRetreat={(idx) => moves.retreat(idx)}
+          onPass={() => moves.pass()}
+          onConcede={() => {
+            concededRef.current = true;
+            try { moves.concede(); } catch { /* ignore */ }
+          }}
+        />
+      )}
+        </div>
+
+        <BattleLogSidebar
+          log={G.log}
+          turn={ctx.turn}
+          currentPlayer={String(ctx.currentPlayer)}
+          phase={ctx.phase ?? 'play'}
+        />
+      </div>
     </main>
   );
 }
