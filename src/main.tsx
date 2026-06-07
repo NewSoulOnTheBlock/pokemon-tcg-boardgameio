@@ -1,9 +1,18 @@
 import { StrictMode, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Buffer } from 'buffer';
 import { API_BASE } from './api/server';
 import { initCardLibrary } from './game/cards';
 import type { Card } from './game/types';
 import './styles.css';
+
+// @solana/spl-token and @metaplex-foundation/* expect a Node-style
+// `Buffer` global. Browsers don't ship one, so polyfill it at startup
+// before any code that needs it runs. Must be top-level so dynamic
+// imports of @solana/web3.js / @solana/spl-token see it too.
+if (typeof globalThis.Buffer === 'undefined') {
+  (globalThis as unknown as { Buffer: typeof Buffer }).Buffer = Buffer;
+}
 
 const BOOT_HOST_ID = 'root';
 const STATUS_ID = 'boot-status';
