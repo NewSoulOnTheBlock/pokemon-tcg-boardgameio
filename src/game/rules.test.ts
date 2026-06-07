@@ -8,10 +8,11 @@ import {
   isBasicPokemon,
   opponentOf,
   publicViewForPlayer,
+  resolveAttackEffect,
   resolvePokemonCheckup,
 } from './rules';
-import { cloneCard, makeDeck, STARTER_DECKS } from './cards';
-import type { EnergyCard, PokemonCard, PokemonTCGState } from './types';
+import { CARD_LIBRARY, cloneCard, makeDeck, STARTER_DECKS } from './cards';
+import type { Attack, EnergyCard, PokemonCard, PokemonTCGState } from './types';
 
 function makeEmptyState(): PokemonTCGState {
   return {
@@ -156,6 +157,96 @@ describe('rules', () => {
 
     expect(state.players['0'].hand).toHaveLength(0);
     expect(state.players['1'].hand).toHaveLength(0);
+  });
+
+  it('canPayEnergyCost honours Special Energy providesEnergy', () => {
+    const doubleColorless = cloneCard('base1-96') as EnergyCard;
+    expect(doubleColorless.providesEnergy).toEqual(['Colorless', 'Colorless']);
+    expect(canPayEnergyCost([doubleColorless], ['Colorless', 'Colorless'])).toBe(true);
+    // 1 DCE alone shouldn't pay a coloured cost.
+    expect(canPayEnergyCost([doubleColorless], ['Fire'])).toBe(false);
+  });
+
+  it('Shred-style applyDamage ignores defender tool effect', () => {
+    const state = makeEmptyState();
+    const attacker = createPokemonInPlay(
+      state,
+      cloneCard('sv1-3') as PokemonCard,
+      0,
+    );
+    const defender = createPokemonInPlay(
+      state,
+      cloneCard('sv1-31') as PokemonCard,
+      0,
+    );
+    defender.tool = { id: 't', kind: 'trainer', name: 'Bravery Charm', trainerType: 'Pokemon Tool', effect: 'toolMinus10' };
+
+    const normal = applyDamage(state, attacker, defender, 60);
+    defender.damage = 0;
+    const shred = applyDamage(state, attacker, defender, 60, { ignoreDefenderEffects: true });
+    expect(normal).toBe(50);
+    expect(shred).toBe(60);
+  });
+
+  it('starter-deck attacks parse into real opcodes (not raw text)', () => {
+    // Sample a handful of distinctive attacks and confirm the converter
+    // produced the expected AttackEffect shape — these were silently
+    // dropping to undefined before the starter-deck pass.
+    const expectations: Record<string, { name: string; type: string }> = {
+      'sv1-3': { name: 'Absorb', type: 'healSelf' },
+      'pgo-8': { name: 'Tail on Fire', type: 'searchAndAttachEnergy' },
+      'sv3pt5-4': { name: 'Blazing Destruction', type: 'discardStadium' },
+      'sv1-32': { name: 'Bright Flame', type: 'discardOwnEnergy' },
+      'sv1-70': { name: 'Thunder Shock', type: 'coinFlipCondition' },
+      'sv1-85': { name: 'Psychic', type: 'damagePerOpponentEnergy' },
+      'det1-14': { name: 'Healing Melody', type: 'healAllOwn' },
+      'g1-RC19': { name: 'Lick Away', type: 'clearOwnConditions' },
+      'pgo-55': { name: 'Collapse', type: 'conditionSelf' },
+      'bw11-93': { name: 'Dragon Pulse', type: 'selfMillDeck' },
+      'base1-48': { name: 'Fury Attack', type: 'coinMultiHeadsDamage' },
+      'sv1-117': { name: 'Earthquake', type: 'selfBenchSplash' },
+      'sv1-152': { name: 'Enhanced Fang', type: 'damageIfHasTool' },
+      'sv1-2': { name: 'Superpowered Throw', type: 'damagePerOpponentRetreatColorless' },
+    };
+    for (const [id, expected] of Object.entries(expectations)) {
+      const card = CARD_LIBRARY[id] as PokemonCard | undefined;
+      expect(card, `${id} missing in library`).toBeDefined();
+      const attack = card!.attacks.find((a) => a.name === expected.name);
+      expect(attack, `${id} missing attack ${expected.name}`).toBeDefined();
+      expect(attack!.effect?.type, `${id} ${expected.name}`).toBe(expected.type);
+    }
+  });
+
+  it('Healing Melody heals every benched + active Pokemon', () => {
+    const state = makeEmptyState();
+    state.players['0'].active = createPokemonInPlay(state, cloneCard('sv1-3') as PokemonCard, 0);
+    state.players['0'].bench = [
+      createPokemonInPlay(state, cloneCard('sv1-3') as PokemonCard, 0),
+      createPokemonInPlay(state, cloneCard('sv1-3') as PokemonCard, 0),
+    ];
+    state.players['0'].active!.damage = 30;
+    state.players['0'].bench[0].damage = 20;
+    state.players['0'].bench[1].damage = 0;
+
+    const opponent = state.players['1'];
+    opponent.active = createPokemonInPlay(state, cloneCard('sv1-31') as PokemonCard, 0);
+
+    const jiggly = CARD_LIBRARY['det1-14'] as PokemonCard;
+    const healingMelody = jiggly.attacks.find((a) => a.name === 'Healing Melody') as Attack;
+
+    resolveAttackEffect(
+      state,
+      healingMelody,
+      state.players['0'].active!,
+      opponent.active!,
+      state.players['0'],
+      { Die: () => 1, Shuffle: <T,>(arr: T[]) => arr },
+      opponent,
+    );
+
+    expect(state.players['0'].active!.damage).toBe(20);
+    expect(state.players['0'].bench[0].damage).toBe(10);
+    expect(state.players['0'].bench[1].damage).toBe(0);
   });
 });
 

@@ -83,7 +83,15 @@ export function resetTurnFlags(player: PlayerState): void {
 }
 
 export function canPayEnergyCost(attachedEnergy: EnergyCard[], cost: PokemonType[]): boolean {
-  const available = attachedEnergy.map((energy) => energy.energyType);
+  // Expand each attached card into its individual energy symbols.
+  // Special Energy (Double Colorless etc.) contributes multiple symbols
+  // via `providesEnergy`; basic energy contributes one of its energyType.
+  const available: PokemonType[] = attachedEnergy.flatMap((energy) =>
+    energy.providesEnergy && energy.providesEnergy.length > 0
+      ? [...energy.providesEnergy]
+      : [energy.energyType],
+  );
+
   for (const symbol of cost) {
     if (symbol === 'Colorless') {
       if (available.length === 0) {
@@ -148,6 +156,7 @@ export function applyDamage(
   attacker: PokemonInPlay,
   defender: PokemonInPlay,
   baseDamage: number,
+  options?: { ignoreDefenderEffects?: boolean },
 ): number {
   let damage = baseDamage;
 
@@ -163,7 +172,10 @@ export function applyDamage(
     damage -= 30;
   }
 
-  if (defender.tool?.effect === 'toolMinus10') {
+  // Shred-style attacks ignore Tools / damage-reduction effects on the
+  // defender. Stadium bonus + weakness/resistance are NOT defender-side
+  // effects per official rules, so they're applied above regardless.
+  if (!options?.ignoreDefenderEffects && defender.tool?.effect === 'toolMinus10') {
     damage -= 10;
   }
 
@@ -259,7 +271,8 @@ export function resolveAttackEffect(
   attacker: PokemonInPlay,
   defender: PokemonInPlay,
   player: PlayerState,
-  random: { Die: (spotValue: number) => number },
+  random: { Die: (spotValue: number) => number; Shuffle?: <T>(arr: T[]) => T[] },
+  opponent?: PlayerState,
 ): void {
   const effect = attack.effect;
   if (!effect) {
@@ -271,13 +284,53 @@ export function resolveAttackEffect(
       addCondition(defender, effect.condition);
       appendLog(G, `${defender.card.name} is now ${effect.condition}.`);
       break;
+    case 'conditionSelf':
+      addCondition(attacker, effect.condition);
+      appendLog(G, `${attacker.card.name} is now ${effect.condition}.`);
+      break;
+    case 'coinFlipCondition': {
+      const heads = random.Die(2) === 1;
+      if (heads) {
+        addCondition(defender, effect.condition);
+        appendLog(G, `Coin flip: heads. ${defender.card.name} is now ${effect.condition}.`);
+      } else {
+        appendLog(G, `Coin flip: tails. ${defender.card.name} avoided ${effect.condition}.`);
+      }
+      break;
+    }
     case 'healSelf':
       heal(attacker, effect.amount);
       appendLog(G, `${attacker.card.name} healed ${effect.amount} damage.`);
       break;
+    case 'healAllOwn': {
+      let healed = 0;
+      const heroes = [player.active, ...player.bench].filter((p): p is PokemonInPlay => Boolean(p));
+      for (const pokemon of heroes) {
+        if (pokemon.damage > 0) {
+          heal(pokemon, effect.amount);
+          healed += 1;
+        }
+      }
+      appendLog(G, `Healed ${effect.amount} damage from ${healed} of your Pokémon.`);
+      break;
+    }
+    case 'clearOwnConditions':
+      if (attacker.conditions.length > 0) {
+        attacker.conditions = [];
+        appendLog(G, `${attacker.card.name} cleared all Special Conditions.`);
+      }
+      break;
     case 'selfDamage':
       attacker.damage += effect.amount;
       appendLog(G, `${attacker.card.name} took ${effect.amount} recoil damage.`);
+      break;
+    case 'selfBenchSplash':
+      for (const benched of player.bench) {
+        benched.damage += effect.amount;
+      }
+      if (player.bench.length > 0) {
+        appendLog(G, `${attack.name} splashed ${effect.amount} damage onto ${player.bench.length} of your Benched Pokémon.`);
+      }
       break;
     case 'draw':
       drawCards(player, effect.count);
@@ -291,6 +344,147 @@ export function resolveAttackEffect(
       } else {
         appendLog(G, `${attack.name} missed the bonus coin flip.`);
       }
+      break;
+    }
+    case 'coinMultiHeadsDamage': {
+      let heads = 0;
+      for (let i = 0; i < effect.numCoins; i += 1) {
+        if (random.Die(2) === 1) heads += 1;
+      }
+      const total = heads * effect.perHead;
+      if (total > 0) {
+        defender.damage += total;
+      }
+      appendLog(G, `${attack.name}: flipped ${effect.numCoins} coins, ${heads} heads -> ${total} damage.`);
+      break;
+    }
+    case 'coinFlipsAllHeadsOrFail': {
+      let allHeads = true;
+      for (let i = 0; i < effect.numCoins; i += 1) {
+        if (random.Die(2) !== 1) { allHeads = false; break; }
+      }
+      // If any tail, the printed damage (already applied in `attack`) was
+      // also wasted. We undo it here so the attack truly "does nothing".
+      if (!allHeads && attack.damage !== undefined) {
+        defender.damage = Math.max(0, defender.damage - attack.damage);
+        appendLog(G, `${attack.name} fizzled (tails on the coin flip).`);
+      } else if (allHeads) {
+        appendLog(G, `${attack.name} landed all heads.`);
+      }
+      break;
+    }
+    case 'coinFlipDiscardOppEnergy': {
+      if (random.Die(2) === 1 && defender.attachedEnergy.length > 0 && opponent) {
+        const [discarded] = defender.attachedEnergy.splice(0, 1);
+        opponent.discard.push(discarded);
+        appendLog(G, `${attack.name}: heads. Discarded ${discarded.name} from ${defender.card.name}.`);
+      } else {
+        appendLog(G, `${attack.name}: no energy discarded.`);
+      }
+      break;
+    }
+    case 'coinUntilTailsDiscardOppEnergy': {
+      let discardedCount = 0;
+      while (random.Die(2) === 1 && defender.attachedEnergy.length > 0 && opponent) {
+        const [discarded] = defender.attachedEnergy.splice(0, 1);
+        opponent.discard.push(discarded);
+        discardedCount += 1;
+      }
+      appendLog(G, `${attack.name}: flipped until tails, discarded ${discardedCount} energy from ${defender.card.name}.`);
+      break;
+    }
+    case 'damagePerOwnDamageCounter': {
+      const counters = Math.floor(attacker.damage / 10);
+      const bonus = counters * effect.perCounter;
+      if (bonus > 0) {
+        defender.damage += bonus;
+        appendLog(G, `${attack.name}: +${bonus} damage from ${counters} damage counter(s) on self.`);
+      }
+      break;
+    }
+    case 'damagePerOpponentEnergy': {
+      const bonus = defender.attachedEnergy.length * effect.perEnergy;
+      if (bonus > 0) {
+        defender.damage += bonus;
+        appendLog(G, `${attack.name}: +${bonus} damage from ${defender.attachedEnergy.length} opponent energy.`);
+      }
+      break;
+    }
+    case 'damagePerOpponentRetreatColorless': {
+      const bonus = defender.card.retreatCost * effect.perColorless;
+      if (bonus > 0) {
+        defender.damage += bonus;
+        appendLog(G, `${attack.name}: +${bonus} damage from defender's retreat cost.`);
+      }
+      break;
+    }
+    case 'damageIfHasTool': {
+      if (attacker.tool) {
+        defender.damage += effect.bonus;
+        appendLog(G, `${attack.name}: +${effect.bonus} damage from attached Tool.`);
+      }
+      break;
+    }
+    case 'damageIgnoreDefenderEffects':
+      // Handled at applyDamage call site via options; this branch is a
+      // no-op marker so the switch is exhaustive.
+      break;
+    case 'discardOwnEnergy': {
+      let removed = 0;
+      for (let i = 0; i < attacker.attachedEnergy.length && removed < effect.count; ) {
+        const energy = attacker.attachedEnergy[i];
+        const matches = effect.energyType
+          ? energy.energyType === effect.energyType ||
+            (energy.providesEnergy?.includes(effect.energyType) ?? false)
+          : true;
+        if (matches) {
+          attacker.attachedEnergy.splice(i, 1);
+          player.discard.push(energy);
+          removed += 1;
+        } else {
+          i += 1;
+        }
+      }
+      appendLog(G, `${attack.name}: discarded ${removed} energy from ${attacker.card.name}.`);
+      break;
+    }
+    case 'discardAllOwnEnergy': {
+      const removed = attacker.attachedEnergy.length;
+      player.discard.push(...attacker.attachedEnergy);
+      attacker.attachedEnergy = [];
+      appendLog(G, `${attack.name}: discarded all ${removed} energy from ${attacker.card.name}.`);
+      break;
+    }
+    case 'discardStadium': {
+      if (G.stadium) {
+        G.players[G.stadium.owner].discard.push(G.stadium.card);
+        appendLog(G, `${attack.name}: discarded Stadium ${G.stadium.card.name}.`);
+        G.stadium = undefined;
+      }
+      break;
+    }
+    case 'searchAndAttachEnergy': {
+      let attached = 0;
+      for (let i = 0; i < player.deck.length && attached < effect.count; ) {
+        const card = player.deck[i];
+        if (card.kind === 'energy' && card.energyType === effect.energyType) {
+          player.deck.splice(i, 1);
+          attacker.attachedEnergy.push(card);
+          attached += 1;
+        } else {
+          i += 1;
+        }
+      }
+      if (attached > 0 && random.Shuffle) {
+        player.deck = random.Shuffle(player.deck);
+      }
+      appendLog(G, `${attack.name}: attached ${attached} ${effect.energyType} energy from deck.`);
+      break;
+    }
+    case 'selfMillDeck': {
+      const milled = player.deck.splice(0, effect.count);
+      player.discard.push(...milled);
+      appendLog(G, `${attack.name}: discarded the top ${milled.length} cards of your deck.`);
       break;
     }
   }

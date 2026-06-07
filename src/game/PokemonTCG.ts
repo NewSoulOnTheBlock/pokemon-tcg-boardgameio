@@ -185,7 +185,7 @@ const attachEnergy: Move<PokemonTCGState> = ({ G, ctx, playerID }, handIndex: nu
   appendLog(G, `Player ${pid} attached ${card.name} to ${target.card.name}.`);
 };
 
-const playTrainer: Move<PokemonTCGState> = ({ G, ctx, playerID }, handIndex: number, target?: { zone: 'active' | 'bench'; benchIndex?: number; switchBenchIndex?: number }) => {
+const playTrainer: Move<PokemonTCGState> = ({ G, ctx, random, playerID }, handIndex: number, target?: { zone: 'active' | 'bench'; benchIndex?: number; switchBenchIndex?: number }) => {
   const pid = ensurePlayer(playerID);
   if (!pid || ctx.currentPlayer !== pid) return INVALID_MOVE;
 
@@ -231,6 +231,15 @@ const playTrainer: Move<PokemonTCGState> = ({ G, ctx, playerID }, handIndex: num
       drawCards(player, 3);
       player.discard.push(card);
       appendLog(G, `Player ${pid} drew 3 cards with ${card.name}.`);
+      break;
+    case 'shuffleHandDraw5':
+      // Youngster: shuffle remaining hand back into deck, then draw 5.
+      player.deck.push(...player.hand);
+      player.hand = [];
+      player.deck = random.Shuffle(player.deck);
+      drawCards(player, 5);
+      player.discard.push(card);
+      appendLog(G, `Player ${pid} shuffled their hand into their deck and drew 5 with ${card.name}.`);
       break;
     case 'research':
       player.discard.push(...player.hand);
@@ -316,13 +325,14 @@ const attack: Move<PokemonTCGState> = ({ G, ctx, events, random, playerID }, att
     }
 
   if (selectedAttack.damage !== undefined) {
-    const damage = applyDamage(G, attacker, defender, selectedAttack.damage);
+    const ignoreDefenderEffects = selectedAttack.effect?.type === 'damageIgnoreDefenderEffects';
+    const damage = applyDamage(G, attacker, defender, selectedAttack.damage, { ignoreDefenderEffects });
     appendLog(G, `${attacker.card.name} used ${selectedAttack.name} for ${damage} damage.`);
   } else {
     appendLog(G, `${attacker.card.name} used ${selectedAttack.name}.`);
   }
 
-  resolveAttackEffect(G, selectedAttack, attacker, defender, player, random);
+  resolveAttackEffect(G, selectedAttack, attacker, defender, player, random, opponent);
   checkAllKnockOuts(G);
   resolvePokemonCheckup(G, random, pid);
   events.endTurn();

@@ -39,10 +39,29 @@ export interface Attack {
 
 export type AttackEffect =
   | { type: 'condition'; condition: SpecialCondition }
+  | { type: 'conditionSelf'; condition: SpecialCondition }
+  | { type: 'coinFlipCondition'; condition: SpecialCondition }
   | { type: 'healSelf'; amount: number }
+  | { type: 'healAllOwn'; amount: number }
+  | { type: 'clearOwnConditions' }
   | { type: 'selfDamage'; amount: number }
+  | { type: 'selfBenchSplash'; amount: number }
   | { type: 'draw'; count: number }
-  | { type: 'coinBonusDamage'; amount: number };
+  | { type: 'coinBonusDamage'; amount: number }
+  | { type: 'coinMultiHeadsDamage'; perHead: number; numCoins: number }
+  | { type: 'coinFlipsAllHeadsOrFail'; numCoins: number }
+  | { type: 'coinFlipDiscardOppEnergy' }
+  | { type: 'coinUntilTailsDiscardOppEnergy' }
+  | { type: 'damagePerOwnDamageCounter'; perCounter: number }
+  | { type: 'damagePerOpponentEnergy'; perEnergy: number }
+  | { type: 'damagePerOpponentRetreatColorless'; perColorless: number }
+  | { type: 'damageIfHasTool'; bonus: number }
+  | { type: 'damageIgnoreDefenderEffects' }
+  | { type: 'discardOwnEnergy'; count: number; energyType?: PokemonType }
+  | { type: 'discardAllOwnEnergy' }
+  | { type: 'discardStadium' }
+  | { type: 'searchAndAttachEnergy'; count: number; energyType: PokemonType }
+  | { type: 'selfMillDeck'; count: number };
 
 /** Card metadata held in CARD_LIBRARY. Only fields that are actually read at
  *  runtime live here; anything used only during the source -> Card conversion
@@ -78,6 +97,10 @@ export interface EnergyCard extends BaseCard {
   kind: 'energy';
   energyType: PokemonType;
   basic?: boolean;
+  /** Special Energy cards (Double Colorless, etc.) provide multiple
+   *  symbols when attached. One entry per symbol. Omitted on basic
+   *  energy — those provide a single `energyType` symbol. */
+  providesEnergy?: PokemonType[];
 }
 
 export interface TrainerCard extends BaseCard {
@@ -86,6 +109,7 @@ export interface TrainerCard extends BaseCard {
   effect?:
     | 'heal30'
     | 'draw3'
+    | 'shuffleHandDraw5'
     | 'research'
     | 'switch'
     | 'searchBasicToBench'

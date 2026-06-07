@@ -155,17 +155,153 @@ function inferAttackEffect(attack: SourceAttack): AttackEffect | undefined {
   const text = normalize(attack.text);
   const damage = parseDamage(attack.damage);
 
+  if (!text) return undefined;
+
+  // ----- Self-targeting condition: "This Pokémon is now Asleep." -------
+  // Must run BEFORE the generic condition matcher, which would otherwise
+  // apply the condition to the defender.
+  const selfConditionMatch = text.match(/this pok[eé]mon is now (asleep|burned|confused|paralyzed|poisoned)/);
+  if (selfConditionMatch) {
+    return { type: 'conditionSelf', condition: selfConditionMatch[1] as SpecialCondition };
+  }
+
+  // ----- Coin-flip-then-condition: Rotom Thunder Shock etc. -----------
+  const coinConditionMatch = text.match(/flip a coin\.?\s*if heads,?[^.]*?(asleep|burned|confused|paralyzed|poisoned)/);
+  if (coinConditionMatch) {
+    return { type: 'coinFlipCondition', condition: coinConditionMatch[1] as SpecialCondition };
+  }
+
+  // ----- Heal all your Pokémon (Healing Melody) ------------------------
+  const healAllMatch = text.match(/heal (\d+) damage from each of your pok[eé]mon/);
+  if (healAllMatch) {
+    return { type: 'healAllOwn', amount: Number(healAllMatch[1]) };
+  }
+
+  // ----- Clear own conditions (Lick Away) ------------------------------
+  if (text.match(/remove all special conditions from this pok[eé]mon/)) {
+    return { type: 'clearOwnConditions' };
+  }
+
+  // ----- Discard top N of own deck (Dragon Pulse) ---------------------
+  const millMatch = text.match(/discard the top (\d+) cards? of your deck/);
+  if (millMatch) {
+    return { type: 'selfMillDeck', count: Number(millMatch[1]) };
+  }
+
+  // ----- Damage scales by counters on self (Raging Claws) -------------
+  const perCounterMatch = text.match(/this attack does (\d+) more damage for each damage counter on this pok[eé]mon/);
+  if (perCounterMatch) {
+    return { type: 'damagePerOwnDamageCounter', perCounter: Number(perCounterMatch[1]) };
+  }
+
+  // ----- Damage scales by opponent's attached energy (Kirlia Psychic) -
+  const perOppEnergyMatch = text.match(/this attack does (\d+) more damage for each energy attached to your opponent['']s active pok[eé]mon/);
+  if (perOppEnergyMatch) {
+    return { type: 'damagePerOpponentEnergy', perEnergy: Number(perOppEnergyMatch[1]) };
+  }
+
+  // ----- Damage per Colorless in opp retreat cost (Heracross) ---------
+  const perColorlessMatch = text.match(/this attack does (\d+) more damage for each colorless in your opponent['']s active pok[eé]mon['']s retreat cost/);
+  if (perColorlessMatch) {
+    return { type: 'damagePerOpponentRetreatColorless', perColorless: Number(perColorlessMatch[1]) };
+  }
+
+  // ----- Tool bonus damage (Enhanced Fang) ----------------------------
+  const toolBonusMatch = text.match(/if this pok[eé]mon has a pok[eé]mon tool attached, this attack does (\d+) more damage/);
+  if (toolBonusMatch) {
+    return { type: 'damageIfHasTool', bonus: Number(toolBonusMatch[1]) };
+  }
+
+  // ----- Ignore defender effects (Shred) ------------------------------
+  if (text.match(/this attack['']?s damage isn['']?t affected by any effects on the defending pok[eé]mon/)) {
+    return { type: 'damageIgnoreDefenderEffects' };
+  }
+
+  // ----- Splash bench damage (Earthquake) -----------------------------
+  const splashMatch = text.match(/this attack also does (\d+) damage to each of your benched pok[eé]mon/);
+  if (splashMatch) {
+    return { type: 'selfBenchSplash', amount: Number(splashMatch[1]) };
+  }
+
+  // ----- Discard own energy (Bright Flame, Power Blast, Electro Paws) -
+  if (text.match(/discard all energy from this pok[eé]mon/)) {
+    return { type: 'discardAllOwnEnergy' };
+  }
+  const discardEnergyMatch = text.match(/discard (\d+) (\w+) energy from this pok[eé]mon/);
+  if (discardEnergyMatch) {
+    return {
+      type: 'discardOwnEnergy',
+      count: Number(discardEnergyMatch[1]),
+      energyType: toPokemonType(discardEnergyMatch[2]) ?? undefined,
+    };
+  }
+  if (text.match(/discard an energy from this pok[eé]mon/)) {
+    return { type: 'discardOwnEnergy', count: 1 };
+  }
+
+  // ----- Discard a Stadium (Blazing Destruction) ----------------------
+  if (text.match(/discard a stadium in play/)) {
+    return { type: 'discardStadium' };
+  }
+
+  // ----- Search-and-attach (Tail on Fire, Stoke) ----------------------
+  const searchEnergyMatch = text.match(/search your deck for (?:up to )?(\d+|a) basic (\w+) energy card/);
+  if (searchEnergyMatch) {
+    const countToken = searchEnergyMatch[1];
+    const count = countToken === 'a' ? 1 : Number(countToken);
+    const energyType = toPokemonType(searchEnergyMatch[2]);
+    if (energyType) {
+      return { type: 'searchAndAttachEnergy', count, energyType };
+    }
+  }
+  const searchEnergyMatchBare = text.match(/search your deck for a (\w+) energy card and attach/);
+  if (searchEnergyMatchBare) {
+    const energyType = toPokemonType(searchEnergyMatchBare[1]);
+    if (energyType) {
+      return { type: 'searchAndAttachEnergy', count: 1, energyType };
+    }
+  }
+
+  // ----- Coin-flip discard opp energy (Maschiff Crunch) ---------------
+  if (text.match(/flip a coin\.?\s*if heads,?\s*discard an energy from your opponent['']s active pok[eé]mon/)) {
+    return { type: 'coinFlipDiscardOppEnergy' };
+  }
+
+  // ----- Coin-until-tails discard opp energy (Krookodile) -------------
+  if (text.match(/flip a coin until you get tails\.?\s*for each heads,?\s*discard an energy from your opponent['']s active pok[eé]mon/)) {
+    return { type: 'coinUntilTailsDiscardOppEnergy' };
+  }
+
+  // ----- Coin-multi-heads damage (Doduo Fury Attack) -------------------
+  const multiCoinDamageMatch = text.match(/flip (\d+) coins?\.?\s*this attack does (\d+) damage times the number of heads/);
+  if (multiCoinDamageMatch) {
+    return {
+      type: 'coinMultiHeadsDamage',
+      numCoins: Number(multiCoinDamageMatch[1]),
+      perHead: Number(multiCoinDamageMatch[2]),
+    };
+  }
+
+  // ----- All-heads-or-nothing coin (Druddigon Big Swing, Farfetch'd) -
+  const allHeadsMatch = text.match(/flip (\d+|a) coins?\.?\s*if (?:either of them is tails|tails)/);
+  if (allHeadsMatch) {
+    const token = allHeadsMatch[1];
+    const numCoins = token === 'a' ? 1 : Number(token);
+    return { type: 'coinFlipsAllHeadsOrFail', numCoins };
+  }
+
+  // ----- Existing simple effects (keep last so specific patterns win) -
   const condition = SPECIAL_CONDITIONS.find((candidate) => text.includes(candidate));
   if (condition) {
     return { type: 'condition', condition };
   }
 
-  const healMatch = text.match(/heal (\d+) damage from this pokemon/);
+  const healMatch = text.match(/heal (\d+) damage from this pok[eé]mon/);
   if (healMatch) {
     return { type: 'healSelf', amount: Number(healMatch[1]) };
   }
 
-  const selfDamageMatch = text.match(/does (\d+) damage to (itself|this pokemon)/);
+  const selfDamageMatch = text.match(/does (\d+) damage to (itself|this pok[eé]mon)/);
   if (selfDamageMatch) {
     return { type: 'selfDamage', amount: Number(selfDamageMatch[1]) };
   }
@@ -255,11 +391,27 @@ function inferEnergyType(source: SourceCard): PokemonType {
 }
 
 function convertEnergy(source: SourceCard): EnergyCard {
+  const isSpecial = source.subtypes?.some((subtype) => normalize(subtype) === 'special') ?? false;
+  const name = normalize(source.name);
+  const energyType = inferEnergyType(source);
+
+  // Special Energy cards that we hand-recognise. Each entry in
+  // providesEnergy counts as one symbol when paying an attack cost
+  // (canPayEnergyCost flat-maps these). Double Dragon Energy officially
+  // provides 2 of any type but only for Dragon Pokemon — approximate as
+  // 2 Colorless so non-Dragon attacks still parse predictably.
+  let providesEnergy: EnergyCard['providesEnergy'];
+  if (isSpecial) {
+    if (name.includes('double colorless')) providesEnergy = ['Colorless', 'Colorless'];
+    else if (name.includes('double dragon')) providesEnergy = ['Colorless', 'Colorless'];
+  }
+
   return {
     ...baseCardFields(source),
     kind: 'energy',
-    energyType: inferEnergyType(source),
+    energyType,
     basic: source.subtypes?.some((subtype) => normalize(subtype) === 'basic') ?? false,
+    providesEnergy,
   };
 }
 
@@ -281,7 +433,12 @@ function trainerEffectFor(source: SourceCard): TrainerCard['effect'] {
 
   if (name === 'potion' || text.includes('heal 30 damage')) return 'heal30';
   if (name === 'professors research' || text.includes('discard your hand and draw 7')) return 'research';
-  if (name === 'youngster' || text.includes('draw 3 card')) return 'draw3';
+  // Youngster: "Shuffle your hand into your deck. Then, draw 5 cards." The
+  // older converter mapped this to draw3 by name only, which silently
+  // dropped two cards per play and ignored the shuffle. Use a dedicated
+  // effect opcode so the runtime can do both steps.
+  if (name === 'youngster' || text.includes('shuffle your hand into your deck. then, draw 5')) return 'shuffleHandDraw5';
+  if (text.includes('draw 3 card')) return 'draw3';
   if (name === 'switch') return 'switch';
   if (name === 'nest ball' || text.includes('search your deck for a basic pokemon')) return 'searchBasicToBench';
   if (name === 'training court') return 'stadiumPlus10';
