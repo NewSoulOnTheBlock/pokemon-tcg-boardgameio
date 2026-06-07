@@ -17,6 +17,7 @@ import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage, type ProfileStorage } from './server/profileStorage';
 import { rollPrizeCard } from './server/prizes';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
+import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -45,6 +46,9 @@ const profileStorage: ProfileStorage = databaseUrl
 const cardStorage: CardStorage = databaseUrl
   ? new PostgresCardStorage(databaseUrl, postgresSslFromEnv())
   : new MemoryCardStorage();
+const lobbyChat: LobbyChatStore = databaseUrl
+  ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
+  : new MemoryLobbyChatStore();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
@@ -150,6 +154,7 @@ async function bootstrapCardLibrary(): Promise<void> {
 }
 
 await bootstrapCardLibrary();
+await lobbyChat.connect();
 
 // Pre-serialise the catalogue once so /api/cards/library never re-walks the
 // 20k+ entry Proxy on every request. ~8 MB string in memory.
@@ -394,6 +399,53 @@ server.router.post('/api/profiles/:userId/matches', jsonBody, async (ctx) => {
 
 server.router.get('/api/leaderboard', async (ctx) => {
   ctx.body = await profileStorage.listLeaderboard();
+});
+
+/**
+ * Lobby trollbox — public chat shown on the matchmaking page. Plain HTTP
+ * polling (every few seconds from the client) so we don't need to spin
+ * up a separate WebSocket channel. Messages are rate-limited per
+ * (userId, IP), capped at 280 chars, and trimmed to the last 200
+ * messages.
+ */
+server.router.get('/api/lobby/chat', async (ctx) => {
+  const since = typeof ctx.query.since === 'string' ? ctx.query.since : undefined;
+  const limitParam = typeof ctx.query.limit === 'string' ? Number(ctx.query.limit) : NaN;
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : undefined;
+  const messages = await lobbyChat.recent(since, limit);
+  ctx.body = { messages, limits: LOBBY_CHAT_LIMITS };
+});
+
+server.router.post('/api/lobby/chat', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { userId?: string; name?: string; text?: string } | undefined;
+  if (!body) {
+    ctx.throw(400, 'JSON body required');
+    return;
+  }
+  const ip = (ctx.request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim())
+    || ctx.request.ip
+    || undefined;
+  try {
+    const message = await lobbyChat.post({
+      userId: body.userId ?? '',
+      name: body.name ?? '',
+      text: body.text ?? '',
+      postedFromIp: ip,
+    });
+    ctx.body = { message, limits: LOBBY_CHAT_LIMITS };
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      ctx.status = 429;
+      ctx.set('Retry-After', String(Math.ceil(err.retryAfterMs / 1000)));
+      ctx.body = { error: 'Rate limited', retryAfterMs: err.retryAfterMs };
+      return;
+    }
+    if (err instanceof ValidationError) {
+      ctx.throw(400, err.message);
+      return;
+    }
+    throw err;
+  }
 });
 
 /**

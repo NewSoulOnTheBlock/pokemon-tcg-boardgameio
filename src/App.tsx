@@ -63,6 +63,7 @@ import {
   rankFromLeaderboard,
   summariseRecentForm,
 } from './matchmaking/helpers';
+import { TrollBox } from './matchmaking/TrollBox';
 import {
   computeRegionProgress,
   computeTypeBreakdown,
@@ -1803,6 +1804,8 @@ function MatchmakingPage({
               )}
             </ul>
           </section>
+
+          <TrollBox profile={profile} />
         </div>
       </div>
     </main>
