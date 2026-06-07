@@ -197,15 +197,52 @@ export function PhygitalsShopTab({ profile, onPurchased }: {
   );
 }
 
+// ----------------------------------------------------------------------------
+// Pack art placeholder
+// ----------------------------------------------------------------------------
+//
+// Phygitals' Partner API doesn't ship pack art (claw_image_url is empty
+// on every pack as of Jun 2026). Render a price-tier-coloured CSS
+// placeholder with the pack name and a Pokeball motif so the catalog
+// still looks distinctive.
+
+function packTierFromPrice(price: number): { gradient: string; ring: string; label: string; emoji: string } {
+  if (price >= 2000) return { gradient: 'linear-gradient(135deg, #facc15 0%, #fb7185 50%, #c084fc 100%)', ring: 'rgba(251, 191, 36, 0.55)', label: 'MYTHIC', emoji: '👑' };
+  if (price >= 500)  return { gradient: 'linear-gradient(135deg, #c084fc 0%, #7c3aed 100%)',                ring: 'rgba(192, 132, 252, 0.5)', label: 'LEGENDARY', emoji: '🌟' };
+  if (price >= 100)  return { gradient: 'linear-gradient(135deg, #38bdf8 0%, #3730a3 100%)',                ring: 'rgba(56, 189, 248, 0.5)',  label: 'EPIC',      emoji: '💎' };
+  if (price >= 30)   return { gradient: 'linear-gradient(135deg, #4ade80 0%, #047857 100%)',                ring: 'rgba(74, 222, 128, 0.5)',  label: 'RARE',      emoji: '⚡' };
+  return                  { gradient: 'linear-gradient(135deg, #94a3b8 0%, #475569 100%)',                ring: 'rgba(148, 163, 184, 0.4)', label: 'COMMON',    emoji: '🎴' };
+}
+
+function PackArt({ pack }: { pack: PhygitalsPack }) {
+  // Use the upstream image if Phygitals ever starts sending one.
+  if (pack.claw_image_url) {
+    return (
+      <div className="phygitals-pack-art">
+        <img src={pack.claw_image_url} alt={pack.name ?? pack.slug} loading="lazy" />
+      </div>
+    );
+  }
+  const price = Number(pack.mint_price ?? 0);
+  const tier = packTierFromPrice(price);
+  return (
+    <div
+      className="phygitals-pack-art phygitals-pack-art-placeholder"
+      style={{ background: tier.gradient, boxShadow: `0 0 24px ${tier.ring} inset` }}
+      aria-label={pack.name ?? pack.slug}
+    >
+      <span className="phygitals-pack-art-tier">{tier.emoji} {tier.label}</span>
+      <span className="phygitals-pack-art-title">{pack.name ?? pack.slug}</span>
+      <span className="phygitals-pack-art-price">{formatUsd(price)}</span>
+    </div>
+  );
+}
+
 function PhygitalsPackCard({ pack, onOpen }: { pack: PhygitalsPack; onOpen: () => void }) {
   const soldOut = pack.in_stock === false;
   return (
     <article className={`phygitals-pack-card${soldOut ? ' phygitals-pack-card-soldout' : ''}`}>
-      {pack.claw_image_url ? (
-        <div className="phygitals-pack-art">
-          <img src={pack.claw_image_url} alt={pack.name ?? pack.slug} loading="lazy" />
-        </div>
-      ) : null}
+      <PackArt pack={pack} />
       <div className="phygitals-pack-body">
         <header className="phygitals-pack-header">
           <h3>{pack.name ?? pack.slug}</h3>
