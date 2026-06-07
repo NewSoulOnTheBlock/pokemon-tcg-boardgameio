@@ -20,7 +20,7 @@ import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
 import { DailyFreePack } from './boosters/DailyFreePack';
-import { PhygitalsHero, PhygitalsPullsTab, PhygitalsShopTab, PhygitalsVaultTab } from './phygitals/PhygitalsStorefront';
+import { PhygitalsHero, PhygitalsMyPullsTab, PhygitalsShopTab, recordPhygitalsPulls } from './phygitals/PhygitalsStorefront';
 import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
@@ -1826,16 +1826,17 @@ function DeckSelect({
 
 function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void }) {
   const [activeTab, setActiveTab] = useState<BoosterTabId>('shop');
-  // Bump this counter whenever a Phygitals purchase/sellback/shipment
-  // happens so the Vault tab refreshes itself on the next render.
-  const [vaultRefreshNonce, setVaultRefreshNonce] = useState(0);
-  const triggerVaultRefresh = useCallback(() => setVaultRefreshNonce((n) => n + 1), []);
-  // After a successful Phygitals buy, auto-jump to the Vault tab so
-  // the user sees what they just pulled.
-  const handlePurchased = useCallback(() => {
-    triggerVaultRefresh();
+  // Bump this counter whenever a Phygitals purchase/sellback happens so
+  // the My Pulls tab re-reads localStorage on the next render.
+  const [pullsRefreshNonce, setPullsRefreshNonce] = useState(0);
+  const triggerPullsRefresh = useCallback(() => setPullsRefreshNonce((n) => n + 1), []);
+  // After a successful Phygitals buy, persist the pulls into local
+  // storage and jump to the My Pulls tab so the user sees them.
+  const handlePurchased = useCallback((items: Parameters<typeof recordPhygitalsPulls>[1]) => {
+    recordPhygitalsPulls(profile, items);
+    triggerPullsRefresh();
     setActiveTab('vault');
-  }, [triggerVaultRefresh]);
+  }, [profile, triggerPullsRefresh]);
   const totalUniqueCardsInLibrary = Object.keys(CARD_LIBRARY).length;
 
   return (
@@ -1851,17 +1852,11 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
 
       {activeTab === 'vault' && (
         <div className="profile-tab-pane">
-          <PhygitalsVaultTab
+          <PhygitalsMyPullsTab
             profile={profile}
-            refreshNonce={vaultRefreshNonce}
-            onChanged={triggerVaultRefresh}
+            refreshNonce={pullsRefreshNonce}
+            onChanged={triggerPullsRefresh}
           />
-        </div>
-      )}
-
-      {activeTab === 'pulls' && (
-        <div className="profile-tab-pane">
-          <PhygitalsPullsTab />
         </div>
       )}
 

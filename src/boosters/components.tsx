@@ -17,12 +17,11 @@ import {
   type SetMetaLike,
 } from './helpers';
 
-export type BoosterTabId = 'shop' | 'vault' | 'pulls' | 'collection';
+export type BoosterTabId = 'shop' | 'vault' | 'collection';
 
 export const BOOSTER_TABS: Array<{ id: BoosterTabId; label: string; icon: string }> = [
   { id: 'shop', label: 'Shop', icon: '🛒' },
-  { id: 'vault', label: 'My Vault', icon: '🔒' },
-  { id: 'pulls', label: 'Recent Pulls', icon: '🎁' },
+  { id: 'vault', label: 'My Pulls', icon: '🎁' },
   { id: 'collection', label: 'In-game Collection', icon: '🃏' },
 ];
 

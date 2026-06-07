@@ -1,52 +1,83 @@
-// Phygitals storefront UI — the paid, real-physical-card side of the
-// boosters page. Browse → buy → vault → sellback → ship.
+// Phygitals storefront UI — paid real-physical-card flow.
+//
+// Surface (Jun 2026):
+//   - Shop tab: browse packs from /api/vm/available, buy with USDC/USDT
+//     via wallet signing.
+//   - My Pulls tab: client-only history of items the user has pulled,
+//     cached per-wallet in localStorage. The Phygitals API no longer
+//     exposes an inventory endpoint, so the only authoritative record
+//     of what a user owns is what we cached at buy time.
+//   - Sellback: per-item button that runs the take-claw-bid init →
+//     wallet sign → finish flow.
+//
+// Shipping is no longer supported by the Phygitals API surface and has
+// been removed from the UI.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchPhygitalsPacks,
-  fetchPhygitalsRecentPulls,
-  fetchPhygitalsInventory,
   fetchPhygitalsStatus,
-  phygitalsBuy,
-  phygitalsSellback,
-  phygitalsShipQuote,
-  phygitalsShipRequest,
+  finishPhygitalsSellback,
+  initPhygitalsSellback,
+  preparePhygitalsBuy,
+  submitPhygitalsBuy,
   PhygitalsApiError,
-  type PhygitalsItem,
   type PhygitalsPack,
-  type PhygitalsPull,
-  type PhygitalsShipQuote,
-  type PhygitalsDestination,
+  type PhygitalsPullItem,
 } from '../api/phygitals';
+import {
+  signManyVersionedTransactions,
+  signVersionedTransactionBase64,
+} from '../walletPayment';
 import type { ProfileState } from '../shared/profile';
+
+// ============================================================================
+// Local "My Pulls" store
+// ============================================================================
+
+const PULLS_STORAGE_PREFIX = 'phygitals_pulls_';
+
+interface StoredPull extends PhygitalsPullItem {
+  /** Timestamp of when the pull was recorded locally. */
+  recordedAt: string;
+  /** Set to true when the user has sold this item back. */
+  soldBack?: boolean;
+  /** USD amount received from the sellback, when soldBack=true. */
+  soldBackAmount?: number;
+}
+
+function pullsKey(profile: ProfileState): string {
+  return `${PULLS_STORAGE_PREFIX}${profile.userId ?? profile.wallet?.address ?? profile.name}`;
+}
+
+function loadPulls(profile: ProfileState): StoredPull[] {
+  try {
+    const raw = window.localStorage.getItem(pullsKey(profile));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePulls(profile: ProfileState, pulls: StoredPull[]): void {
+  try {
+    window.localStorage.setItem(pullsKey(profile), JSON.stringify(pulls));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 function formatUsd(n: number | undefined): string {
   if (!Number.isFinite(n)) return '—';
   const v = Number(n);
   if (v >= 1000) return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function timeAgo(iso: string | undefined): string {
-  if (!iso) return '';
-  const diff = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(diff) || diff < 0) return 'just now';
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function userIdFor(profile: ProfileState): string {
-  // Phygitals' user_id is partner-defined; we use the stable userId
-  // when available, else fall back to the wallet address, else the
-  // profile name as last resort. The same value is used across
-  // buy/inventory/sellback/ship so all activity stays scoped.
-  return profile.userId ?? profile.wallet?.address ?? profile.name;
 }
 
 // ============================================================================
@@ -71,12 +102,43 @@ function RarityChip({ tier }: { tier: NonNullable<PhygitalsPack['rarity_distribu
 }
 
 // ============================================================================
+// Hero
+// ============================================================================
+
+export function PhygitalsHero({ profile }: { profile: ProfileState }) {
+  const [status, setStatus] = useState<{ enabled: boolean; baseUrl: string } | null>(null);
+  useEffect(() => {
+    fetchPhygitalsStatus().then(setStatus).catch(() => setStatus({ enabled: false, baseUrl: '' }));
+  }, []);
+
+  return (
+    <section className="panel phygitals-hero">
+      <div className="phygitals-hero-text">
+        <p className="eyebrow">
+          Powered by Phygitals {status && <PhygitalsStatusBadge enabled={status.enabled} />}
+        </p>
+        <h1>Real cards. Real liquidity. Buy with USDC.</h1>
+        <p>
+          Every pack is backed by a graded physical card held in an insured US vault.
+          Pay with USDC/USDT in your Solana wallet, reveal instantly, hold or sell back
+          to Phygitals' marketplace for liquidity.
+        </p>
+        <p className="phygitals-hero-meta">
+          Signed in as <strong>{profile.name}</strong>
+          {profile.wallet?.address ? <> · wallet <code>{profile.wallet.address.slice(0, 4)}…{profile.wallet.address.slice(-4)}</code></> : null}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
 // Shop tab — pack catalog
 // ============================================================================
 
 export function PhygitalsShopTab({ profile, onPurchased }: {
   profile: ProfileState;
-  onPurchased: (items: PhygitalsItem[]) => void;
+  onPurchased: (items: PhygitalsPullItem[]) => void;
 }) {
   const [packs, setPacks] = useState<PhygitalsPack[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,12 +160,8 @@ export function PhygitalsShopTab({ profile, onPurchased }: {
     [packs],
   );
 
-  if (loading) {
-    return <div className="panel"><p className="empty-state">Loading Phygitals catalog…</p></div>;
-  }
-  if (error) {
-    return <div className="panel"><p className="error">Phygitals: {error}</p></div>;
-  }
+  if (loading) return <div className="panel"><p className="empty-state">Loading Phygitals catalog…</p></div>;
+  if (error) return <div className="panel"><p className="error">Phygitals: {error}</p></div>;
   if (visible.length === 0) {
     return (
       <div className="panel">
@@ -124,7 +182,7 @@ export function PhygitalsShopTab({ profile, onPurchased }: {
           pack={activePack}
           profile={profile}
           onClose={() => setActivePack(null)}
-          onPurchased={(items) => { onPurchased(items); }}
+          onPurchased={onPurchased}
         />
       )}
     </>
@@ -137,12 +195,12 @@ function PhygitalsPackCard({ pack, onOpen }: { pack: PhygitalsPack; onOpen: () =
     <article className={`phygitals-pack-card${soldOut ? ' phygitals-pack-card-soldout' : ''}`}>
       {pack.claw_image_url ? (
         <div className="phygitals-pack-art">
-          <img src={pack.claw_image_url} alt={pack.name} loading="lazy" />
+          <img src={pack.claw_image_url} alt={pack.name ?? pack.slug} loading="lazy" />
         </div>
       ) : null}
       <div className="phygitals-pack-body">
         <header className="phygitals-pack-header">
-          <h3>{pack.name}</h3>
+          <h3>{pack.name ?? pack.slug}</h3>
           {pack.type && <span className="phygitals-pack-type">{pack.type}</span>}
         </header>
         {pack.categories && pack.categories.length > 0 && (
@@ -186,38 +244,60 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
   pack: PhygitalsPack;
   profile: ProfileState;
   onClose: () => void;
-  onPurchased: (items: PhygitalsItem[]) => void;
+  onPurchased: (items: PhygitalsPullItem[]) => void;
 }) {
   const [amount, setAmount] = useState(1);
-  const [busy, setBusy] = useState(false);
+  const [currency, setCurrency] = useState<'usdc' | 'usdt'>('usdc');
+  const [busy, setBusy] = useState<'prepare' | 'sign' | 'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pulled, setPulled] = useState<PhygitalsItem[] | null>(null);
+  const [pulled, setPulled] = useState<PhygitalsPullItem[] | null>(null);
   const maxAmount = Math.max(1, pack.max_per_mint ?? 10);
   const totalCost = (pack.mint_price ?? 0) * amount;
+  const buyerWallet = profile.wallet?.address;
 
   const handleBuy = useCallback(async () => {
-    setBusy(true);
+    if (!buyerWallet) {
+      setError('Connect a Solana wallet first to buy a Phygitals pack.');
+      return;
+    }
     setError(null);
     try {
-      const result = await phygitalsBuy({
-        id: pack.id,
+      setBusy('prepare');
+      const prepared = await preparePhygitalsBuy({
+        buyerWallet,
+        packId: pack.id,
         amount,
-        user_id: userIdFor(profile),
+        currency,
       });
+
+      setBusy('sign');
+      const signedTxBytes = await signVersionedTransactionBase64({
+        payerAddress: buyerWallet,
+        transactionBase64: prepared.transactionBase64,
+      });
+
+      setBusy('submit');
+      const result = await submitPhygitalsBuy({
+        packId: prepared.packId,
+        amount: prepared.amount,
+        currency: prepared.currency,
+        signedTxBytes,
+      });
+
       setPulled(result.nfts ?? []);
       onPurchased(result.nfts ?? []);
     } catch (err) {
       setError(err instanceof PhygitalsApiError ? err.message : (err as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
-  }, [amount, onPurchased, pack.id, profile]);
+  }, [amount, buyerWallet, currency, onPurchased, pack.id]);
 
   return (
     <div className="phygitals-modal-backdrop" onClick={onClose}>
       <div className="phygitals-modal" onClick={(event) => event.stopPropagation()}>
         <header className="phygitals-modal-header">
-          <h2>{pack.name}</h2>
+          <h2>{pack.name ?? pack.slug}</h2>
           <button className="phygitals-modal-close" aria-label="Close" onClick={onClose}>✕</button>
         </header>
 
@@ -255,17 +335,34 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
                 />
                 <span className="phygitals-purchase-cap">max {maxAmount}</span>
               </label>
+              <label>
+                Pay with
+                <select value={currency} onChange={(event) => setCurrency(event.target.value as 'usdc' | 'usdt')}>
+                  <option value="usdc">USDC</option>
+                  <option value="usdt">USDT</option>
+                </select>
+              </label>
               <div className="phygitals-purchase-total">
                 <span className="label">Total</span>
                 <strong>{formatUsd(totalCost)}</strong>
               </div>
-              <button className="primary-cta" onClick={handleBuy} disabled={busy || pack.in_stock === false}>
-                {busy ? 'Pulling…' : `Buy ${amount} pull${amount === 1 ? '' : 's'}`}
+              <button className="primary-cta" onClick={handleBuy} disabled={busy !== null || !buyerWallet || pack.in_stock === false}>
+                {!buyerWallet
+                  ? 'Connect wallet'
+                  : busy === 'prepare'
+                    ? 'Preparing tx…'
+                    : busy === 'sign'
+                      ? 'Approve in wallet…'
+                      : busy === 'submit'
+                        ? 'Submitting…'
+                        : `Buy ${amount} pull${amount === 1 ? '' : 's'}`}
               </button>
             </div>
             {error && <p className="error">{error}</p>}
             <p className="phygitals-purchase-note">
-              Phygitals settles payment + fulfillment. Cards arrive in your Vault tab on success.
+              Your wallet pays {formatUsd(totalCost)} {currency.toUpperCase()} directly to Phygitals.
+              Phygitals' fee payer signer covers Solana gas — you only need USDC/USDT in the wallet.
+              Cards arrive in My Pulls on success.
             </p>
           </section>
         ) : (
@@ -276,20 +373,22 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
   );
 }
 
-function PhygitalsPullReveal({ items, onDone }: { items: PhygitalsItem[]; onDone: () => void }) {
+function PhygitalsPullReveal({ items, onDone }: { items: PhygitalsPullItem[]; onDone: () => void }) {
   return (
     <section className="phygitals-modal-section phygitals-reveal-section">
       <h3>You pulled {items.length} {items.length === 1 ? 'card' : 'cards'}</h3>
       <div className="phygitals-reveal-grid">
-        {items.map((item) => (
-          <article key={item.id} className="phygitals-reveal-card">
-            {item.content.metadata.image && (
-              <img src={item.content.metadata.image} alt={item.content.metadata.name} loading="lazy" />
-            )}
-            <strong>{item.content.metadata.name}</strong>
-            <span className="phygitals-reveal-buyback">Buyback: {formatUsd(item.buyback_price)}</span>
-          </article>
-        ))}
+        {items.map((item) => {
+          const image = item.content?.metadata?.image ?? item.content?.links?.image;
+          const name = item.content?.metadata?.name ?? item.id;
+          return (
+            <article key={item.id} className="phygitals-reveal-card">
+              {image && <img src={image} alt={name} loading="lazy" />}
+              <strong>{name}</strong>
+              <span className="phygitals-reveal-buyback">Buyback: {formatUsd(item.buyback_price)}</span>
+            </article>
+          );
+        })}
       </div>
       <button className="primary-cta" onClick={onDone}>Done</button>
     </section>
@@ -297,116 +396,139 @@ function PhygitalsPullReveal({ items, onDone }: { items: PhygitalsItem[]; onDone
 }
 
 // ============================================================================
-// Vault tab — owned Phygitals inventory
+// My Pulls tab (client-only inventory)
 // ============================================================================
 
-export function PhygitalsVaultTab({ profile, refreshNonce, onChanged }: {
+export function PhygitalsMyPullsTab({ profile, refreshNonce, onChanged }: {
   profile: ProfileState;
   refreshNonce: number;
   onChanged: () => void;
 }) {
-  const [items, setItems] = useState<PhygitalsItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [shippingItem, setShippingItem] = useState<PhygitalsItem | null>(null);
+  const [pulls, setPulls] = useState<StoredPull[]>(() => loadPulls(profile));
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const inv = await fetchPhygitalsInventory(userIdFor(profile));
-      setItems(inv.items ?? []);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [profile]);
+  useEffect(() => {
+    setPulls(loadPulls(profile));
+  }, [profile, refreshNonce]);
 
-  useEffect(() => { void reload(); }, [reload, refreshNonce]);
+  const handleSold = useCallback((itemId: string, amount: number) => {
+    const updated = pulls.map((p) =>
+      p.id === itemId ? { ...p, soldBack: true, soldBackAmount: amount } : p,
+    );
+    setPulls(updated);
+    savePulls(profile, updated);
+    onChanged();
+  }, [pulls, profile, onChanged]);
 
-  if (loading) return <div className="panel"><p className="empty-state">Loading your vault…</p></div>;
-  if (error) return <div className="panel"><p className="error">{error}</p></div>;
-  if (items.length === 0) {
+  const unsold = pulls.filter((p) => !p.soldBack);
+  const sold = pulls.filter((p) => p.soldBack);
+
+  if (pulls.length === 0) {
     return (
       <div className="panel">
-        <p className="empty-state">Your Phygitals vault is empty. Buy a pack from the Shop tab to get started.</p>
+        <p className="empty-state">
+          Nothing here yet. Buy a Phygitals pack from the Shop tab to see your pulled cards here.
+        </p>
+        <p className="phygitals-purchase-note">
+          Note: this list is stored locally in your browser. The Phygitals API doesn't currently
+          expose a per-user inventory endpoint, so clearing browser data will hide your pulls here
+          (but the on-chain assets in your wallet are unaffected).
+        </p>
       </div>
     );
   }
 
   return (
     <>
-      <div className="phygitals-vault-grid">
-        {items.map((item) => (
-          <PhygitalsVaultCard
-            key={item.id}
-            item={item}
-            onSold={() => { void reload(); onChanged(); }}
-            onShipClick={() => setShippingItem(item)}
-          />
-        ))}
-      </div>
-      {shippingItem && (
-        <PhygitalsShipModal
-          item={shippingItem}
-          onClose={() => setShippingItem(null)}
-          onShipped={() => { setShippingItem(null); void reload(); onChanged(); }}
-        />
+      {unsold.length > 0 && (
+        <div className="phygitals-vault-grid">
+          {unsold.map((pull) => (
+            <PhygitalsPullCard
+              key={pull.id}
+              pull={pull}
+              profile={profile}
+              onSold={(amount) => handleSold(pull.id, amount)}
+            />
+          ))}
+        </div>
+      )}
+      {sold.length > 0 && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">History</p>
+              <h2>Sold back ({sold.length})</h2>
+            </div>
+          </div>
+          <ul className="phygitals-sold-list">
+            {sold.map((pull) => (
+              <li key={pull.id}>
+                <span>{pull.content?.metadata?.name ?? pull.id}</span>
+                <strong>{formatUsd(pull.soldBackAmount)}</strong>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </>
   );
 }
 
-function PhygitalsVaultCard({ item, onSold, onShipClick }: {
-  item: PhygitalsItem;
-  onSold: () => void;
-  onShipClick: () => void;
+function PhygitalsPullCard({ pull, profile, onSold }: {
+  pull: StoredPull;
+  profile: ProfileState;
+  onSold: (amount: number) => void;
 }) {
-  const [busy, setBusy] = useState<'sell' | null>(null);
+  const [busy, setBusy] = useState<'init' | 'sign' | 'finish' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const expiresLabel = useMemo(() => {
-    if (!item.buyback_expires_at) return null;
-    const ms = Date.parse(item.buyback_expires_at) - Date.now();
-    if (ms <= 0) return 'Sellback expired';
-    const days = Math.floor(ms / 86_400_000);
-    if (days >= 1) return `Sellback in ${days}d`;
-    const hours = Math.floor(ms / 3_600_000);
-    return `Sellback in ${hours}h`;
-  }, [item.buyback_expires_at]);
+  const image = pull.content?.metadata?.image ?? pull.content?.links?.image;
+  const name = pull.content?.metadata?.name ?? pull.id;
+  const sellbackTarget = pull.mint_address ?? pull.id;
+  const buyerWallet = profile.wallet?.address;
 
   const handleSell = useCallback(async () => {
-    if (!window.confirm(`Sell back ${item.content.metadata.name} for ${item.buyback_price ? `$${item.buyback_price}` : 'buyback price'}?`)) return;
-    setBusy('sell');
+    if (!buyerWallet) {
+      setError('Connect a wallet to sell back.');
+      return;
+    }
+    if (!window.confirm(`Sell back ${name} for ~${formatUsd(pull.buyback_price)}?`)) return;
+    setBusy('init');
     setError(null);
     try {
-      await phygitalsSellback(item.id);
-      onSold();
+      const init = await initPhygitalsSellback(sellbackTarget);
+      setBusy('sign');
+      const signedTxBytes = await signManyVersionedTransactions({
+        payerAddress: buyerWallet,
+        transactions: init.txV0s,
+      });
+      setBusy('finish');
+      await finishPhygitalsSellback({ session_id: init.session_id, signedTxBytes });
+      onSold(pull.buyback_price ?? 0);
     } catch (err) {
-      setError((err as Error).message);
+      setError(err instanceof PhygitalsApiError ? err.message : (err as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [item, onSold]);
-
-  const image = item.content.metadata.image ?? item.content.links?.image;
+  }, [buyerWallet, name, onSold, pull.buyback_price, sellbackTarget]);
 
   return (
     <article className="phygitals-vault-card">
-      {image && <img src={image} alt={item.content.metadata.name} loading="lazy" />}
+      {image && <img src={image} alt={name} loading="lazy" />}
       <div className="phygitals-vault-body">
-        <strong>{item.content.metadata.name}</strong>
-        {item.claw_slug && <span className="phygitals-vault-source">from {item.claw_slug}</span>}
+        <strong>{name}</strong>
         <div className="phygitals-vault-row">
           <span>Buyback</span>
-          <strong>{formatUsd(item.buyback_price)}</strong>
+          <strong>{formatUsd(pull.buyback_price)}</strong>
         </div>
-        {expiresLabel && <span className="phygitals-vault-expiry">{expiresLabel}</span>}
         <div className="phygitals-vault-actions">
-          <button className="secondary-cta" onClick={handleSell} disabled={Boolean(busy)}>
-            {busy === 'sell' ? '…' : 'Sell back'}
+          <button className="secondary-cta" onClick={handleSell} disabled={busy !== null}>
+            {busy === 'init'
+              ? 'Preparing…'
+              : busy === 'sign'
+                ? 'Approve in wallet…'
+                : busy === 'finish'
+                  ? 'Submitting…'
+                  : 'Sell back'}
           </button>
-          <button className="primary-cta" onClick={onShipClick}>Ship</button>
         </div>
         {error && <p className="error">{error}</p>}
       </div>
@@ -414,212 +536,18 @@ function PhygitalsVaultCard({ item, onSold, onShipClick }: {
   );
 }
 
-const EMPTY_DEST: PhygitalsDestination = {
-  name: '', line1: '', city: '', state: '', postal_code: '', country: 'US',
-};
-
-function PhygitalsShipModal({ item, onClose, onShipped }: {
-  item: PhygitalsItem;
-  onClose: () => void;
-  onShipped: () => void;
-}) {
-  const [destination, setDestination] = useState<PhygitalsDestination>(EMPTY_DEST);
-  const [quote, setQuote] = useState<PhygitalsShipQuote | null>(null);
-  const [chosenRate, setChosenRate] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'quote' | 'request' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [suggested, setSuggested] = useState<PhygitalsDestination | null>(null);
-
-  const updateField = useCallback(<K extends keyof PhygitalsDestination>(key: K, value: PhygitalsDestination[K]) => {
-    setDestination((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
-  const requestQuote = useCallback(async () => {
-    setBusy('quote');
-    setError(null);
-    setSuggested(null);
-    try {
-      const result = await phygitalsShipQuote({ item_ids: [item.id], destination });
-      setQuote(result);
-      setChosenRate(result.quotes[0]?.id ?? null);
-    } catch (err) {
-      if (err instanceof PhygitalsApiError && err.suggested) {
-        setSuggested(err.suggested);
-        setError(`Address needs confirmation: ${err.message}`);
-      } else {
-        setError((err as Error).message);
-      }
-    } finally {
-      setBusy(null);
-    }
-  }, [destination, item.id]);
-
-  const submitShipment = useCallback(async () => {
-    if (!chosenRate) return;
-    setBusy('request');
-    setError(null);
-    try {
-      await phygitalsShipRequest(chosenRate);
-      onShipped();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  }, [chosenRate, onShipped]);
-
-  const acceptSuggested = useCallback(() => {
-    if (suggested) {
-      setDestination(suggested);
-      setSuggested(null);
-      setError(null);
-    }
-  }, [suggested]);
-
-  return (
-    <div className="phygitals-modal-backdrop" onClick={onClose}>
-      <div className="phygitals-modal" onClick={(event) => event.stopPropagation()}>
-        <header className="phygitals-modal-header">
-          <h2>Ship {item.content.metadata.name}</h2>
-          <button className="phygitals-modal-close" aria-label="Close" onClick={onClose}>✕</button>
-        </header>
-
-        {!quote ? (
-          <section className="phygitals-ship-form">
-            <p className="phygitals-purchase-note">
-              Shipping is billed B2B by Phygitals. No payment required from you here — confirm the address and pick a rate.
-            </p>
-            <label>Full name<input value={destination.name} onChange={(e) => updateField('name', e.target.value)} /></label>
-            <label>Address line 1<input value={destination.line1} onChange={(e) => updateField('line1', e.target.value)} /></label>
-            <label>Address line 2 (optional)<input value={destination.line2 ?? ''} onChange={(e) => updateField('line2', e.target.value)} /></label>
-            <div className="phygitals-ship-grid">
-              <label>City<input value={destination.city} onChange={(e) => updateField('city', e.target.value)} /></label>
-              <label>State<input value={destination.state ?? ''} onChange={(e) => updateField('state', e.target.value)} /></label>
-              <label>Postal code<input value={destination.postal_code ?? ''} onChange={(e) => updateField('postal_code', e.target.value)} /></label>
-              <label>Country (2-letter)<input value={destination.country} maxLength={2} onChange={(e) => updateField('country', e.target.value.toUpperCase())} /></label>
-            </div>
-            <div className="phygitals-ship-grid">
-              <label>Phone<input value={destination.phone ?? ''} onChange={(e) => updateField('phone', e.target.value)} /></label>
-              <label>Email<input type="email" value={destination.email ?? ''} onChange={(e) => updateField('email', e.target.value)} /></label>
-            </div>
-            {error && <p className="error">{error}</p>}
-            {suggested && (
-              <div className="phygitals-ship-suggested">
-                <p>Did you mean:</p>
-                <pre>{`${suggested.name}\n${suggested.line1}${suggested.line2 ? `\n${suggested.line2}` : ''}\n${suggested.city}, ${suggested.state ?? ''} ${suggested.postal_code ?? ''}\n${suggested.country}`}</pre>
-                <button className="secondary-cta" onClick={acceptSuggested}>Use this address</button>
-              </div>
-            )}
-            <button className="primary-cta" onClick={requestQuote} disabled={busy !== null}>
-              {busy === 'quote' ? 'Getting rates…' : 'Get shipping rates'}
-            </button>
-          </section>
-        ) : (
-          <section className="phygitals-ship-rates">
-            <p>Choose a shipping option:</p>
-            <ul className="phygitals-rate-list">
-              {quote.quotes.map((rate) => (
-                <li key={rate.id} className={chosenRate === rate.id ? 'phygitals-rate-active' : ''}>
-                  <label>
-                    <input
-                      type="radio"
-                      name="phygitals-rate"
-                      value={rate.id}
-                      checked={chosenRate === rate.id}
-                      onChange={() => setChosenRate(rate.id)}
-                    />
-                    <div className="phygitals-rate-body">
-                      <strong>{rate.carrier} — {rate.service}</strong>
-                      <span>{formatUsd(rate.amount)} · {rate.estimated_days_min}-{rate.estimated_days_max} days {rate.insured && '· insured'}</span>
-                    </div>
-                  </label>
-                </li>
-              ))}
-            </ul>
-            {error && <p className="error">{error}</p>}
-            <div className="phygitals-ship-actions">
-              <button className="secondary-cta" onClick={() => setQuote(null)}>← Back</button>
-              <button className="primary-cta" onClick={submitShipment} disabled={!chosenRate || busy === 'request'}>
-                {busy === 'request' ? 'Submitting…' : 'Confirm shipment'}
-              </button>
-            </div>
-          </section>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ============================================================================
-// Pulls feed
+// Helper exported for BoostersPage so it can persist pulls when a buy completes
 // ============================================================================
 
-export function PhygitalsPullsTab() {
-  const [pulls, setPulls] = useState<PhygitalsPull[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    function refresh() {
-      fetchPhygitalsRecentPulls({ limit: 30 })
-        .then((rows) => { if (!cancelled) { setPulls(rows); setError(null); } })
-        .catch((err: Error) => { if (!cancelled) setError(err.message); })
-        .finally(() => { if (!cancelled) setLoading(false); });
-    }
-    refresh();
-    const interval = window.setInterval(refresh, 15_000);
-    return () => { cancelled = true; window.clearInterval(interval); };
-  }, []);
-
-  if (loading) return <div className="panel"><p className="empty-state">Loading recent pulls…</p></div>;
-  if (error) return <div className="panel"><p className="error">{error}</p></div>;
-  if (pulls.length === 0) return <div className="panel"><p className="empty-state">No recent pulls yet.</p></div>;
-
-  return (
-    <div className="phygitals-pulls-grid">
-      {pulls.map((pull) => (
-        <article key={pull.id} className="phygitals-pull-row">
-          {pull.metadata.image && <img src={pull.metadata.image} alt={pull.metadata.name} loading="lazy" />}
-          <div className="phygitals-pull-body">
-            <strong>{pull.metadata.name}</strong>
-            {pull.claw_slug && <span>{pull.claw_slug}</span>}
-          </div>
-          <div className="phygitals-pull-value">
-            <strong>{formatUsd(pull.value)}</strong>
-            <span>{timeAgo(pull.created_at)}</span>
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-// ============================================================================
-// Hero / status banner
-// ============================================================================
-
-export function PhygitalsHero({ profile }: { profile: ProfileState }) {
-  const [status, setStatus] = useState<{ enabled: boolean; baseUrl: string } | null>(null);
-  useEffect(() => {
-    fetchPhygitalsStatus().then(setStatus).catch(() => setStatus({ enabled: false, baseUrl: '' }));
-  }, []);
-
-  return (
-    <section className="panel phygitals-hero">
-      <div className="phygitals-hero-text">
-        <p className="eyebrow">
-          Powered by Phygitals {status && <PhygitalsStatusBadge enabled={status.enabled} />}
-        </p>
-        <h1>Real cards. Real liquidity. Real shipping.</h1>
-        <p>
-          Every pack is backed by a graded physical card held in an insured US vault.
-          Reveal instantly, hold in your vault, sell back at 85% of live FMV, or ship worldwide.
-        </p>
-        <p className="phygitals-hero-meta">
-          Signed in as <strong>{profile.name}</strong> · partner user_id: <code>{userIdFor(profile)}</code>
-        </p>
-      </div>
-    </section>
-  );
+export function recordPhygitalsPulls(profile: ProfileState, items: PhygitalsPullItem[]): void {
+  if (items.length === 0) return;
+  const existing = loadPulls(profile);
+  const seen = new Set(existing.map((p) => p.id));
+  const merged: StoredPull[] = [...existing];
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    merged.push({ ...item, recordedAt: new Date().toISOString() });
+  }
+  savePulls(profile, merged);
 }

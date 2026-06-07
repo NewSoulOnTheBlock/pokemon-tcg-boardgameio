@@ -431,13 +431,23 @@ server.router.post('/api/lobby/chat', jsonBody, async (ctx) => {
 });
 
 /**
- * Phygitals Partner API proxy. The server holds the partner X-API-Key
- * (PHYGITALS_API_KEY env var) and forwards calls so the browser never
- * sees it. Returns a 503 with a friendly error if PHYGITALS_API_KEY
- * isn't set; UI can show a "shop is loading" placeholder in that case.
+ * Phygitals Partner API proxy (Jun 2026 surface). The server holds the
+ * phy_… X-API-Key and proxies / co-signs calls so the browser never
+ * sees the key. The current Phygitals API is built around CLIENT-SIGNED
+ * Solana transactions — the server builds the unsigned tx, the user
+ * signs with Phantom, and we forward the signed bytes to Phygitals.
  *
- * See https://dev.phygitals.com for the full surface; we map every
- * partner endpoint 1:1 here under /api/phygitals/*.
+ * Surface mapping:
+ *   GET  /api/phygitals/status            -> {enabled, baseUrl}
+ *   GET  /api/phygitals/packs             -> Phygitals GET /api/vm/available
+ *   POST /api/phygitals/buy/prepare       -> build unsigned buy tx for client to sign
+ *   POST /api/phygitals/buy/submit        -> forward signed tx to Phygitals POST /api/vm/buy/crypto
+ *   POST /api/phygitals/buy/status        -> Phygitals POST /api/vm/buy/status
+ *   POST /api/phygitals/sellback/init     -> Phygitals POST /api/marketplace/transaction/take-claw-bid-init
+ *   POST /api/phygitals/sellback/finish   -> Phygitals POST /api/marketplace/transaction/take-claw-bid-finish
+ *
+ * Inventory, ship*, recent-pulls, chase, card-detail are NOT supported
+ * by the current Phygitals surface; we no longer expose them.
  */
 function handlePhygitalsError(ctx: Context, err: unknown): void {
   if (err instanceof PhygitalsError) {
@@ -461,112 +471,124 @@ server.router.get('/api/phygitals/packs', async (ctx) => {
   }
 });
 
-server.router.get('/api/phygitals/chase/:slug', async (ctx) => {
-  try {
-    ctx.body = { chase: await phygitals.listChase(ctx.params.slug) };
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
+/**
+ * Step 1 of the buy flow. Client sends {buyerWallet, packId, amount,
+ * currency}; server builds the unsigned Solana tx (token transfer +
+ * rewards-mint ATA creation + transfers) and returns it as base64.
+ * Client deserializes, signs with Phantom, then calls /buy/submit.
+ */
+server.router.post('/api/phygitals/buy/prepare', jsonBody, async (ctx) => {
+  const body = ctx.request.body as {
+    buyerWallet?: string;
+    packId?: string;
+    amount?: number;
+    currency?: 'usdc' | 'usdt';
+  } | undefined;
+  if (!body?.buyerWallet || !body.packId || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
+    ctx.throw(400, 'buyerWallet, packId, and amount >= 1 are required');
+    return;
   }
-});
-
-server.router.get('/api/phygitals/recent-pulls', async (ctx) => {
-  const rawClawIds = ctx.query.claw_ids;
-  const claw_ids = Array.isArray(rawClawIds)
-    ? rawClawIds
-    : typeof rawClawIds === 'string' ? [rawClawIds] : undefined;
-  const limitParam = typeof ctx.query.limit === 'string' ? Number(ctx.query.limit) : NaN;
-  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(100, Math.floor(limitParam)) : undefined;
   try {
-    ctx.body = { pulls: await phygitals.recentPulls({ claw_ids, limit }) };
+    const prepared = await phygitals.prepareBuy({
+      buyerWallet: body.buyerWallet,
+      packId: body.packId,
+      amount: body.amount!,
+      currency: body.currency ?? 'usdc',
+    });
+    ctx.body = prepared;
   } catch (err) {
     handlePhygitalsError(ctx, err);
   }
 });
 
 /**
- * Combined buy + poll. The client hands us {id, amount, user_id}; we
- * call /vm/buy/init, then poll /vm/buy/status until fulfilled (or
- * 90s timeout) and return only the fulfilled result.
+ * Step 2 of the buy flow. Client posts the signed-tx bytes (number[])
+ * back; we forward to Phygitals' /api/vm/buy/crypto and (if the
+ * response doesn't already include the NFTs inline) poll
+ * /api/vm/buy/status until fulfilled.
  */
-server.router.post('/api/phygitals/buy', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { id?: string; amount?: number; user_id?: string } | undefined;
-  if (!body?.id || !body.user_id || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
-    ctx.throw(400, 'id, user_id, and amount >= 1 are required');
+server.router.post('/api/phygitals/buy/submit', jsonBody, async (ctx) => {
+  const body = ctx.request.body as {
+    packId?: string;
+    amount?: number;
+    currency?: 'usdc' | 'usdt';
+    signedTxBytes?: number[];
+  } | undefined;
+  if (!body?.packId || !Number.isFinite(body.amount) || !Array.isArray(body.signedTxBytes)) {
+    ctx.throw(400, 'packId, amount, and signedTxBytes are required');
     return;
   }
   try {
-    const init = await phygitals.buyInit({ id: body.id, amount: body.amount!, user_id: body.user_id });
-    // Sandbox may already include the nfts on init; if so we'd still
-    // poll for the canonical fulfilled envelope so the client never has
-    // to merge two shapes.
-    const result = await awaitPhygitalsPurchase(phygitals, init.session_id);
-    ctx.body = { ...result, session_id: init.session_id };
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-server.router.get('/api/phygitals/inventory/:userId', async (ctx) => {
-  try {
-    ctx.body = await phygitals.inventory(ctx.params.userId);
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-server.router.get('/api/phygitals/card/:itemId', async (ctx) => {
-  try {
-    ctx.body = await phygitals.card(ctx.params.itemId);
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-server.router.post('/api/phygitals/buyback', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { item_id?: string } | undefined;
-  if (!body?.item_id) {
-    ctx.throw(400, 'item_id is required');
-    return;
-  }
-  try {
-    ctx.body = await phygitals.buyback({ item_id: body.item_id });
-  } catch (err) {
-    handlePhygitalsError(ctx, err);
-  }
-});
-
-server.router.post('/api/phygitals/ship/quote', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { item_ids?: string[]; destination?: unknown } | undefined;
-  if (!body?.item_ids?.length || !body.destination || typeof body.destination !== 'object') {
-    ctx.throw(400, 'item_ids and destination are required');
-    return;
-  }
-  try {
-    ctx.body = await phygitals.shipQuote({
-      item_ids: body.item_ids,
-      destination: body.destination as Parameters<typeof phygitals.shipQuote>[0]['destination'],
+    const submitResult = await phygitals.submitBuy({
+      packId: body.packId,
+      amount: body.amount!,
+      currency: body.currency ?? 'usdc',
+      signedTxBytes: body.signedTxBytes,
     });
+    // If Phygitals returned the NFTs immediately, hand them back.
+    // Otherwise poll status to get the fulfilled envelope.
+    if (submitResult.nfts && submitResult.nfts.length > 0) {
+      ctx.body = { session_id: submitResult.session_id, nfts: submitResult.nfts };
+      return;
+    }
+    if (!submitResult.session_id) {
+      ctx.throw(502, 'Phygitals returned neither session_id nor inline NFTs');
+      return;
+    }
+    const fulfilled = await awaitPhygitalsPurchase(phygitals, submitResult.session_id);
+    ctx.body = { ...fulfilled, session_id: submitResult.session_id };
   } catch (err) {
     handlePhygitalsError(ctx, err);
   }
 });
 
-server.router.post('/api/phygitals/ship/request', jsonBody, async (ctx) => {
-  const body = ctx.request.body as { quote_id?: string } | undefined;
-  if (!body?.quote_id) {
-    ctx.throw(400, 'quote_id is required');
+server.router.post('/api/phygitals/buy/status', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { session_id?: string } | undefined;
+  if (!body?.session_id) {
+    ctx.throw(400, 'session_id is required');
     return;
   }
   try {
-    ctx.body = await phygitals.shipRequest({ quote_id: body.quote_id });
+    ctx.body = await phygitals.buyStatus({ session_id: body.session_id });
   } catch (err) {
     handlePhygitalsError(ctx, err);
   }
 });
 
-server.router.get('/api/phygitals/ship/order/:orderId', async (ctx) => {
+/**
+ * Step 1 of the sellback flow. Client sends the mint_address of the
+ * item to sell back; Phygitals returns a session_id + an array of
+ * unsigned VersionedTransactions for the client to sign with Phantom.
+ */
+server.router.post('/api/phygitals/sellback/init', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { mint_address?: string } | undefined;
+  if (!body?.mint_address) {
+    ctx.throw(400, 'mint_address is required');
+    return;
+  }
   try {
-    ctx.body = await phygitals.shipOrder(ctx.params.orderId);
+    ctx.body = await phygitals.takeClawBidInit({ mint_address: body.mint_address });
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+/**
+ * Step 2 of the sellback flow. Client posts back the session_id + the
+ * array of signed-tx byte arrays. Phygitals submits them and returns
+ * the marketplace result.
+ */
+server.router.post('/api/phygitals/sellback/finish', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { session_id?: string; signedTxBytes?: Array<number[]> } | undefined;
+  if (!body?.session_id || !Array.isArray(body.signedTxBytes) || body.signedTxBytes.length === 0) {
+    ctx.throw(400, 'session_id and signedTxBytes (non-empty array) are required');
+    return;
+  }
+  try {
+    ctx.body = await phygitals.takeClawBidFinish({
+      session_id: body.session_id,
+      signedTxBytes: body.signedTxBytes,
+    });
   } catch (err) {
     handlePhygitalsError(ctx, err);
   }
