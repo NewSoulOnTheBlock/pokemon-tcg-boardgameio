@@ -427,14 +427,16 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
         ? new PublicKey('DQ1LJZ2ET1oHcCgojCN3kXakTQSkuCxgEqXguf2UrYS5')
         : vmBuybackPk;
 
-    // Verbatim port of buy-with-crypto-v6.ts buildEbayClawPurchaseTx.
-    // Every structural deviation here breaks Phygitals' tx-fingerprint
-    // check, so DO NOT optimize. Three things matter:
-    //   1. Use RPC token-account LOOKUP for BOTH sides (not canonical ATA derivation)
-    //   2. Hardcoded ALT snapshot (NOT live RPC fetch)
-    //   3. Random ComputeBudget setComputeUnitPrice (100-400 microLamports)
-    const senderTokenAccount = await this.getTokenAccountForMint(buyer.toString(), paymentMint);
-    const receiverTokenAccount = await this.getTokenAccountForMint(paymentReceiver.toString(), paymentMint);
+    // Verbatim port of buy-with-crypto-v6.ts buildEbayClawPurchaseTx
+    // with two surgical deviations validated against Phygitals' API:
+    //   1. Use CANONICAL ATA derivation for the payment ix (not RPC
+    //      lookup). The reference script uses getTokenAccountForMint
+    //      which returns whichever token account the RPC sorts first;
+    //      Phygitals' server-side fingerprint uses the canonical ATA.
+    //   2. Reward token accounts on the buyback side still use RPC
+    //      lookup (those aren't part of the payment-ix fingerprint).
+    const senderTokenAccount = Token.getAssociatedTokenAddressSync(paymentMint, buyer, false);
+    const receiverTokenAccount = Token.getAssociatedTokenAddressSync(paymentMint, paymentReceiver, false);
 
     const paymentIx = Token.createTransferInstruction(senderTokenAccount, receiverTokenAccount, buyer, expectedAmount);
 
