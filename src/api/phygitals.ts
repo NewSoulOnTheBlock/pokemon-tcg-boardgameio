@@ -127,6 +127,15 @@ async function phygitalsRequest<T>(
     catch { parsed = text; }
   }
   if (!res.ok) {
+    // Surface friendlier messages for common partner-side errors.
+    if (res.status === 429) {
+      const retryAfterSec = Number(res.headers.get('retry-after')) || 60;
+      throw new PhygitalsApiError(
+        429,
+        parsed,
+        `Phygitals is rate-limiting us. Wait ~${retryAfterSec}s and try again. (This usually clears in a couple of minutes.)`,
+      );
+    }
     const msg = (parsed && typeof parsed === 'object' && 'error' in parsed && typeof (parsed as { error: unknown }).error === 'string')
       ? (parsed as { error: string }).error
       : `${method} ${path} failed (${res.status})`;
