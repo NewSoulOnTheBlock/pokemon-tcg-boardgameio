@@ -404,6 +404,26 @@ function rareBucket(card: Card): 'rare' | 'ultra' | 'illustration' | 'secret' {
   return 'rare';
 }
 
+/**
+ * Small "Powered by Phygitals" badge pinned to the bottom-left corner
+ * of every page that isn't the Boosters page (Boosters has the big
+ * footer-version of this brand element).
+ */
+function PoweredByPhygitalsBadge() {
+  return (
+    <a
+      className="powered-by-phygitals-badge"
+      href="https://phygitals.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Powered by Phygitals — opens phygitals.com in a new tab"
+    >
+      <span className="powered-by-phygitals-badge-text">Powered by</span>
+      <img src="/phygitals-logo.png" alt="Phygitals" className="powered-by-phygitals-badge-logo" />
+    </a>
+  );
+}
+
 function randomFromPool(pool: Card[], used: Set<string>): Card {
   const available = pool.filter((card) => !used.has(card.id));
   const source = available.length > 0 ? available : pool;
@@ -2434,6 +2454,7 @@ export default function App() {
       <>
         {music}
         <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />
+        <PoweredByPhygitalsBadge />
       </>
     );
   }
@@ -2448,6 +2469,7 @@ export default function App() {
           onProfileChange={updateProfile}
           profile={profile}
         />
+        <PoweredByPhygitalsBadge />
       </>
     );
   }
@@ -2457,6 +2479,7 @@ export default function App() {
       <>
         {music}
         <GymChallengePage profile={profile} onProfileChange={updateProfile} onExit={() => setPage('home')} />
+        <PoweredByPhygitalsBadge />
       </>
     );
   }
@@ -2480,6 +2503,9 @@ export default function App() {
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>
+      {/* Boosters page already shows the big "Powered by Phygitals" footer,
+          so we skip the corner badge there to avoid double-branding. */}
+      {page !== 'boosters' && <PoweredByPhygitalsBadge />}
     </>
   );
 }

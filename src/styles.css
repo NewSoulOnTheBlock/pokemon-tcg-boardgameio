@@ -5402,3 +5402,50 @@ button:disabled {
   .phygitals-powered-by-logo { width: 92%; }
   .phygitals-powered-by-text { font-size: 0.85rem; }
 }
+
+/* ===== "Powered by Phygitals" corner badge (every page except Boosters) ===== */
+.powered-by-phygitals-badge {
+  align-items: center;
+  background: rgba(8, 10, 20, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 999px;
+  bottom: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 700;
+  gap: 8px;
+  left: 14px;
+  letter-spacing: 0.1em;
+  padding: 6px 14px 6px 12px;
+  pointer-events: auto;
+  position: fixed;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  z-index: 50;
+}
+.powered-by-phygitals-badge:hover {
+  border-color: rgba(168, 85, 247, 0.6);
+  box-shadow: 0 4px 16px rgba(168, 85, 247, 0.25);
+  transform: translateY(-1px);
+}
+.powered-by-phygitals-badge-text {
+  color: rgba(255, 255, 255, 0.55);
+}
+.powered-by-phygitals-badge-logo {
+  display: block;
+  filter: drop-shadow(0 1px 4px rgba(168, 85, 247, 0.4));
+  height: 22px;
+  width: auto;
+}
+@media (max-width: 720px) {
+  .powered-by-phygitals-badge {
+    bottom: 10px;
+    font-size: 0.6rem;
+    left: 10px;
+    padding: 4px 10px 4px 8px;
+  }
+  .powered-by-phygitals-badge-logo { height: 18px; }
+}
