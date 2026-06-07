@@ -309,14 +309,14 @@ export class PostgresProfileStorage implements ProfileStorage {
       SELECT
         p.user_id AS "userId",
         p.name,
-        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type <> 'Casual')::int AS matches,
-        COUNT(*) FILTER (WHERE m.result = 'win' AND m.match_type <> 'Casual')::int AS wins,
-        COUNT(*) FILTER (WHERE m.result = 'loss' AND m.match_type <> 'Casual')::int AS losses,
-        COUNT(*) FILTER (WHERE m.result = 'draw' AND m.match_type <> 'Casual')::int AS draws
+        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type IN ('Ranked', 'Wager'))::int AS matches,
+        COUNT(*) FILTER (WHERE m.result = 'win' AND m.match_type IN ('Ranked', 'Wager'))::int AS wins,
+        COUNT(*) FILTER (WHERE m.result = 'loss' AND m.match_type IN ('Ranked', 'Wager'))::int AS losses,
+        COUNT(*) FILTER (WHERE m.result = 'draw' AND m.match_type IN ('Ranked', 'Wager'))::int AS draws
       FROM ${PROFILES_TABLE} p
       INNER JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
       GROUP BY p.user_id, p.name
-      HAVING COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type <> 'Casual') > 0
+      HAVING COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw') AND m.match_type IN ('Ranked', 'Wager')) > 0
       ORDER BY wins DESC, losses ASC, draws DESC, matches DESC, p.name ASC
       LIMIT 50
     `);

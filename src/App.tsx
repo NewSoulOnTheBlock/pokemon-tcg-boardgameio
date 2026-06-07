@@ -52,6 +52,17 @@ import {
   type ConnectedWallet,
 } from './wallet';
 import {
+  formatCountdown,
+  formatWaitTime,
+  getCurrentSeasonalEvent,
+  getTrainerStats,
+  MATCH_TYPE_OPTIONS,
+  QUEUE_AUTO_CREATE_AFTER_MS,
+  QUEUE_POLL_INTERVAL_MS,
+  rankFromLeaderboard,
+  summariseRecentForm,
+} from './matchmaking/helpers';
+import {
   getTelegramUser,
   initTelegramWebApp,
   isTelegramMiniApp,
@@ -83,6 +94,9 @@ interface MatchConfig {
 
 interface MatchSetupData extends PokemonTCGSetupData {
   deckLabels?: Partial<Record<PlayerID, string>>;
+  /** When true, the match is hidden from the public Available Matches
+   *  list (joinable only via direct link / Quick Play matchID). */
+  isPrivate?: boolean;
 }
 
 interface DeckPayload {
@@ -104,7 +118,7 @@ const PACK_PRICE_LABEL = (import.meta.env.VITE_PACK_PRICE_LABEL?.trim() || '$6 U
 const SOLANA_RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com';
 const GAME_NAME = PokemonTCG.name ?? 'pokemon-tcg';
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
-const MATCH_TYPES: MatchType[] = ['Casual', 'Ranked', 'Wager'];
+const MATCH_TYPES: MatchType[] = ['Casual', 'Ranked', 'Wager', 'Theme Deck', 'Unlimited', 'Tournament Practice'];
 const WAGER_CURRENCIES: { value: WagerCurrency; label: string }[] = [
   { value: 'SOL', label: 'SOL' },
   { value: 'POKETCG', label: '$POKETCG' },
@@ -1116,14 +1130,30 @@ function MatchmakingPage({
   const [matchType, setMatchType] = useState<MatchType>('Casual');
   const [wagerAmount, setWagerAmount] = useState<number>(0.1);
   const [wagerCurrency, setWagerCurrency] = useState<WagerCurrency>('SOL');
+  const [isPrivate, setIsPrivate] = useState(false);
   const [matches, setMatches] = useState<LobbyAPI.Match[]>([]);
   const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
   const [busy, setBusy] = useState<'create' | 'refresh' | string | null>(null);
   const [error, setError] = useState('');
+  // Quick Play queue state. While `queue` is non-null we poll for an
+  // open Casual match every QUEUE_POLL_INTERVAL_MS and auto-accept the
+  // first one; if we time out after QUEUE_AUTO_CREATE_AFTER_MS we fall
+  // back to creating a Casual match the next user can pick up.
+  const [queue, setQueue] = useState<{ startedAt: number; deckId: string } | null>(null);
+  const [queueElapsed, setQueueElapsed] = useState(0);
   const lobby = useMemo(() => new LobbyClient({ server: MULTIPLAYER_SERVER }), []);
   const selectedPlayerDeck = deckOptionById(deckOptions, playerDeckId);
   const selectedAcceptDeck = deckOptionById(deckOptions, acceptDeckId);
   const playerWallet = profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined;
+  const trainerStats = useMemo(() => getTrainerStats(profile), [profile]);
+  const seasonalEvent = useMemo(() => getCurrentSeasonalEvent(), []);
+  const [seasonalTick, setSeasonalTick] = useState(0);
+  // Re-render the countdown every minute so the banner stays fresh.
+  useEffect(() => {
+    const interval = window.setInterval(() => setSeasonalTick((t) => t + 1), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  void seasonalTick;
 
   useEffect(() => {
     if (!deckOptions.some((option) => option.id === playerDeckId)) {
@@ -1142,7 +1172,14 @@ function MatchmakingPage({
         lobby.listMatches(GAME_NAME, { isGameover: false }),
         fetchLeaderboard(),
       ]);
-      setMatches(listedMatches.filter((match) => Boolean(openSeat(match))));
+      // Hide private matches from the public list — they're still
+      // joinable by direct matchID, but won't clutter the lobby.
+      const openMatches = listedMatches.filter((match) => {
+        const setup = setupDataForMatch(match) as MatchSetupData | undefined;
+        if (setup?.isPrivate) return false;
+        return Boolean(openSeat(match));
+      });
+      setMatches(openMatches);
       setLeaderboard(leaderboardRows);
     } catch (err) {
       setError(`Could not reach multiplayer server at ${MULTIPLAYER_SERVER}: ${err instanceof Error ? err.message : String(err)}`);
@@ -1154,6 +1191,76 @@ function MatchmakingPage({
   useEffect(() => {
     void refreshMatches();
   }, []);
+
+  // Quick Play loop. While `queue` is active: every QUEUE_POLL_INTERVAL_MS,
+  // list matches and auto-accept the first open Casual one. If we haven't
+  // matched within QUEUE_AUTO_CREATE_AFTER_MS, create a Casual match so
+  // someone else can pick US up. UI gets a live elapsed counter via
+  // `queueElapsed`.
+  useEffect(() => {
+    if (!queue) return;
+    let cancelled = false;
+
+    const tick = window.setInterval(() => {
+      if (!cancelled) setQueueElapsed(Date.now() - queue.startedAt);
+    }, 250);
+
+    async function tryFindMatch() {
+      try {
+        const { matches: listedMatches } = await lobby.listMatches(GAME_NAME, { isGameover: false });
+        if (cancelled) return;
+        const ourMatchIDs = new Set(profile.matchRecords.map((r) => r.matchID));
+        const candidate = listedMatches.find((match) => {
+          if (!openSeat(match)) return false;
+          const setup = setupDataForMatch(match) as MatchSetupData | undefined;
+          if (setup?.matchType === 'Wager') return false; // never auto-accept a wager match
+          if (setup?.isPrivate) return false;
+          if (ourMatchIDs.has(match.matchID)) return false; // skip our own
+          return true;
+        });
+        if (candidate) {
+          setQueue(null);
+          await acceptMatch(candidate);
+          return;
+        }
+        if (Date.now() - queue!.startedAt > QUEUE_AUTO_CREATE_AFTER_MS) {
+          // Drop out of the queue and create a public match so others
+          // can find us. Don't await — the create flow navigates us into
+          // the match screen.
+          setQueue(null);
+          await createMatch();
+        }
+      } catch (err) {
+        console.warn('[quickplay] poll failed', err);
+      }
+    }
+
+    const pollHandle = window.setInterval(() => { void tryFindMatch(); }, QUEUE_POLL_INTERVAL_MS);
+    // Immediate first pass so the queue feels responsive.
+    void tryFindMatch();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(tick);
+      window.clearInterval(pollHandle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue?.startedAt]);
+
+  function startQuickPlay() {
+    setError('');
+    if (!selectedPlayerDeck || selectedPlayerDeck.issues.length > 0) {
+      setError('Select a ready-to-play deck before queuing up.');
+      return;
+    }
+    setQueue({ startedAt: Date.now(), deckId: playerDeckId });
+    setQueueElapsed(0);
+  }
+
+  function cancelQuickPlay() {
+    setQueue(null);
+    setQueueElapsed(0);
+  }
 
   async function recordStartedMatch(config: MatchConfig): Promise<void> {
     const record: MatchRecord = {
@@ -1209,6 +1316,7 @@ function MatchmakingPage({
       },
       deckLabels,
       walletAddresses,
+      isPrivate,
     };
 
     setError('');
@@ -1304,20 +1412,63 @@ function MatchmakingPage({
     }
   }
 
+  // Mock-data: derive an "online trainers" list from the leaderboard so
+  // we have *something* to show until a real presence system lands. Each
+  // entry gets a fake online indicator. Clearly isolated — search for
+  // ONLINE_TRAINERS_MOCK to find / replace.
+  const ONLINE_TRAINERS_MOCK = leaderboard.slice(0, 8).map((entry) => ({
+    userId: entry.userId,
+    name: entry.name,
+    online: true,
+  }));
+  const onlineCount = ONLINE_TRAINERS_MOCK.length + matches.length + 1; // +1 for current user
+
   return (
     <main className="content-page matchmaking-page">
-      <section className="panel matchmaking-center-panel">
-        <div className="section-heading">
+      {/* ===== Seasonal event banner (top, full width) ===== */}
+      <section className="panel seasonal-banner">
+        <div className="seasonal-banner-headline">
+          <span className="seasonal-banner-emoji" aria-hidden="true">{seasonalEvent.emoji}</span>
           <div>
-            <p className="eyebrow">Matchmaking</p>
-            <h1>Available matches</h1>
+            <p className="eyebrow">Seasonal event {seasonalEvent.isMock && <span className="mock-tag">(preview)</span>}</p>
+            <h2>{seasonalEvent.title}</h2>
           </div>
-          <button disabled={busy !== null} onClick={refreshMatches}>
-            {busy === 'refresh' ? 'Refreshing...' : 'Refresh'}
-          </button>
         </div>
-        <div className="matchmaking-controls">
-          <div className="matchmaking-create-controls">
+        <div className="seasonal-banner-rewards">
+          {seasonalEvent.rewards.map((reward) => (
+            <span key={reward} className="seasonal-reward-chip">🎁 {reward}</span>
+          ))}
+          <span className="seasonal-countdown">Ends in {formatCountdown(seasonalEvent.endsAt)}</span>
+        </div>
+      </section>
+
+      <div className="matchmaking-grid">
+        {/* ===== LEFT COLUMN: Quick Play + Create Match ===== */}
+        <div className="matchmaking-col matchmaking-col-left">
+          <section className={`panel quick-play-panel${queue ? ' quick-play-panel-active' : ''}`}>
+            <p className="eyebrow">Fast track</p>
+            <h2>⚡ Quick Play</h2>
+            {queue ? (
+              <>
+                <p className="quick-play-status">Searching for opponent…</p>
+                <p className="quick-play-meta">Elapsed: <strong>{formatWaitTime(queueElapsed)}</strong> · Type: <strong>Casual</strong> · Deck: <strong>{selectedPlayerDeck?.label ?? '—'}</strong></p>
+                <p className="quick-play-meta">Estimated wait: {queueElapsed < 15_000 ? '15s' : queueElapsed < 30_000 ? '30s' : 'auto-creating…'}</p>
+                <button className="primary-cta danger-cta" onClick={cancelQuickPlay}>Cancel queue</button>
+              </>
+            ) : (
+              <>
+                <p className="quick-play-hint">One tap to join the first open Casual match, or auto-create one if nobody's waiting.</p>
+                <DeckSelect title="Queue with deck" value={playerDeckId} options={deckOptions} onChange={setPlayerDeckId} />
+                <button className="primary-cta quick-play-cta" disabled={!selectedPlayerDeck || selectedPlayerDeck.issues.length > 0} onClick={startQuickPlay}>
+                  ⚡ Quick Play
+                </button>
+              </>
+            )}
+          </section>
+
+          <section className="panel create-match-panel">
+            <p className="eyebrow">Host a match</p>
+            <h2>Create match</h2>
             <label className="match-name-field">
               Match name
               <input value={matchName} onChange={(event) => setMatchName(event.target.value)} placeholder={`${profile.name}'s Match`} />
@@ -1325,123 +1476,218 @@ function MatchmakingPage({
             <label className="deck-select">
               Match type
               <select value={matchType} onChange={(event) => setMatchType(event.target.value as MatchType)}>
-                {MATCH_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                {MATCH_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
+            <p className="wager-hint">
+              {MATCH_TYPE_OPTIONS.find((o) => o.value === matchType)?.description}
+            </p>
             <DeckSelect title="Start as" value={playerDeckId} options={deckOptions} onChange={setPlayerDeckId} />
-            <button className="primary-cta" disabled={busy !== null || !selectedPlayerDeck || selectedPlayerDeck.issues.length > 0 || (matchType === 'Wager' && (!playerWallet || !(wagerAmount > 0)))} onClick={createMatch}>
-              {busy === 'create' ? 'Creating...' : 'Create match'}
+            <DeckSelect title="Accept as" value={acceptDeckId} options={deckOptions} onChange={setAcceptDeckId} />
+            <label className="visibility-toggle">
+              <input type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} />
+              <span>Private match (hidden from public lobby; share the match ID directly)</span>
+            </label>
+            {matchType === 'Wager' && (
+              <div className="wager-controls">
+                <label className="wager-field">
+                  Currency
+                  <select value={wagerCurrency} onChange={(event) => setWagerCurrency(event.target.value as WagerCurrency)}>
+                    {WAGER_CURRENCIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="wager-field">
+                  Wager ({wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'})
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step={wagerCurrency === 'POKETCG' ? '1' : '0.01'}
+                    min={wagerCurrency === 'POKETCG' ? '1' : '0.001'}
+                    value={wagerAmount}
+                    onChange={(event) => setWagerAmount(Number.parseFloat(event.target.value) || 0)}
+                    placeholder={wagerCurrency === 'POKETCG' ? '1000' : '0.10'}
+                  />
+                </label>
+                <p className="wager-hint">
+                  {playerWallet
+                    ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKETCG mint: ${shortAddr(POKETCG_TOKEN_MINT)}` : ''}`
+                    : 'Connect a Solana wallet on sign-in to create or accept a Wager match.'}
+                </p>
+              </div>
+            )}
+            <button
+              className="primary-cta create-match-cta"
+              disabled={busy !== null || !selectedPlayerDeck || selectedPlayerDeck.issues.length > 0 || (matchType === 'Wager' && (!playerWallet || !(wagerAmount > 0)))}
+              onClick={createMatch}
+            >
+              {busy === 'create' ? 'Creating…' : '✨ Create match'}
             </button>
-          </div>
-          {matchType === 'Wager' && (
-            <div className="wager-controls">
-              <label className="wager-field">
-                Currency
-                <select value={wagerCurrency} onChange={(event) => setWagerCurrency(event.target.value as WagerCurrency)}>
-                  {WAGER_CURRENCIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label className="wager-field">
-                Wager ({wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'})
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step={wagerCurrency === 'POKETCG' ? '1' : '0.01'}
-                  min={wagerCurrency === 'POKETCG' ? '1' : '0.001'}
-                  value={wagerAmount}
-                  onChange={(event) => setWagerAmount(Number.parseFloat(event.target.value) || 0)}
-                  placeholder={wagerCurrency === 'POKETCG' ? '1000' : '0.10'}
-                />
-              </label>
-              <p className="wager-hint">
-                {playerWallet
-                  ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKETCG mint: ${shortAddr(POKETCG_TOKEN_MINT)}` : ''}`
-                  : 'Connect a Solana wallet on sign-in to create or accept a Wager match.'}
-              </p>
-            </div>
-          )}
-          {matchType === 'Casual' && (
-            <p className="wager-hint">Casual matches do not affect your win/loss record or the leaderboard.</p>
-          )}
-          {matchType === 'Ranked' && (
-            <p className="wager-hint">Ranked match results are tallied on the leaderboard.</p>
-          )}
-          <DeckSelect title="Accept as" value={acceptDeckId} options={deckOptions} onChange={setAcceptDeckId} />
+          </section>
         </div>
-        {error && <p className="error">{error}</p>}
-        {matches.length === 0 ? (
-          <p className="empty-state">No open matches yet. Create one, or have another player create one and refresh.</p>
-        ) : (
-          <div className="match-list">
-            {matches.map((match) => {
-              const seat = openSeat(match);
-              const creator = playerInMatch(match, '0')?.name ?? 'Waiting for creator';
-              const acceptor = playerInMatch(match, '1')?.name ?? 'Open seat';
-              const matchKind = matchTypeForMatch(match);
-              const wager = wagerForMatch(match);
-              const wagerCcy = wagerCurrencyForMatch(match);
-              const canAcceptSelectedDeck = Boolean(
-                seat
-                && selectedAcceptDeck
-                && selectedAcceptDeck.issues.length === 0
-                && (matchKind !== 'Wager' || playerWallet),
-              );
-              return (
-                <article className="match-card" key={match.matchID}>
-                  <div>
-                    <div className="match-card-meta">
-                      <span className={`match-type-badge match-type-badge-${matchKind}`}>{matchKind}</span>
-                      <span className="match-id-chip">#{match.matchID.slice(0, 8)}</span>
-                      {wager > 0 && <span className="wager-chip">{formatWager(wager, wagerCcy)} wager</span>}
-                    </div>
-                    <strong>{matchNameForMatch(match)}</strong>
-                    <span>{creator} <em style={{ opacity: 0.6 }}>vs</em> {acceptor}</span>
-                    <span>Host plays {deckLabelForMatch(match, '0')}</span>
-                  </div>
-                  <button className="primary-cta" disabled={busy !== null || !canAcceptSelectedDeck} onClick={() => acceptMatch(match)}>
-                    {busy === match.matchID ? 'Joining...' : matchKind === 'Wager' && !playerWallet ? 'Wallet needed' : 'Accept match'}
-                  </button>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
-      <section className="panel leaderboard-panel">
-        <div>
-          <p className="eyebrow">Leaderboard</p>
-          <h2>Wins / losses for all players</h2>
+        {/* ===== CENTER COLUMN: Available Matches ===== */}
+        <div className="matchmaking-col matchmaking-col-center">
+          <section className="panel matchmaking-center-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Live lobby</p>
+                <h1>Available matches <span className="lobby-count">({matches.length})</span></h1>
+              </div>
+              <button disabled={busy !== null} onClick={refreshMatches}>
+                {busy === 'refresh' ? 'Refreshing…' : '↻ Refresh'}
+              </button>
+            </div>
+            {error && <p className="error">{error}</p>}
+            {matches.length === 0 ? (
+              <div className="lobby-empty-state">
+                <span className="lobby-empty-emoji" aria-hidden="true">🎮</span>
+                <p>No trainers are currently waiting. Create a match or use ⚡ Quick Play.</p>
+              </div>
+            ) : (
+              <div className="match-list">
+                {matches.map((match) => {
+                  const seat = openSeat(match);
+                  const creator = playerInMatch(match, '0')?.name ?? 'Waiting for creator';
+                  const acceptor = playerInMatch(match, '1')?.name ?? 'Open seat';
+                  const matchKind = matchTypeForMatch(match);
+                  const wager = wagerForMatch(match);
+                  const wagerCcy = wagerCurrencyForMatch(match);
+                  const seatsFilled = (playerInMatch(match, '0') ? 1 : 0) + (playerInMatch(match, '1') ? 1 : 0);
+                  const canAcceptSelectedDeck = Boolean(
+                    seat
+                    && selectedAcceptDeck
+                    && selectedAcceptDeck.issues.length === 0
+                    && (matchKind !== 'Wager' || playerWallet),
+                  );
+                  return (
+                    <article className={`match-card match-card-type-${matchKind.replace(/\s+/g, '-')}`} key={match.matchID}>
+                      <div>
+                        <div className="match-card-meta">
+                          <span className={`match-type-badge match-type-badge-${matchKind.replace(/\s+/g, '-')}`}>{matchKind}</span>
+                          <span className="match-id-chip">#{match.matchID.slice(0, 8)}</span>
+                          {wager > 0 && <span className="wager-chip">{formatWager(wager, wagerCcy)}</span>}
+                          <span className="match-seats-chip">{seatsFilled}/2 players</span>
+                        </div>
+                        <strong>{matchNameForMatch(match)}</strong>
+                        <span className="match-card-host">🎓 Host: <strong>{creator}</strong></span>
+                        <span>vs {acceptor}</span>
+                        <span className="match-card-starter">Host plays {deckLabelForMatch(match, '0')}</span>
+                      </div>
+                      <button className="primary-cta" disabled={busy !== null || !canAcceptSelectedDeck} onClick={() => acceptMatch(match)}>
+                        {busy === match.matchID ? 'Joining…' : matchKind === 'Wager' && !playerWallet ? 'Wallet needed' : '⚔ Join Match'}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="panel leaderboard-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Hall of fame</p>
+                <h2>🏆 Leaderboard</h2>
+              </div>
+            </div>
+            {leaderboard.length === 0 ? (
+              <p className="empty-state">No ranked records yet. Be the first.</p>
+            ) : (
+              <table className="leaderboard-table leaderboard-table-ranked">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Trainer</th>
+                    <th>Wins</th>
+                    <th>Losses</th>
+                    <th>Win %</th>
+                    <th>Badge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.map((entry, index) => {
+                    const wr = entry.matches > 0 ? Math.round((entry.wins / entry.matches) * 100) : 0;
+                    const rank = rankFromLeaderboard(entry.wins);
+                    return (
+                      <tr key={entry.userId} className={index < 3 ? `leaderboard-row-top-${index + 1}` : ''}>
+                        <td className="leaderboard-rank-cell">
+                          {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
+                        </td>
+                        <td>{entry.name}</td>
+                        <td>{entry.wins}</td>
+                        <td>{entry.losses}</td>
+                        <td>{wr}%</td>
+                        <td>
+                          <span className="rank-badge" style={{ color: rank.color }}>{rank.icon} {rank.name}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
         </div>
-        {leaderboard.length === 0 ? (
-          <p className="empty-state">No player records yet.</p>
-        ) : (
-          <table className="leaderboard-table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Player</th>
-                <th>Wins</th>
-                <th>Losses</th>
-                <th>Draws</th>
-                <th>Matches</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leaderboard.map((entry, index) => (
-                <tr key={entry.userId}>
-                  <td>{index + 1}</td>
-                  <td>{entry.name}</td>
-                  <td>{entry.wins}</td>
-                  <td>{entry.losses}</td>
-                  <td>{entry.draws}</td>
-                  <td>{entry.matches}</td>
-                </tr>
+
+        {/* ===== RIGHT COLUMN: Player Stats + Online Trainers ===== */}
+        <div className="matchmaking-col matchmaking-col-right">
+          <section className="panel player-stats-panel">
+            <p className="eyebrow">Trainer card</p>
+            <h2>{profile.name}</h2>
+            <div className="player-stats-rank">
+              <span className="rank-badge" style={{ color: trainerStats.rank.color, borderColor: trainerStats.rank.color }}>
+                {trainerStats.rank.icon} {trainerStats.rank.name}
+              </span>
+              <span className="player-level">Lv. {trainerStats.level}</span>
+            </div>
+            <div className="player-stats-grid">
+              <div className="player-stat">
+                <strong>{trainerStats.rankedWins}</strong>
+                <span>Wins</span>
+              </div>
+              <div className="player-stats-grid-divider" aria-hidden="true" />
+              <div className="player-stat">
+                <strong>{trainerStats.rankedLosses}</strong>
+                <span>Losses</span>
+              </div>
+              <div className="player-stats-grid-divider" aria-hidden="true" />
+              <div className="player-stat">
+                <strong>{trainerStats.winRate}%</strong>
+                <span>Win rate</span>
+              </div>
+            </div>
+            <div className="player-recent-form">
+              <span className="player-recent-form-label">Recent: </span>
+              <span className="player-recent-form-pills">{summariseRecentForm(profile.matchRecords) || '—'}</span>
+            </div>
+          </section>
+
+          <section className="panel online-trainers-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Lobby</p>
+                <h2>🟢 Online <span className="online-count">{onlineCount}</span></h2>
+              </div>
+            </div>
+            <p className="mock-tag">Presence preview · live data once the WebSocket presence service lands</p>
+            <ul className="online-trainers-list">
+              <li className="online-trainer-row online-trainer-row-self">
+                <span className="online-dot" aria-hidden="true" />
+                <span><strong>{profile.name}</strong> (you)</span>
+              </li>
+              {ONLINE_TRAINERS_MOCK.map((trainer) => (
+                <li key={trainer.userId} className="online-trainer-row">
+                  <span className="online-dot" aria-hidden="true" />
+                  <span>{trainer.name}</span>
+                </li>
               ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              {ONLINE_TRAINERS_MOCK.length === 0 && (
+                <li className="online-trainer-empty">No other trainers visible yet.</li>
+              )}
+            </ul>
+          </section>
+        </div>
+      </div>
     </main>
   );
 }

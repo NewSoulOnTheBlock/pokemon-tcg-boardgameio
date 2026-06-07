@@ -179,7 +179,11 @@ export interface PokemonTCGState {
   log: string[];
 }
 
-export type MatchType = 'Casual' | 'Ranked' | 'Wager';
+export type MatchType = 'Casual' | 'Ranked' | 'Wager' | 'Theme Deck' | 'Unlimited' | 'Tournament Practice';
+
+// MatchTypes that count toward the public leaderboard. Casual/Theme/etc
+// stay personal-history-only so practice play doesn't impact rank.
+export const RANKED_MATCH_TYPES: MatchType[] = ['Ranked', 'Wager'];
 
 // Currencies the in-game wager popup knows how to display. The app never
 // escrows funds — it just shows the winner's wallet + amount/currency so
