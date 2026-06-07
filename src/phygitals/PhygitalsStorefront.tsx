@@ -27,7 +27,7 @@ import {
 } from '../api/phygitals';
 import {
   signManyVersionedTransactions,
-  signVersionedTransactionBase64,
+  signVersionedTransaction,
 } from '../walletPayment';
 import type { ProfileState } from '../shared/profile';
 
@@ -316,9 +316,9 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
       });
 
       setBusy('sign');
-      const signedTxBytes = await signVersionedTransactionBase64({
+      const signedTxBytes = await signVersionedTransaction({
         payerAddress: buyerWallet,
-        transactionBase64: prepared.transactionBase64,
+        tx: prepared.tx,
       });
 
       setBusy('submit');

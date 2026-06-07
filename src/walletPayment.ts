@@ -67,11 +67,45 @@ export async function signAndSendBase64Transaction({
 }
 
 /**
- * Sign a base64-encoded VersionedTransaction with the connected wallet
- * but do NOT submit it. The signed transaction is returned as a byte
- * array (Uint8Array → number[]) for transport to a partner backend
- * (e.g. Phygitals' /api/vm/buy/crypto, which co-signs as fee payer and
- * submits server-side). The Solana web3.js SDK is dynamic-imported.
+ * Sign a live VersionedTransaction with the connected wallet but do
+ * NOT submit it. Caller passes the VersionedTransaction INSTANCE (not
+ * a serialized blob) so we avoid base64 round-tripping that can shift
+ * tx bytes and trip partner-side fingerprint checks (e.g. Phygitals).
+ * Returns the signed-tx byte array for transport to the partner.
+ */
+export async function signVersionedTransaction({
+  payerAddress,
+  tx,
+}: {
+  payerAddress: string;
+  /** Live @solana/web3.js VersionedTransaction instance. Typed as
+   *  unknown so callers don't have to import the heavy SDK type at
+   *  every call site. */
+  tx: unknown;
+}): Promise<number[]> {
+  const providers = solanaProviders();
+  const provider = providers.find((candidate) => candidate.publicKey?.toString() === payerAddress) ?? providers[0];
+  if (!provider) {
+    throw new Error('No Solana wallet detected. Connect Phantom, Solflare, or Backpack first.');
+  }
+  const response = await provider.connect().catch(() => provider.connect({ onlyIfTrusted: false }));
+  const connectedAddress = response.publicKey?.toString() ?? provider.publicKey?.toString();
+  if (connectedAddress !== payerAddress) {
+    throw new Error(`Connected Solana wallet ${shortAddr(connectedAddress)} does not match profile wallet ${shortAddr(payerAddress)}.`);
+  }
+  if (!provider.signTransaction) {
+    throw new Error('Connected Solana wallet does not support transaction signing.');
+  }
+  const signed = (await provider.signTransaction(tx)) as { serialize(): Uint8Array };
+  // VersionedTransaction.serialize() returns Uint8Array; convert to
+  // a plain number[] for JSON transport.
+  return Array.from(signed.serialize());
+}
+
+/**
+ * @deprecated Use signVersionedTransaction() with a live instance
+ * instead. The base64 round-trip caused fingerprint mismatches with
+ * partner backends that re-derive tx bytes (e.g. Phygitals).
  */
 export async function signVersionedTransactionBase64({
   payerAddress,

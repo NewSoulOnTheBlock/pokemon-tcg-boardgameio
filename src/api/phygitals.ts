@@ -73,7 +73,10 @@ export interface PhygitalsBuyPreparation {
   amount: number;
   currency: 'usdc' | 'usdt';
   priceInToken: number;
-  transactionBase64: string;
+  /** Live VersionedTransaction instance — sign directly with the wallet
+   *  to avoid base64 round-tripping (which can shift bytes and cause
+   *  Phygitals' fingerprint check to fail). */
+  tx: unknown;
 }
 
 export interface PhygitalsBuySubmitResult {
@@ -351,17 +354,12 @@ export async function preparePhygitalsBuy(args: {
   }).compileToV0Message([HARDCODED_LOOKUP_TABLE]);
   const tx = new VersionedTransaction(message);
 
-  const serialized = tx.serialize();
-  let binary = '';
-  for (let i = 0; i < serialized.length; i++) binary += String.fromCharCode(serialized[i]!);
-  const transactionBase64 = btoa(binary);
-
   return {
     packId: pack.id,
     amount: args.amount,
     currency,
     priceInToken,
-    transactionBase64,
+    tx,
   };
 }
 
