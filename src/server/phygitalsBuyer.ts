@@ -26,6 +26,7 @@
 
 import * as Token from '@solana/spl-token';
 import {
+  AddressLookupTableAccount,
   ComputeBudgetProgram,
   Connection,
   Keypair,
@@ -45,7 +46,46 @@ const CURRENCY_MINTS: Record<string, PublicKey> = {
   usdt: USDT_MINT,
 };
 
+// Hardcoded ALT — mirrors buy-with-crypto-v6.ts reference script
+// exactly. DO NOT swap for a live RPC fetch — Phygitals' backend
+// uses this exact snapshot of ALT state for fingerprint computation.
 const LOOKUP_TABLE_KEY = new PublicKey('H5yQkXsVg9X21MvngdhCvzavTR9FC1R22Rm5sx8BERyJ');
+const LOOKUP_TABLE_ADDRESSES = [
+  '62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS',
+  'Fufk5zDZao3YiEa8ZCaU319U8BuX84gEbHCsrc2ye9uq',
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  'AyW32YPRoy7YvsfJmotMiEv3qMQyqvTJLgpfdiWG8vyd',
+  '8d56BJgENF7v9A6YJnMinXqrQb7KKLxMhe3WmUf1Pa4N',
+  'hAsrSYBkzdaz4r3EJ6pwxNL1YbGbM5c1jNuhLV6Uzqi',
+  'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
+  'cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK',
+  '11111111111111111111111111111111',
+  'GCKQVnqNiPSwYNNWYR2BbRXQPhKdNrQtCCaQR2cEyznd',
+  '3kVjWDszwTz6aFzBVPsfGschFFCKDgG4tLNkH8QgLeUN',
+  'BMXiYRt6XMHVMG39My9c1ptPiocZzbGJ5hbVkD2W2Bid',
+  'EDkeaWtLoh2AHbkBVvykw4b3Z5i9AJ3aP89hyYjrqtGK',
+  'JDh7eiWiUWtiWn623iybHqjQ6AQ6c2Czz8m6ZxwSCkta',
+  'BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY',
+  'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
+  '8c4LJmTnDi3pAsqXELwpYJKjxjHCnQ1mzWqfLLkNe5CD',
+  'DQPERZ9e86pNJ4mhUnCEP8V75yxZofsipoVrRWT5Wdxd',
+  'CCryptWBYktukHDQ2vHGtVcmtjXxYzvw8XNVY64YN2Yf',
+  'BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM',
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+  'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',
+  'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',
+  'eBJLFYPxJmMGKuFwpDWkzxZeUrad92kZRC5BJLpzyT9',
+].map((a) => new PublicKey(a));
+const HARDCODED_LOOKUP_TABLE = new AddressLookupTableAccount({
+  key: LOOKUP_TABLE_KEY,
+  state: {
+    deactivationSlot: BigInt('18446744073709551615'),
+    lastExtendedSlot: 382933344,
+    lastExtendedSlotStartIndex: 16,
+    authority: new PublicKey('62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS'),
+    addresses: LOOKUP_TABLE_ADDRESSES,
+  },
+});
 
 export interface PhygitalsPullItem {
   id: string;
@@ -132,6 +172,26 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
     this.treasury = secret.length === 64 ? Keypair.fromSecretKey(secret) : Keypair.fromSeed(secret);
     this.treasuryPubkey = this.treasury.publicKey.toBase58();
     this.connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+  }
+
+  /** RPC-based token-account lookup. Reference script uses this for
+   *  BOTH sides of the payment (not canonical ATA derivation). The
+   *  treasury wallet's first USDC account is whichever one
+   *  getParsedTokenAccountsByOwner returns first — if you funded the
+   *  treasury via a normal wallet transfer that'll be the canonical
+   *  ATA, but if the treasury already had a legacy/wrapped account
+   *  it could differ. Mirrors the partner script line-for-line. */
+  private async getTokenAccountForMint(ownerAddress: string, mint: PublicKey): Promise<PublicKey> {
+    const owner = new PublicKey(ownerAddress);
+    const accounts = await this.connection.getParsedTokenAccountsByOwner(owner, { mint });
+    if (accounts.value.length === 0) {
+      throw new PhygitalsBuyerError(
+        400,
+        null,
+        `No token account for mint ${mint.toBase58()} on wallet ${ownerAddress}`,
+      );
+    }
+    return accounts.value[0]!.pubkey;
   }
 
   /** GET /api/vm/available so we can resolve packId + price + rewards. */
@@ -423,44 +483,55 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
         ? new PublicKey('DQ1LJZ2ET1oHcCgojCN3kXakTQSkuCxgEqXguf2UrYS5')
         : vmBuybackPk;
 
-    // Use canonical ATAs throughout (matches what Phygitals' backend
-    // derives). The treasury wallet must already hold USDC/USDT for
-    // the buy to succeed.
-    const senderAta = Token.getAssociatedTokenAddressSync(paymentMint, buyer, false);
-    const receiverAta = Token.getAssociatedTokenAddressSync(paymentMint, paymentReceiver, false);
+    // Verbatim port of buy-with-crypto-v6.ts buildEbayClawPurchaseTx.
+    // Every structural deviation here breaks Phygitals' tx-fingerprint
+    // check, so DO NOT optimize. Three things matter:
+    //   1. Use RPC token-account LOOKUP for BOTH sides (not canonical ATA derivation)
+    //   2. Hardcoded ALT snapshot (NOT live RPC fetch)
+    //   3. Random ComputeBudget setComputeUnitPrice (100-400 microLamports)
+    const senderTokenAccount = await this.getTokenAccountForMint(buyer.toString(), paymentMint);
+    const receiverTokenAccount = await this.getTokenAccountForMint(paymentReceiver.toString(), paymentMint);
 
-    const paymentIx = Token.createTransferInstruction(senderAta, receiverAta, buyer, expectedAmount);
+    const paymentIx = Token.createTransferInstruction(senderTokenAccount, receiverTokenAccount, buyer, expectedAmount);
 
     const rewards = (pack.rewards_mint_addresses ?? []).map((mint, i) => ({
       mint,
       amount: Number(pack.rewards_amounts?.[i] ?? 0),
     }));
-    const rewardsIxs = rewards.flatMap((reward) => {
-      const mintPublicKey = new PublicKey(reward.mint);
-      const destAta = Token.getAssociatedTokenAddressSync(mintPublicKey, buyer, false);
-      const sourceAta = Token.getAssociatedTokenAddressSync(mintPublicKey, vmBuybackPk, false);
-      return [
-        Token.createAssociatedTokenAccountIdempotentInstruction(feePayerPk, destAta, buyer, mintPublicKey),
-        Token.createTransferInstruction(sourceAta, destAta, vmBuybackPk, reward.amount * amount),
-      ];
+    const rewardsIxGroups: ReturnType<typeof Token.createTransferInstruction>[][] = await Promise.all(
+      rewards.map(async (reward) => {
+        const mintPublicKey = new PublicKey(reward.mint);
+        const destAta = Token.getAssociatedTokenAddressSync(mintPublicKey, buyer, false);
+        const createDestAtaIx = Token.createAssociatedTokenAccountIdempotentInstruction(
+          feePayerPk,
+          destAta,
+          buyer,
+          mintPublicKey,
+        );
+        const transferIx = Token.createTransferInstruction(
+          await this.getTokenAccountForMint(pubkeys.vmBuyback, mintPublicKey),
+          destAta,
+          vmBuybackPk,
+          reward.amount * amount,
+        );
+        return [createDestAtaIx, transferIx];
+      }),
+    );
+
+    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
+      microLamports: 100 + Math.floor(Math.random() * 300),
     });
-
-    const liveLookupTable = await this.connection
-      .getAddressLookupTable(LOOKUP_TABLE_KEY)
-      .then((r) => r.value)
-      .catch(() => null);
-
     const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
     const ixs = [
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 200 }),
+      addPriorityFee,
       paymentIx,
-      ...rewardsIxs,
+      ...rewardsIxGroups.flat(),
     ];
     const message = new TransactionMessage({
       payerKey: feePayerPk,
       recentBlockhash: blockhash,
       instructions: ixs,
-    }).compileToV0Message(liveLookupTable ? [liveLookupTable] : []);
+    }).compileToV0Message([HARDCODED_LOOKUP_TABLE]);
     const tx = new VersionedTransaction(message);
     tx.sign([this.treasury]);
 
