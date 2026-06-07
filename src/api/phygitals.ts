@@ -191,9 +191,14 @@ export async function preparePhygitalsBuy(args: {
   amount: number;
   currency?: 'usdc' | 'usdt';
 }): Promise<PhygitalsBuyPreparation> {
+  // Verbatim port of buildEbayClawPurchaseTx from the Phygitals
+  // reference partner script (buy-with-crypto-v6.ts). Any structural
+  // deviation breaks their tx-fingerprint check, so don't "optimize"
+  // anything here — match their script line for line.
   const currency = args.currency ?? 'usdc';
   const [{
     PublicKey, Connection, TransactionMessage, VersionedTransaction,
+    ComputeBudgetProgram, AddressLookupTableAccount,
   }, Token] = await Promise.all([
     import('@solana/web3.js'),
     import('@solana/spl-token'),
@@ -203,13 +208,46 @@ export async function preparePhygitalsBuy(args: {
   const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
   const paymentMint = currency === 'usdc' ? USDC_MINT : USDT_MINT;
 
-  // Phygitals' partner Address Lookup Table — fetched LIVE each buy.
-  // The previous hardcoded snapshot went stale as Phygitals extended
-  // the table (more addresses added on-chain), which broke their
-  // transaction-fingerprint check ("fingerprint mismatch"). Fetching
-  // live guarantees our compiled v0 message uses the same ALT state
-  // their backend uses to reconstruct + hash the canonical tx.
+  // Hardcoded ALT mirrors the reference script exactly. DO NOT swap
+  // this for a live RPC fetch — Phygitals' backend uses this exact
+  // snapshot of ALT state for fingerprint computation.
   const LOOKUP_TABLE_KEY = new PublicKey('H5yQkXsVg9X21MvngdhCvzavTR9FC1R22Rm5sx8BERyJ');
+  const LOOKUP_TABLE_ADDRESSES = [
+    '62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS',
+    'Fufk5zDZao3YiEa8ZCaU319U8BuX84gEbHCsrc2ye9uq',
+    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    'AyW32YPRoy7YvsfJmotMiEv3qMQyqvTJLgpfdiWG8vyd',
+    '8d56BJgENF7v9A6YJnMinXqrQb7KKLxMhe3WmUf1Pa4N',
+    'hAsrSYBkzdaz4r3EJ6pwxNL1YbGbM5c1jNuhLV6Uzqi',
+    'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
+    'cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK',
+    '11111111111111111111111111111111',
+    'GCKQVnqNiPSwYNNWYR2BbRXQPhKdNrQtCCaQR2cEyznd',
+    '3kVjWDszwTz6aFzBVPsfGschFFCKDgG4tLNkH8QgLeUN',
+    'BMXiYRt6XMHVMG39My9c1ptPiocZzbGJ5hbVkD2W2Bid',
+    'EDkeaWtLoh2AHbkBVvykw4b3Z5i9AJ3aP89hyYjrqtGK',
+    'JDh7eiWiUWtiWn623iybHqjQ6AQ6c2Czz8m6ZxwSCkta',
+    'BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY',
+    'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
+    '8c4LJmTnDi3pAsqXELwpYJKjxjHCnQ1mzWqfLLkNe5CD',
+    'DQPERZ9e86pNJ4mhUnCEP8V75yxZofsipoVrRWT5Wdxd',
+    'CCryptWBYktukHDQ2vHGtVcmtjXxYzvw8XNVY64YN2Yf',
+    'BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM',
+    'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+    'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',
+    'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',
+    'eBJLFYPxJmMGKuFwpDWkzxZeUrad92kZRC5BJLpzyT9',
+  ].map((a) => new PublicKey(a));
+  const HARDCODED_LOOKUP_TABLE = new AddressLookupTableAccount({
+    key: LOOKUP_TABLE_KEY,
+    state: {
+      deactivationSlot: BigInt('18446744073709551615'),
+      lastExtendedSlot: 382933344,
+      lastExtendedSlotStartIndex: 16,
+      authority: new PublicKey('62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS'),
+      addresses: LOOKUP_TABLE_ADDRESSES,
+    },
+  });
 
   const pubkeys = await fetchPhygitalsSignerPubkeys();
   const packs = await fetchPhygitalsPacks();
@@ -226,13 +264,14 @@ export async function preparePhygitalsBuy(args: {
   }
 
   const buyer = new PublicKey(args.buyerWallet);
-  const mintPrice = Number(pack.mint_price ?? 0);
-  const priceInToken = args.amount * mintPrice * 1e6;
+  // Reference uses `pack.mint_price` raw (it's coerced by JS multiply).
+  // Phygitals' /api/vm/available returns mint_price as a STRING ("25")
+  // for most packs; `1 * "25" * 1e6` evaluates to 25_000_000 either way.
+  const priceInToken = args.amount * (pack.mint_price as unknown as number) * 1e6;
   const feePayerPk = new PublicKey(pubkeys.solanaFeePayer);
   const vmBuybackPk = new PublicKey(pubkeys.vmBuyback);
 
-  // Per-pack payment receiver overrides. Mirrors Phygitals' reference
-  // script — fwog/gboy franchise packs route to dedicated wallets.
+  // Per-pack payment receiver overrides. Mirrors the reference script.
   const paymentReceiver = pack.id.includes('fwog')
     ? 'H7Tou5HugVHFyJYZ3wfxJGfruYN47Xjjc6xQhjzwySUz'
     : pack.id.includes('gboy')
@@ -241,86 +280,72 @@ export async function preparePhygitalsBuy(args: {
 
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
 
-  // Fetch the live ALT state. If unavailable for any reason we fall
-  // back to a no-ALT compile — message will be larger but functionally
-  // identical, and Phygitals' backend should still recompute a
-  // matching fingerprint since they re-decode the raw tx bytes.
-  const liveLookupTable = await connection
-    .getAddressLookupTable(LOOKUP_TABLE_KEY)
-    .then((r) => r.value)
-    .catch(() => null);
-
-  // Phygitals' backend re-derives the expected token-transfer
-  // instruction using the canonical ATA (getAssociatedTokenAddressSync),
-  // NOT an RPC lookup. If the buyer has an old non-ATA USDC account
-  // or multiple USDC accounts, `getParsedTokenAccountsByOwner` may
-  // return a different account first, producing a different
-  // transaction-fingerprint than what Phygitals expects. Always use
-  // the canonical ATA for both sides of the payment + rewards.
-  async function ensureAtaExists(owner: string, mint: InstanceType<typeof PublicKey>, ata: InstanceType<typeof PublicKey>): Promise<void> {
-    const info = await connection.getAccountInfo(ata);
-    if (!info) {
+  // RPC token-account lookup (reference uses this for BOTH sides).
+  async function getTokenAccountForMint(owner: string, mint: InstanceType<typeof PublicKey>): Promise<InstanceType<typeof PublicKey>> {
+    const ownerPk = new PublicKey(owner);
+    const accounts = await connection.getParsedTokenAccountsByOwner(ownerPk, { mint });
+    if (accounts.value.length === 0) {
       throw new PhygitalsApiError(
         400,
         null,
-        `Wallet ${owner} has no ${mint.equals(USDC_MINT) ? 'USDC' : mint.equals(USDT_MINT) ? 'USDT' : mint.toBase58()} associated token account. Fund the wallet first.`,
+        `Wallet ${owner} has no token account for mint ${mint.toBase58()}`,
       );
     }
+    return accounts.value[0]!.pubkey;
   }
 
-  const senderAta = Token.getAssociatedTokenAddressSync(paymentMint, buyer, false);
-  const receiverAta = Token.getAssociatedTokenAddressSync(paymentMint, new PublicKey(paymentReceiver), false);
-  // Only check the BUYER side exists — receiver wallets (Phygitals')
-  // may use Token-2022 or special ATAs which we can't introspect, but
-  // they'll always exist if the pack is enabled.
-  await ensureAtaExists(args.buyerWallet, paymentMint, senderAta);
-
-  const paymentIx = Token.createTransferInstruction(senderAta, receiverAta, buyer, priceInToken);
+  const [senderTokenAccount, receiverTokenAccount] = await Promise.all([
+    getTokenAccountForMint(args.buyerWallet, paymentMint),
+    getTokenAccountForMint(paymentReceiver, paymentMint),
+  ]);
 
   const rewards = (pack.rewards_mint_addresses ?? []).map((mint, i) => ({
     mint,
     amount: Number(pack.rewards_amounts?.[i] ?? 0),
   }));
-  const rewardsTransferIxGroups = rewards.map((reward) => {
-    const mintPublicKey = new PublicKey(reward.mint);
-    const destAta = Token.getAssociatedTokenAddressSync(mintPublicKey, buyer, false);
-    const sourceAta = Token.getAssociatedTokenAddressSync(mintPublicKey, vmBuybackPk, false);
-    const createDestAtaIx = Token.createAssociatedTokenAccountIdempotentInstruction(
-      feePayerPk,
-      destAta,
-      buyer,
-      mintPublicKey,
-    );
-    const transferIx = Token.createTransferInstruction(
-      sourceAta,
-      destAta,
-      vmBuybackPk,
-      reward.amount * args.amount,
-    );
-    return [createDestAtaIx, transferIx];
-  });
 
-  // Phygitals' canonical buy tx does NOT include a ComputeBudget
-  // priority-fee instruction — including one alters the message-byte
-  // layout and breaks their tx-fingerprint check. Use only the
-  // payment ix (+ any rewards transfers) so our compiled v0 message
-  // matches what their backend reconstructs.
-  //
-  // (The reference partner script ships with a priority fee, but
-  // their backend appears to fingerprint-check on the canonical
-  // tx without it. If you re-introduce the priority fee, expect
-  // 'Transaction fingerprint mismatch' on every buy.)
+  // Match the reference's Promise.all pattern: paymentIx first, then
+  // each rewards group in array order.
+  const [paymentIx, ...rewardsTransferIxGroups] = await Promise.all([
+    (async () =>
+      Token.createTransferInstruction(senderTokenAccount, receiverTokenAccount, buyer, priceInToken))(),
+    ...rewards.map(async (reward) => {
+      const mintPublicKey = new PublicKey(reward.mint);
+      const destAta = Token.getAssociatedTokenAddressSync(mintPublicKey, buyer, false);
+      const createDestAtaIx = Token.createAssociatedTokenAccountIdempotentInstruction(
+        feePayerPk,
+        destAta,
+        buyer,
+        mintPublicKey,
+      );
+      const transferIx = Token.createTransferInstruction(
+        await getTokenAccountForMint(pubkeys.vmBuyback, mintPublicKey),
+        destAta,
+        vmBuybackPk,
+        reward.amount * args.amount,
+      );
+      return [createDestAtaIx, transferIx];
+    }),
+  ]);
+
+  const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
+    microLamports: 100 + Math.floor(Math.random() * 300),
+  });
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
+  type Ix = ReturnType<typeof Token.createTransferInstruction>;
+  const allIxs: Ix[] = [
+    addPriorityFee as unknown as Ix,
+    paymentIx as Ix,
+    ...((rewardsTransferIxGroups as unknown[]).flat() as Ix[]),
+  ];
   const message = new TransactionMessage({
     payerKey: feePayerPk,
     recentBlockhash: blockhash,
-    instructions: [paymentIx, ...rewardsTransferIxGroups.flat()],
-  }).compileToV0Message(liveLookupTable ? [liveLookupTable] : []);
+    instructions: allIxs,
+  }).compileToV0Message([HARDCODED_LOOKUP_TABLE]);
   const tx = new VersionedTransaction(message);
 
   const serialized = tx.serialize();
-  // VersionedTransaction.serialize() returns Uint8Array; base64-encode
-  // in a way that works in any browser without relying on Buffer.
   let binary = '';
   for (let i = 0; i < serialized.length; i++) binary += String.fromCharCode(serialized[i]!);
   const transactionBase64 = btoa(binary);
