@@ -13,7 +13,7 @@
 // memo, startTime, endTime), so the same invoice can only be paid once
 // on-chain. Memo is random to avoid collisions.
 
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import { PumpAgent } from '@pump-fun/agent-payments-sdk';
 
 export interface PumpPaymentConfig {
@@ -23,6 +23,12 @@ export interface PumpPaymentConfig {
   rpcUrl: string;
   /** Seconds. Defaults to 24h. */
   invoiceLifetimeSeconds?: number;
+  /** Optional reimbursement leg: the user transfers this many lamports
+   *  of SOL to `mintFeeRecipient` in the same signed transaction so
+   *  the treasury that pays mint rent is reimbursed up front. Skipped
+   *  when either field is unset / zero. */
+  mintFeeLamports?: number;
+  mintFeeRecipient?: string;
 }
 
 export interface BuiltInvoice {
@@ -33,6 +39,10 @@ export interface BuiltInvoice {
   transactionBase64: string;
   agentMint: string;
   currencyMint: string;
+  /** Lamports of SOL the user is also paying inside the same signed
+   *  tx to reimburse the treasury for mint rent + tx fees. 0 when no
+   *  reimbursement leg is configured. */
+  mintFeeLamports: number;
 }
 
 export interface VerifyInvoiceParams {
@@ -67,6 +77,11 @@ export function createPumpPaymentService(config: PumpPaymentConfig): PumpPayment
   const agent = new PumpAgent(agentMint, 'mainnet', connection);
   const amount = config.amountSmallestUnit;
   const lifetime = config.invoiceLifetimeSeconds ?? DEFAULT_INVOICE_LIFETIME;
+  const mintFeeLamports = Math.max(0, Math.floor(config.mintFeeLamports ?? 0));
+  const mintFeeRecipient = config.mintFeeRecipient
+    ? new PublicKey(config.mintFeeRecipient)
+    : undefined;
+  const includeMintFee = mintFeeLamports > 0 && Boolean(mintFeeRecipient);
 
   async function buildInvoice(walletAddress: string): Promise<BuiltInvoice> {
     const user = new PublicKey(walletAddress);
@@ -92,6 +107,18 @@ export function createPumpPaymentService(config: PumpPaymentConfig): PumpPayment
     tx.feePayer = user;
     tx.add(...instructions);
 
+    // Append the mint-fee reimbursement leg so the user signs ONE tx
+    // that pays the pack price (USDC via pump.fun) AND sends SOL to
+    // the treasury that will pay the on-chain mint rent. Skipped if
+    // not configured so the existing flow keeps working unchanged.
+    if (includeMintFee && mintFeeRecipient) {
+      tx.add(SystemProgram.transfer({
+        fromPubkey: user,
+        toPubkey: mintFeeRecipient,
+        lamports: mintFeeLamports,
+      }));
+    }
+
     const transactionBase64 = tx
       .serialize({ requireAllSignatures: false })
       .toString('base64');
@@ -104,6 +131,7 @@ export function createPumpPaymentService(config: PumpPaymentConfig): PumpPayment
       transactionBase64,
       agentMint: agentMint.toBase58(),
       currencyMint: currencyMint.toBase58(),
+      mintFeeLamports: includeMintFee ? mintFeeLamports : 0,
     };
   }
 

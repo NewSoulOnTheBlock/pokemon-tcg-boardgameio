@@ -1891,7 +1891,9 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
         }
         throw importErr;
       }
-      setStatus(`Approve the ${PACK_PRICE_LABEL} payment in your wallet...`);
+      const feeSol = invoice.mintFeeLamports ? invoice.mintFeeLamports / 1_000_000_000 : 0;
+      const feeNote = feeSol > 0 ? ` + ~${feeSol.toFixed(4)} SOL mint gas` : '';
+      setStatus(`Approve the ${PACK_PRICE_LABEL}${feeNote} payment in your wallet...`);
       const paymentSignature = await signAndSendBase64Transaction({
         payerAddress: walletAddress,
         rpcUrl: SOLANA_RPC_URL,

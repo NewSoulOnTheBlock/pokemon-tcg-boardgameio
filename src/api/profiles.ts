@@ -94,6 +94,9 @@ export interface BoosterInvoice {
   transactionBase64: string;
   agentMint: string;
   currencyMint: string;
+  /** Lamports of SOL the user is paying inside the same signed tx to
+   *  reimburse the treasury for the on-chain mint rent / tx fees. */
+  mintFeeLamports?: number;
 }
 
 export async function buildBoosterInvoice(walletAddress: string): Promise<BoosterInvoice> {

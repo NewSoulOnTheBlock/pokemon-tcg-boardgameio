@@ -64,7 +64,7 @@ export function BoosterHero({
         <p className="eyebrow">⚡ Open Booster Packs</p>
         <h1 className="trainer-hero-name">Build your collection, discover rare cards, and strengthen your deck one pack at a time.</h1>
         <p className="trainer-hero-wallet">
-          Every booster purchase is powered by Pump.fun's Agent Payments infrastructure and secured through Solana smart contracts. Transactions are wallet-signed, verified on-chain, and recorded transparently, so you always stay in control of your assets.
+          Every booster purchase is powered by Pump.fun's Agent Payments infrastructure and secured through Solana smart contracts. Transactions are wallet-signed, verified on-chain, and recorded transparently, so you always stay in control of your assets. The same signature also covers the small SOL gas fee to mint your 8 NFT cards.
         </p>
         <ul className="booster-hero-bullets">
           <li>🎴 Collect rare and legendary cards</li>

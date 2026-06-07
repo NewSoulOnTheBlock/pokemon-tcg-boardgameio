@@ -80,9 +80,18 @@ try {
 // submits it, and the server then verifies the invoice via pump.fun's
 // HTTP API (with RPC fallback) before minting NFTs. Disabled gracefully
 // if AGENT_TOKEN_MINT_ADDRESS / CURRENCY_MINT / PAYMENT_AMOUNT are unset.
+//
+// MINT_FEE_LAMPORTS env var: when set + nftMinter is configured, the
+// same signed payment tx ALSO transfers this many lamports of SOL to
+// the treasury so the user pays the on-chain mint rent up front. 8
+// Metaplex Core mints at ~0.0015 SOL each plus tx fees ≈ 0.012 SOL,
+// so we default to 15_000_000 lamports (= 0.015 SOL) for a small
+// safety margin. Set to 0 to disable.
 const agentMintEnv = process.env.AGENT_TOKEN_MINT_ADDRESS?.trim();
 const currencyMintEnv = process.env.CURRENCY_MINT?.trim();
 const paymentAmountEnv = process.env.PAYMENT_AMOUNT?.trim();
+const mintFeeLamportsEnv = process.env.MINT_FEE_LAMPORTS?.trim();
+const DEFAULT_MINT_FEE_LAMPORTS = 15_000_000;
 let pumpPayments: PumpPaymentService | undefined;
 try {
   if (agentMintEnv && currencyMintEnv && paymentAmountEnv) {
@@ -90,13 +99,25 @@ try {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error(`PAYMENT_AMOUNT must be a positive number (got "${paymentAmountEnv}")`);
     }
+    const mintFeeLamports = mintFeeLamportsEnv === undefined || mintFeeLamportsEnv === ''
+      ? DEFAULT_MINT_FEE_LAMPORTS
+      : Number(mintFeeLamportsEnv);
+    if (!Number.isFinite(mintFeeLamports) || mintFeeLamports < 0) {
+      throw new Error(`MINT_FEE_LAMPORTS must be a non-negative number (got "${mintFeeLamportsEnv}")`);
+    }
     pumpPayments = createPumpPaymentService({
       agentMintAddress: agentMintEnv,
       currencyMintAddress: currencyMintEnv,
       amountSmallestUnit: amount,
       rpcUrl: solanaRpcUrl,
+      mintFeeLamports,
+      mintFeeRecipient: nftMinter?.treasury,
     });
-    console.log(`[pokemon-tcg] pump.fun payments ready (mint=${pumpPayments.agentMint.toBase58()}, amount=${pumpPayments.amount})`);
+    if (nftMinter && mintFeeLamports > 0) {
+      console.log(`[pokemon-tcg] pump.fun payments ready (mint=${pumpPayments.agentMint.toBase58()}, amount=${pumpPayments.amount}, mintFee=${mintFeeLamports} lamports -> ${nftMinter.treasury})`);
+    } else {
+      console.log(`[pokemon-tcg] pump.fun payments ready (mint=${pumpPayments.agentMint.toBase58()}, amount=${pumpPayments.amount}; mint-fee reimbursement disabled)`);
+    }
   } else {
     console.log('[pokemon-tcg] pump.fun payments disabled (AGENT_TOKEN_MINT_ADDRESS / CURRENCY_MINT / PAYMENT_AMOUNT missing)');
   }
