@@ -47,7 +47,6 @@ import {
   type ProfileState,
 } from './shared/profile';
 import {
-  connectEvm,
   connectSolana,
   detectSolanaWallets,
   shortAddr,
@@ -634,10 +633,10 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
     ? { chain: 'telegram', address: telegramPseudoAddress(telegramUser) }
     : null);
 
-  async function connect(kind: 'evm' | 'solana') {
+  async function connect(_kind: 'solana') {
     setError('');
     try {
-      setWallet(kind === 'evm' ? await connectEvm() : await connectSolana());
+      setWallet(await connectSolana());
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     }
@@ -702,7 +701,6 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
         {!inTelegram && (
           <>
             <div className="wallet-actions">
-              <button onClick={() => connect('evm')}>Connect EVM Wallet</button>
               <button onClick={() => connect('solana')}>Connect Solana Wallet</button>
             </div>
             <div className="wallet-list">
