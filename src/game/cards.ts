@@ -114,43 +114,141 @@ export const ENERGY_TYPE_META: Record<StarterEnergyType, { hex: string; ink: str
   Colorless: { hex: '#e5e7eb', ink: '#111827', description: 'Flexible Colorless attackers and universal energy.' },
 };
 
-const STARTER_POKEMON: Record<StarterEnergyType, string[]> = {
-  Grass: ['sv1-13', 'sv1-1', 'sv1-2', 'sv1-3'],
-  Fire: ['sv3pt5-4', 'pgo-8', 'sv3-26', 'sv1-31'],
-  Water: ['sv1-52', 'sv1-32', 'sv1-33', 'sv1-37'],
-  Lightning: ['sv1-81', 'sv1-70', 'sv1-74', 'sv1-76'],
-  Psychic: ['sv1-83', 'sv1-84', 'sv1-85', 'sv1-87'],
-  Fighting: ['sv1-112', 'sv1-113', 'sv1-115', 'sv1-117'],
-  Darkness: ['sv1-130', 'sv1-132', 'sv1-134', 'sv1-136'],
-  Metal: ['sv1-150', 'sv1-152', 'sv1-153', 'sv1-155'],
-  Dragon: ['bw10-62', 'bw10-67', 'bw10-70', 'bw11-93'],
-  Fairy: ['det1-14', 'det1-15', 'g1-50', 'g1-RC19'],
-  Colorless: ['pgo-55', 'base1-26', 'base1-27', 'base1-48'],
+// Per-deck Pokemon lists matching the requested 60-card starter
+// composition (20 Pokémon, 20 Trainers, 20 Energy).
+// Each entry pairs a card ID with a copy count.
+type CardCount = readonly [string, number];
+
+const STARTER_POKEMON: Record<StarterEnergyType, ReadonlyArray<CardCount>> = {
+  Grass: [
+    ['base1-44', 4], ['base1-30', 3], ['base1-15', 2], // Bulbasaur / Ivysaur / Venusaur
+    ['base2-58', 3], ['base2-37', 2], ['base2-15', 1], // Oddish / Gloom / Vileplume
+    ['base2-52', 3], ['base2-35', 2],                  // Exeggcute / Exeggutor
+  ],
+  Fire: [
+    ['base1-46', 4], ['base1-24', 3], ['base1-4', 2],  // Charmander / Charmeleon / Charizard
+    ['base1-28', 3], ['base1-23', 2],                  // Growlithe / Arcanine
+    ['base1-60', 3], ['base2-44', 2],                  // Ponyta / Rapidash
+    ['base3-12', 1],                                   // Moltres
+  ],
+  Water: [
+    ['base1-63', 4], ['base1-42', 3], ['base1-2', 2],  // Squirtle / Wartortle / Blastoise
+    ['base1-35', 3], ['base1-6', 2],                   // Magikarp / Gyarados
+    ['base3-53', 3], ['base3-35', 2],                  // Psyduck / Golduck
+    ['base3-10', 1],                                   // Lapras
+  ],
+  Lightning: [
+    ['base1-58', 4], ['base1-14', 3],                  // Pikachu / Raichu
+    ['base1-53', 3], ['base1-9', 2],                   // Magnemite / Magneton
+    ['base1-67', 3], ['base1-21', 2],                  // Voltorb / Electrode
+    ['base1-20', 2], ['base1-16', 1],                  // Electabuzz / Zapdos
+  ],
+  Psychic: [
+    ['base1-43', 4], ['base1-32', 3], ['base1-1', 2],  // Abra / Kadabra / Alakazam
+    ['base1-49', 3], ['base3-8', 2],                   // Drowzee / Hypno
+    ['bw11-59', 3], ['bw11-60', 2], ['bw11-RC10', 1],  // Ralts / Kirlia / Gardevoir
+  ],
+  Fighting: [
+    ['base1-52', 4], ['base1-34', 3], ['base1-8', 2],  // Machop / Machoke / Machamp
+    ['base3-47', 3], ['base3-37', 2], ['base3-36', 1], // Geodude / Graveler / Golem
+    ['base1-62', 3], ['base3-41', 2],                  // Sandshrew / Sandslash
+  ],
+  Darkness: [
+    ['bw10-55', 4], ['bw10-56', 3],                    // Houndour / Houndoom
+    ['bw6-72', 3], ['bw6-73', 2],                      // Murkrow / Honchkrow
+    ['dp6-116', 3], ['dp6-66', 2],                     // Poochyena / Mightyena
+    ['bw4-69', 2], ['bw4-70', 1],                      // Sneasel / Weavile
+  ],
+  Metal: [
+    ['bw10-57', 4], ['bw10-58', 3], ['bw10-59', 2],    // Aron / Lairon / Aggron
+    ['base1-53', 3], ['base1-9', 2],                   // Magnemite / Magneton (reused)
+    ['bw9-50', 3], ['bw9-51', 2], ['bw9-52', 1],       // Beldum / Metang / Metagross
+  ],
+  Dragon: [
+    ['base1-26', 4], ['base1-18', 3], ['base3-4', 2],  // Dratini / Dragonair / Dragonite
+    ['bw10-62', 3], ['bw10-63', 2], ['bw10-64', 1],    // Bagon / Shelgon / Salamence
+    ['bw7-83', 3], ['bw7-98', 2],                      // Trapinch / Vibrava
+  ],
+  Fairy: [
+    ['base1-5', 4], ['base2-1', 3],                    // Clefairy / Clefable
+    ['col1-71', 3], ['col1-26', 2],                    // Snubbull / Granbull
+    ['me3-35', 3], ['me3-36', 2],                      // Spritzee / Aromatisse
+    ['basep-30', 2], ['bw8-103', 1],                   // Togepi / Togetic
+  ],
+  Colorless: [
+    ['base2-51', 4],                                   // Eevee
+    ['base2-56', 3], ['base2-42', 2],                  // Meowth / Persian
+    ['base2-62', 3], ['base2-36', 2],                  // Spearow / Fearow
+    ['base1-57', 3], ['base1-22', 2], ['base2-8', 1],  // Pidgey / Pidgeotto / Pidgeot
+  ],
 };
 
-const STARTER_ENERGY: Record<StarterEnergyType, string> = {
-  Grass: 'sve-1',
-  Fire: 'sve-2',
-  Water: 'sve-3',
-  Lightning: 'sve-4',
-  Psychic: 'sve-5',
-  Fighting: 'sve-6',
-  Darkness: 'sve-7',
-  Metal: 'sve-8',
-  Dragon: 'xy6-97',
-  Fairy: 'xy1-140',
-  Colorless: 'base1-96',
+// Shared 20-card trainer baseline used by most decks (4 Professor's
+// Research, 4 Poké Ball, 3 Great Ball, 3 Switch, 2 Potion,
+// 2 Energy Retrieval, 2 Rare Candy).
+const STARTER_TRAINERS_BASELINE: ReadonlyArray<CardCount> = [
+  ['sv4pt5-87', 4], // Professor's Research
+  ['base2-64', 4],  // Poké Ball
+  ['bw2-93', 3],    // Great Ball
+  ['sv1-194', 3],   // Switch
+  ['sv1-188', 2],   // Potion
+  ['base1-81', 2],  // Energy Retrieval
+  ['bw10-85', 2],   // Rare Candy
+];
+
+// Variant: replaces the 2 Rare Candy with 2 Boss's Orders for decks
+// the user spec'd that way (Lightning, Psychic, Darkness, Fairy, Colorless).
+const STARTER_TRAINERS_BOSS: ReadonlyArray<CardCount> = [
+  ['sv4pt5-87', 4],
+  ['base2-64', 4],
+  ['bw2-93', 3],
+  ['sv1-194', 3],
+  ['sv1-188', 2],
+  ['base1-81', 2],
+  ['me1-114', 2],   // Boss's Orders
+];
+
+const TRAINER_VARIANT_BY_TYPE: Record<StarterEnergyType, ReadonlyArray<CardCount>> = {
+  Grass: STARTER_TRAINERS_BASELINE,
+  Fire: STARTER_TRAINERS_BASELINE,
+  Water: STARTER_TRAINERS_BASELINE,
+  Lightning: STARTER_TRAINERS_BOSS,
+  Psychic: STARTER_TRAINERS_BOSS,
+  Fighting: STARTER_TRAINERS_BASELINE,
+  Darkness: STARTER_TRAINERS_BOSS,
+  Metal: STARTER_TRAINERS_BASELINE,
+  Dragon: STARTER_TRAINERS_BASELINE,
+  Fairy: STARTER_TRAINERS_BOSS,
+  Colorless: STARTER_TRAINERS_BOSS,
 };
 
-const STARTER_TRAINERS = ['sv1-188', 'sv1-198', 'sv4pt5-87', 'sv1-194', 'sv1-181'];
+// Per-deck energy lineup. Most decks are 20 of a single basic energy;
+// Dragon mixes 10 Dragon (modelled as Double Dragon Energy) + 5 Fire
+// + 5 Water as the user specified.
+const STARTER_ENERGY_LINEUP: Record<StarterEnergyType, ReadonlyArray<CardCount>> = {
+  Grass: [['sve-1', 20]],
+  Fire: [['sve-2', 20]],
+  Water: [['sve-3', 20]],
+  Lightning: [['sve-4', 20]],
+  Psychic: [['sve-5', 20]],
+  Fighting: [['sve-6', 20]],
+  Darkness: [['sve-7', 20]],
+  Metal: [['sve-8', 20]],
+  Dragon: [['xy6-97', 10], ['sve-2', 5], ['sve-3', 5]],
+  Fairy: [['xy1-140', 20]],
+  Colorless: [['base1-96', 10], ['sve-2', 5], ['sve-3', 5]], // DCE + filler
+};
+
+function expandCardCounts(counts: ReadonlyArray<CardCount>): string[] {
+  return counts.flatMap(([cardId, count]) => Array(count).fill(cardId));
+}
 
 export function starterDeck(type: StarterEnergyType): string[] {
   const deck = [
-    ...STARTER_POKEMON[type].flatMap((cardId) => Array(4).fill(cardId)),
-    ...Array(24).fill(STARTER_ENERGY[type]),
-    ...STARTER_TRAINERS.flatMap((cardId) => Array(4).fill(cardId)),
+    ...expandCardCounts(STARTER_POKEMON[type]),
+    ...expandCardCounts(TRAINER_VARIANT_BY_TYPE[type]),
+    ...expandCardCounts(STARTER_ENERGY_LINEUP[type]),
   ];
-
   return deck.slice(0, 60);
 }
 
