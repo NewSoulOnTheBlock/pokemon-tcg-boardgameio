@@ -41,6 +41,8 @@ import {
   maxCollections,
   type MatchLeaderboardEntry,
   type MatchRecord,
+  nftOwnedCount,
+  nftOwnedUniqueCount,
   type PackPurchase,
   type ProfileState,
 } from './shared/profile';
@@ -664,11 +666,11 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
     const wins = records.filter((record) => record.result === 'win').length;
     const losses = records.filter((record) => record.result === 'loss').length;
     return {
-      collection: collectionSize(profile.ownedCards),
+      collection: nftOwnedCount(profile),
       packsOpened: profile.packsOpened,
       record: `${wins}-${losses}`,
     };
-  }, [profile.matchRecords, profile.ownedCards, profile.packsOpened]);
+  }, [profile]);
 
   return (
     <main className="hub-page">
@@ -860,8 +862,11 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
     const casualMatches = records.filter((r) => r.matchType === 'Casual' && r.result !== 'in_progress').length;
     const totalMatches = ranked.length + casualMatches;
     const winRate = ranked.length > 0 ? Math.round((rankedWins / ranked.length) * 100) : 0;
-    const collectionTotal = collectionSize(profile.ownedCards);
-    const uniqueCards = Object.keys(profile.ownedCards).length;
+    // "Cards owned" excludes the starter-deck seed and only counts real
+    // NFT-backed cards: every successfully-minted booster pull + every
+    // imported phygital / Collector Crypt NFT.
+    const collectionTotal = nftOwnedCount(profile);
+    const uniqueCards = nftOwnedUniqueCount(profile);
     const nftMints = profile.packPurchases.reduce((sum, pack) => sum + (pack.mints?.length ?? 0), 0);
     return {
       rankedWins, rankedLosses, rankedDraws,
@@ -920,7 +925,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
           </div>
           <div className="profile-stat">
             <strong>{stats.collectionTotal}</strong>
-            <span>Cards owned ({stats.uniqueCards} unique)</span>
+            <span>NFT cards owned ({stats.uniqueCards} unique)</span>
           </div>
           <div className="profile-stat">
             <strong>{stats.packsOpened}</strong>

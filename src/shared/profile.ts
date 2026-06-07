@@ -82,6 +82,38 @@ export function collectionSize(collection: Record<string, number>): number {
   return Object.values(collection).reduce((total, count) => total + count, 0);
 }
 
+/**
+ * Count of card NFTs the player actually owns on-chain — sum of every
+ * Metaplex Core mint from booster pack purchases plus every imported
+ * NFT-backed card. Starter-deck cards are EXCLUDED because those are
+ * seeded into ``ownedCards`` for deckbuilding and aren't NFT-backed.
+ *
+ * Use this for any "Cards owned" UI that should reflect real NFT
+ * holdings rather than the broader deckbuilder collection.
+ */
+export function nftOwnedCount(profile: ProfileState): number {
+  const minted = (profile.packPurchases ?? []).reduce(
+    (sum, purchase) => sum + (purchase.mints?.length ?? 0),
+    0,
+  );
+  const imported = profile.importedNfts?.length ?? 0;
+  return minted + imported;
+}
+
+/** Distinct NFT cards owned — counts unique cardIds across mints + imports. */
+export function nftOwnedUniqueCount(profile: ProfileState): number {
+  const unique = new Set<string>();
+  for (const purchase of profile.packPurchases ?? []) {
+    for (const mint of purchase.mints ?? []) {
+      unique.add(mint.cardId);
+    }
+  }
+  for (const imported of profile.importedNfts ?? []) {
+    unique.add(imported.cardId);
+  }
+  return unique.size;
+}
+
 export function collectionFromCards(cards: string[]): Record<string, number> {
   return cards.reduce<Record<string, number>>((counts, cardId) => {
     counts[cardId] = (counts[cardId] ?? 0) + 1;
