@@ -258,23 +258,14 @@ class RealPhygitalsClient implements PhygitalsClient {
 
   private async apiCall<T>(method: 'GET' | 'POST', path: string, body?: unknown, withApiKey = true): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    // Phygitals sits behind Cloudflare with strict bot protection. Node's
-    // default fetch User-Agent (undici/*) and Render's outbound IPs get
-    // 403'd by Cloudflare's WAF. Send a full browser fingerprint to slip
-    // past the JS challenge.
     const headers: Record<string, string> = {
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
+      Accept: 'application/json',
+      // A modern Chrome User-Agent helps slip past basic bot heuristics.
+      // The bigger blocker is Phygitals' Cloudflare IP allow-list — if
+      // your server IPs aren't whitelisted you'll see 403s with a
+      // Cloudflare cf-ray header regardless of how the request is
+      // shaped. Email partners@phygitals.com to add your egress IPs.
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      Referer: 'https://phygitals.com/',
-      Origin: 'https://phygitals.com',
     };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (withApiKey) headers['X-API-Key'] = this.apiKey;
@@ -290,6 +281,18 @@ class RealPhygitalsClient implements PhygitalsClient {
       catch { parsed = text; }
     }
     if (!res.ok) {
+      // Cloudflare WAF returns text/html "Attention Required" with a
+      // cf-ray header. Detect that specifically and replace with a
+      // partner-friendly message instead of dumping the HTML.
+      const cfRay = res.headers.get('cf-ray');
+      const isCloudflareWaf = cfRay && typeof parsed === 'string' && parsed.toLowerCase().includes('cloudflare');
+      if (isCloudflareWaf) {
+        throw new PhygitalsError(
+          res.status,
+          { error: 'Phygitals Cloudflare WAF blocked this request', cfRay },
+          `Phygitals Cloudflare is blocking this server's IP. Ask Phygitals (partners@phygitals.com) to allow-list your egress IPs. cf-ray=${cfRay}`,
+        );
+      }
       const msg = (parsed && typeof parsed === 'object' && 'error' in parsed && typeof (parsed as { error: unknown }).error === 'string')
         ? (parsed as { error: string }).error
         : `${method} ${path} failed (${res.status})`;
