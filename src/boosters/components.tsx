@@ -61,11 +61,19 @@ export function BoosterHero({
   return (
     <section className="trainer-hero booster-hero">
       <div className="trainer-hero-center">
-        <p className="eyebrow">Open Booster Packs</p>
-        <h1 className="trainer-hero-name">Buy packs · Rip boosters · Build your collection</h1>
+        <p className="eyebrow">⚡ Open Booster Packs</p>
+        <h1 className="trainer-hero-name">Build your collection, discover rare cards, and strengthen your deck one pack at a time.</h1>
         <p className="trainer-hero-wallet">
-          Each pack pulls 4 Commons / 3 Uncommons / 1 Rare. Payments flow through pump.fun at <strong>{priceLabel}</strong> per pack — every card minted as a Metaplex Core NFT to your Solana wallet.
+          Every booster purchase is powered by Pump.fun's Agent Payments infrastructure and secured through Solana smart contracts. Transactions are wallet-signed, verified on-chain, and recorded transparently, so you always stay in control of your assets.
         </p>
+        <ul className="booster-hero-bullets">
+          <li>🎴 Collect rare and legendary cards</li>
+          <li>✨ Chase holographic and special-edition pulls</li>
+          <li>🏆 Complete sets and earn collection rewards</li>
+          <li>🔒 Secure, on-chain payment verification</li>
+          <li>⚡ Fast Solana-powered transactions</li>
+        </ul>
+        <p className="booster-hero-tagline">Your next favorite card could be just one pack away.</p>
         <div className="trainer-hero-stats">
           <div className="hero-stat"><strong>{profile.packsOpened}</strong><span>Packs opened</span></div>
           <div className="hero-stat"><strong>{nftOwnedCount(profile)}</strong><span>NFT cards owned</span></div>
@@ -74,7 +82,7 @@ export function BoosterHero({
         </div>
         <div className="booster-hero-actions">
           {featuredSet && (
-            <button className="primary-cta" onClick={onBuy}>🛒 Buy Featured Pack · {featuredSet.name}</button>
+            <button className="primary-cta" onClick={onBuy}>🛒 Open Packs</button>
           )}
           <button className="secondary-cta" onClick={onJumpToCollection}>📊 View Collection</button>
         </div>

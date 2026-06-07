@@ -4619,3 +4619,29 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .quest-card-claimable, .daily-chest-ready { animation: none !important; }
 }
+
+/* Booster hero bullet list + tagline */
+.booster-hero-bullets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 8px 0 4px;
+  padding: 0;
+}
+.booster-hero-bullets li {
+  color: var(--ink-secondary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.booster-hero-tagline {
+  background: linear-gradient(120deg, #fef3c7, #fbbf24, #e879f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 700;
+  margin: 6px 0;
+}
