@@ -4038,3 +4038,189 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .trainer-avatar-image, .achievement-badge-unlocked, .stat-card, .collection-progress-fill, .region-progress-fill, .type-progress-fill, .achievement-badge-progress-fill, .trainer-avatar-xp-fill { transition: none !important; animation: none !important; }
 }
+
+/* ===================================================================== */
+/* ===== Gym Challenge campaign ====================================== */
+/* ===================================================================== */
+.gym-challenge-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1380px;
+  width: min(1380px, 100%);
+  margin: 0 auto;
+}
+.gym-challenge-header {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+/* Hero */
+.campaign-hero {
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(244, 63, 94, 0.12)),
+    rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: grid;
+  gap: 24px;
+  grid-template-columns: 1fr auto;
+  padding: 24px;
+}
+@media (max-width: 720px) { .campaign-hero { grid-template-columns: 1fr; text-align: center; } }
+.campaign-hero h1 {
+  background: linear-gradient(120deg, #fef3c7, #fbbf24, #f43f5e);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  margin: 4px 0;
+}
+.campaign-hero p { color: var(--ink-secondary); margin: 0 0 8px; }
+.campaign-progress-bar { background: rgba(2, 6, 12, 0.7); border-radius: 999px; height: 10px; margin-top: 12px; overflow: hidden; }
+.campaign-progress-fill { background: linear-gradient(90deg, #fbbf24, #f43f5e); height: 100%; transition: width 0.6s ease; }
+.campaign-progress-text { color: #fde68a; font-size: 0.85rem; font-weight: 700; margin-top: 6px !important; }
+.campaign-hero-recommended {
+  align-items: center;
+  background: rgba(2, 6, 12, 0.55);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  width: 200px;
+}
+.campaign-hero-recommended strong { color: #fbbf24; font-size: 1.1rem; }
+.campaign-hero-recommended span { color: var(--ink-secondary); font-size: 0.78rem; text-align: center; }
+.campaign-hero-portrait {
+  align-items: center;
+  border-radius: 50%;
+  display: flex;
+  font-size: 3rem;
+  height: 80px;
+  justify-content: center;
+  width: 80px;
+}
+
+/* Badge case */
+.badge-case-panel { display: flex; flex-direction: column; gap: 12px; }
+.badge-case {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+.badge-slot {
+  align-items: center;
+  background: rgba(2, 6, 12, 0.55);
+  border: 1px solid rgba(192, 132, 252, 0.25);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+}
+.badge-slot-earned {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.2), rgba(192, 132, 252, 0.15));
+  border-color: rgba(251, 191, 36, 0.6);
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.25);
+}
+.badge-slot-locked { opacity: 0.45; filter: grayscale(0.5); }
+.badge-emoji { font-size: 2rem; line-height: 1; }
+.badge-name { color: var(--ink-secondary); font-size: 0.78rem; font-weight: 700; text-align: center; }
+.badge-slot-earned .badge-name { color: #fde68a; }
+
+/* Opponent grid */
+.opponent-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  margin-top: 12px;
+}
+.opponent-grid-champion { grid-template-columns: minmax(0, 320px); justify-content: center; }
+.opponent-card {
+  align-items: stretch;
+  background: rgba(2, 6, 12, 0.55);
+  border: 2px solid rgba(192, 132, 252, 0.25);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.opponent-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5); }
+.opponent-card-locked { opacity: 0.4; filter: grayscale(0.6); }
+.opponent-card-locked:hover { transform: none; box-shadow: none; }
+.opponent-card-defeated { background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(2, 6, 12, 0.6)); }
+.opponent-card-current { animation: opponent-current-glow 2.5s ease-in-out infinite; }
+.opponent-card-champion {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(244, 63, 94, 0.12));
+  border-color: #fbbf24;
+  box-shadow: 0 0 30px rgba(251, 191, 36, 0.25);
+}
+@keyframes opponent-current-glow {
+  0%, 100% { box-shadow: 0 0 12px rgba(34, 211, 238, 0.3); }
+  50% { box-shadow: 0 0 28px rgba(34, 211, 238, 0.6); }
+}
+.opponent-portrait {
+  align-items: center;
+  align-self: center;
+  border-radius: 50%;
+  display: flex;
+  font-size: 3rem;
+  height: 96px;
+  justify-content: center;
+  width: 96px;
+}
+.opponent-body { display: flex; flex-direction: column; gap: 4px; }
+.opponent-name-row { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.opponent-name-row strong { color: var(--ink-primary); font-size: 1.1rem; }
+.opponent-check { color: #86efac; font-size: 1.4rem; }
+.opponent-current-pill { background: linear-gradient(135deg, #22d3ee, #c084fc); border-radius: 999px; color: #0f172a; font-size: 0.65rem; font-weight: 900; letter-spacing: 0.06em; padding: 2px 8px; }
+.opponent-title { color: var(--ink-secondary); font-size: 0.78rem; }
+.opponent-meta { display: flex; gap: 10px; justify-content: space-between; }
+.opponent-type { font-size: 0.85rem; font-weight: 800; }
+.opponent-difficulty { color: #fbbf24; font-size: 0.78rem; letter-spacing: 0.08em; }
+.opponent-reward { color: #fde68a; font-size: 0.78rem; font-style: italic; }
+.opponent-battle-btn { background: linear-gradient(135deg, #c084fc, #f43f5e); border: 0; margin-top: 6px; }
+.opponent-battle-btn-rematch { background: linear-gradient(135deg, #22d3ee, #c084fc); }
+.opponent-battle-btn:disabled { background: rgba(75, 85, 99, 0.5); cursor: not-allowed; opacity: 0.7; }
+
+/* Elite Four + Champion panels */
+.elite-four-panel { border-left: 3px solid #c084fc; }
+.elite-four-panel-locked { opacity: 0.65; }
+.champion-panel { border-left: 3px solid #fbbf24; box-shadow: 0 0 32px rgba(251, 191, 36, 0.12); }
+.champion-panel-unlocked { box-shadow: 0 0 50px rgba(251, 191, 36, 0.3); }
+.champion-panel-locked { opacity: 0.6; }
+
+/* Rewards panel */
+.campaign-rewards-panel { display: flex; flex-direction: column; gap: 10px; }
+.campaign-rewards-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.campaign-reward { background: rgba(2, 6, 12, 0.55); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 10px; display: flex; flex-direction: column; gap: 4px; padding: 12px; }
+.campaign-reward strong { background: linear-gradient(120deg, #fef3c7, #fbbf24); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; font-size: 1.4rem; }
+.campaign-reward span { color: var(--ink-secondary); font-size: 0.78rem; }
+
+/* Intro dialogue under match viewer-switch */
+.campaign-intro-line { color: var(--ink-secondary); font-style: italic; font-size: 0.85rem; margin-left: auto; max-width: 50%; }
+
+/* Victory reward modal */
+.victory-reward-modal { background: linear-gradient(180deg, rgba(251, 191, 36, 0.2), rgba(15, 23, 42, 0.95)); border-color: #fbbf24; box-shadow: 0 20px 60px rgba(251, 191, 36, 0.3); }
+.victory-badge-showcase { align-items: center; display: flex; flex-direction: column; gap: 6px; padding: 14px 0; }
+.victory-badge-emoji { animation: victory-pulse 1.6s ease-in-out infinite; font-size: 4rem; line-height: 1; }
+@keyframes victory-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opponent-card-current, .victory-badge-emoji { animation: none !important; }
+  .campaign-progress-fill { transition: none !important; }
+}

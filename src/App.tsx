@@ -87,6 +87,23 @@ import {
   type ProfileTabId,
 } from './profile/components';
 import {
+  applyWin,
+  loadCampaignProgress,
+  recommendedNext,
+  saveCampaignProgress,
+  type CampaignOpponent,
+  type CampaignProgress,
+} from './campaign/data';
+import {
+  BadgeCase,
+  CampaignHero,
+  CampaignRewardsPanel,
+  ChampionPanel,
+  EliteFourPanel,
+  GymRow,
+  VictoryRewardModal,
+} from './campaign/components';
+import {
   getTelegramUser,
   initTelegramWebApp,
   isTelegramMiniApp,
@@ -721,8 +738,8 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
             <span>Create an online match or accept an open challenge.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('bot')}>
-            <strong>Play vs Bot</strong>
-            <span>Practice offline against a CPU opponent — no waiting for a player.</span>
+            <strong>⚔ Gym Challenge</strong>
+            <span>Single-player campaign — battle 8 Gym Leaders, the Elite Four, and the Champion.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('profile')}>
             <strong>Profile + Deckbuilder</strong>
@@ -1976,107 +1993,123 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
   );
 }
 
-function pickBotDeckLabel(playerDeckLabel: string): { cardIds: string[]; label: string } {
-  // Bot defaults to a different starter than the player so the matchup has
-  // some flavour. Falls back to Fire vs Grass when there's no obvious pick.
-  const playerEnergy = STARTER_ENERGY_TYPES.find((type) => playerDeckLabel.startsWith(type));
-  const candidates = STARTER_ENERGY_TYPES.filter((type) => type !== playerEnergy);
-  const choice = candidates[Math.floor(Math.random() * candidates.length)] ?? 'Fire';
-  return { cardIds: STARTER_DECKS[choice], label: `${choice} CPU` };
-}
-
-function BotMatchPage({ profile, onExit }: { profile: ProfileState; onExit: () => void }) {
+function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: () => void }) {
   const deckOptions = useMemo(() => deckOptionsForProfile(profile), [profile]);
   const [deckId, setDeckId] = useState(() => firstValidDeckId(deckOptions));
+  const walletAddress = profile.wallet?.address;
+  const [progress, setProgress] = useState<CampaignProgress>(() => loadCampaignProgress(walletAddress));
   const [activeMatch, setActiveMatch] = useState<{
     seed: string;
     playerDeck: DeckPayload;
-    botDeck: DeckPayload;
+    opponent: CampaignOpponent;
   } | null>(null);
+  const [victoryAward, setVictoryAward] = useState<CampaignOpponent | null>(null);
 
   const selectedDeck = deckOptionById(deckOptions, deckId);
+  const recommended = useMemo(() => recommendedNext(progress), [progress]);
 
-  const BotClient = useMemo(() => {
+  // Re-load progress whenever the active wallet changes (e.g. after sign-in).
+  useEffect(() => {
+    setProgress(loadCampaignProgress(walletAddress));
+  }, [walletAddress]);
+
+  function handleBattle(opponent: CampaignOpponent) {
+    if (!selectedDeck || selectedDeck.issues.length > 0) return;
+    const botCardIds = STARTER_DECKS[opponent.deckType];
+    setActiveMatch({
+      seed: `gym-${opponent.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      playerDeck: { cardIds: selectedDeck.cardIds, label: selectedDeck.label },
+      opponent,
+    });
+  }
+
+  function recordCampaignMatchComplete(opponent: CampaignOpponent, payload: { winner?: PlayerID }) {
+    if (payload.winner !== '0') return; // player is always seat 0 in CPU matches
+    const wasAlreadyDefeated = progress.defeatedOpponents.includes(opponent.id);
+    const next = applyWin(progress, opponent);
+    if (next === progress) return;
+    setProgress(next);
+    saveCampaignProgress(walletAddress, next);
+    if (!wasAlreadyDefeated) setVictoryAward(opponent);
+  }
+
+  const CampaignBattleBoard = useMemo(() => {
     if (!activeMatch) return null;
-    // boardgame.io's Client doesn't take setupData as a prop — for local
-    // single-player matches we bake the deck IDs into the game's setup by
-    // wrapping it, then hand the customised game to the Client factory.
-    const setupData: MatchSetupData = {
-      matchName: `${profile.name} vs CPU`,
-      matchType: 'Casual',
-      wagerCurrency: 'SOL',
-      seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': activeMatch.botDeck.cardIds },
-      deckLabels: { '0': activeMatch.playerDeck.label, '1': activeMatch.botDeck.label },
-    };
+    const opponent = activeMatch.opponent;
     const baseSetup = PokemonTCG.setup;
     if (!baseSetup) return null;
+    const setupData: MatchSetupData = {
+      matchName: `${profile.name} vs ${opponent.name}`,
+      matchType: 'Casual',
+      wagerCurrency: 'SOL',
+      seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': STARTER_DECKS[opponent.deckType] },
+      deckLabels: { '0': activeMatch.playerDeck.label, '1': `${opponent.name} (${opponent.themeLabel})` },
+    };
     const customisedGame = {
       ...PokemonTCG,
       setup: (ctx: Parameters<typeof baseSetup>[0]) => baseSetup(ctx, setupData),
     };
+    const Board = (props: BoardProps<PokemonTCGState>) => (
+      <PokemonBoard
+        {...props}
+        playerName={profile.name}
+        playerWallet={walletAddress}
+        selectedDeck={activeMatch.playerDeck}
+        onMatchComplete={({ winner }) => recordCampaignMatchComplete(opponent, { winner })}
+      />
+    );
     return Client({
       game: customisedGame,
-      board: PokemonBoard,
+      board: Board,
       numPlayers: 2,
       multiplayer: Local({ bots: { '1': RandomBot } }),
-      loading: () => <div className="match-loading">Dealing out the CPU match...</div>,
+      loading: () => <div className="match-loading">Loading {opponent.name}'s gym...</div>,
       debug: false,
     });
-  }, [activeMatch, profile.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMatch, profile.name, walletAddress]);
 
-  function startBotMatch() {
-    if (!selectedDeck || selectedDeck.issues.length > 0) return;
-    const botDeck = pickBotDeckLabel(selectedDeck.label);
-    setActiveMatch({
-      seed: `bot-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      playerDeck: { cardIds: selectedDeck.cardIds, label: selectedDeck.label },
-      botDeck: { cardIds: botDeck.cardIds, label: botDeck.label },
-    });
-  }
-
-  if (!activeMatch || !BotClient) {
+  if (activeMatch && CampaignBattleBoard) {
     return (
-      <main className="content-page bot-setup-page">
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">CPU practice</p>
-              <h1>Play vs Bot</h1>
-              <p className="section-subtitle">A local match — your deck against a CPU opponent. No payments, no network round-trip, no rating changes.</p>
-            </div>
-            <button onClick={onExit}>← Home</button>
-          </div>
-          <div className="bot-setup-controls">
-            <DeckSelect title="Your deck" value={deckId} options={deckOptions} onChange={setDeckId} />
-            <button
-              className="primary-cta"
-              disabled={!selectedDeck || selectedDeck.issues.length > 0}
-              onClick={startBotMatch}
-            >
-              Start CPU match
-            </button>
-          </div>
-          {selectedDeck?.issues.length ? (
-            <ul className="issues">
-              {selectedDeck.issues.map((issue) => <li key={issue}>{issue}</li>)}
-            </ul>
-          ) : null}
-        </section>
-      </main>
+      <div className="match-screen">
+        <div className="viewer-switch">
+          <button onClick={() => setActiveMatch(null)}>← Exit gym</button>
+          <span className="viewer-match-title">{profile.name} vs {activeMatch.opponent.name}</span>
+          <span className="match-type-badge match-type-badge-Casual">{activeMatch.opponent.tier === 'champion' ? 'CHAMPION' : activeMatch.opponent.tier === 'elite-four' ? 'ELITE FOUR' : 'GYM'}</span>
+          <span className="campaign-intro-line">"{activeMatch.opponent.introDialogue}"</span>
+        </div>
+        <CampaignBattleBoard matchID={activeMatch.seed} playerID="0" />
+        {victoryAward && (
+          <VictoryRewardModal
+            opponent={victoryAward}
+            onDismiss={() => { setVictoryAward(null); setActiveMatch(null); }}
+          />
+        )}
+      </div>
     );
   }
 
   return (
-    <div className="match-screen">
-      <div className="viewer-switch">
-        <button onClick={onExit}>← Exit match</button>
-        <span className="viewer-match-title">{profile.name} vs CPU</span>
-        <span className="match-type-badge match-type-badge-Casual">CPU</span>
-        <span>You play {activeMatch.playerDeck.label}; CPU plays {activeMatch.botDeck.label}</span>
-        <button onClick={() => setActiveMatch(null)}>Choose a different deck</button>
+    <main className="content-page gym-challenge-page">
+      <div className="gym-challenge-header">
+        <button onClick={onExit}>← Home</button>
+        <DeckSelect title="Your deck" value={deckId} options={deckOptions} onChange={setDeckId} />
       </div>
-      <BotClient matchID={activeMatch.seed} playerID="0" />
-    </div>
+      {selectedDeck?.issues.length ? (
+        <ul className="issues">{selectedDeck.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+      ) : null}
+
+      <CampaignHero progress={progress} recommended={recommended} />
+      <BadgeCase progress={progress} />
+      <CampaignRewardsPanel progress={progress} />
+      <GymRow progress={progress} onBattle={handleBattle} />
+      <EliteFourPanel progress={progress} onBattle={handleBattle} />
+      <ChampionPanel progress={progress} onBattle={handleBattle} />
+
+      {victoryAward && (
+        <VictoryRewardModal opponent={victoryAward} onDismiss={() => setVictoryAward(null)} />
+      )}
+    </main>
   );
 }
 
@@ -2486,7 +2519,7 @@ export default function App() {
     return (
       <>
         {music}
-        <BotMatchPage profile={profile} onExit={() => setPage('home')} />
+        <GymChallengePage profile={profile} onExit={() => setPage('home')} />
       </>
     );
   }
