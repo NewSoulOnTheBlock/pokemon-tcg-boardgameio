@@ -64,6 +64,7 @@ import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'js
 type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
+const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
 
 interface MatchConfig {
   matchID: string;
@@ -705,6 +706,15 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
           >
             <strong>News ↗</strong>
             <span>Patch notes and announcements on x.com/pokemasterstcg.</span>
+          </a>
+          <a
+            className="home-menu-button home-telegram-button"
+            href={TELEGRAM_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <strong>Telegram ↗</strong>
+            <span>Play inside Telegram via @PokemastersTCGBot — one-tap sign-in, no wallet required for Casual + CPU matches.</span>
           </a>
         </div>
       </section>

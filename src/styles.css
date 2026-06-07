@@ -431,6 +431,35 @@ button:disabled {
   opacity: 0.78;
 }
 
+.home-telegram-button {
+  align-items: flex-start;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  color: var(--ink-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  text-decoration: none;
+}
+
+.home-telegram-button:hover {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: #60a5fa;
+  color: var(--ink-primary);
+}
+
+.home-telegram-button strong {
+  color: #60a5fa;
+}
+
+.home-telegram-button span {
+  color: inherit;
+  font-size: 0.82rem;
+  font-weight: 500;
+  opacity: 0.78;
+}
+
 .bot-setup-page {
   max-width: 720px;
 }
