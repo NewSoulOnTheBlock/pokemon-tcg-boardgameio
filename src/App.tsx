@@ -20,7 +20,7 @@ import {
 } from './api/profiles';
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
-import { MenuMusicPlayer } from './components/MenuMusicPlayer';
+import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
 import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
@@ -1930,11 +1930,14 @@ export default function App() {
   }
 
   const isInMatch = (page === 'match' && Boolean(matchConfig)) || page === 'bot';
+  const musicSrc = isInMatch ? '/battle-music.mp3' : '/menu-music.mp3';
+  const musicLabel = isInMatch ? 'battle music' : 'menu music';
+  const music = <BackgroundMusicPlayer src={musicSrc} label={musicLabel} paused={false} />;
 
   if (page === 'signin' || !profile.name || !profile.wallet || isReservedName(profile.name)) {
     return (
       <>
-        <MenuMusicPlayer paused={isInMatch} />
+        {music}
         <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />
       </>
     );
@@ -1943,7 +1946,7 @@ export default function App() {
   if (page === 'match' && matchConfig) {
     return (
       <>
-        <MenuMusicPlayer paused={isInMatch} />
+        {music}
         <MatchClient
           config={matchConfig}
           onExit={() => { setMatchConfig(null); setPage('home'); }}
@@ -1957,7 +1960,7 @@ export default function App() {
   if (page === 'bot') {
     return (
       <>
-        <MenuMusicPlayer paused={isInMatch} />
+        {music}
         <BotMatchPage profile={profile} onExit={() => setPage('home')} />
       </>
     );
@@ -1965,7 +1968,7 @@ export default function App() {
 
   return (
     <>
-      <MenuMusicPlayer paused={isInMatch} />
+      {music}
       <Shell page={page} profile={profile} onNavigate={setPage} onLogout={signOut}>
         {page === 'profile' && <ProfilePage profile={profile} onProfileChange={updateProfile} />}
         {page === 'matchmaking' && (
