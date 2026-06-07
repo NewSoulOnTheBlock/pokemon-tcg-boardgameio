@@ -140,13 +140,15 @@ describe('PokemonTCG', () => {
     expect(G.players['1'].deck).toHaveLength(0);
   });
 
-  it('loads the curated card library (cards used by starter + campaign decks)', () => {
-    // The manifest is intentionally trimmed at build time to ~150-200 cards
-    // — only those referenced by starter decks, campaign opponent decks,
-    // CARD_ID_ALIASES, or these tests. Keep this lower bound generous
-    // enough that adding new starter/campaign cards doesn't break it.
-    expect(Object.keys(CARD_LIBRARY).length).toBeGreaterThan(150);
-    expect(Object.keys(CARD_LIBRARY).length).toBeLessThan(1000);
+  it('loads the curated card library (modern sets + curated classics)', () => {
+    // The manifest carries every card from sets released in the last 4
+    // years (the "modern" pool the free pack roller draws from) PLUS
+    // every card explicitly referenced by starter decks, campaign decks,
+    // CARD_ID_ALIASES, or these tests. Range is intentionally loose so
+    // adding a new set in the date window or a new starter card doesn't
+    // break this test.
+    expect(Object.keys(CARD_LIBRARY).length).toBeGreaterThan(1000);
+    expect(Object.keys(CARD_LIBRARY).length).toBeLessThan(20000);
     expect(cloneCard('sv1-1').name).toBe('Pineco');
     expect(cloneCard('sprigatito').sourceId).toBe('sv1-13');
   });

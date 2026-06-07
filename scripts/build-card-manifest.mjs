@@ -1,15 +1,17 @@
 // Build a slim, single-file card manifest from the raw Pokemon TCG JSON.
 //
 // The raw dataset under src/data/pokemon-tcg-data/cards/en is ~25 MB across 168
-// files and balloons the client bundle (~18 MB JS). The bundle only ever reads
-// a handful of fields per card and image URLs follow a predictable pattern, so
-// this script strips everything else and emits ONE pre-minified manifest at
+// files and balloons the client bundle. The bundle only ever reads a handful
+// of fields per card and image URLs follow a predictable pattern, so this
+// script strips everything else and emits ONE pre-minified manifest at
 // src/data/card-manifest.generated.json that cards.ts imports directly.
 //
-// **Card-set scope:** We now ship only the cards actually used by playable
-// decks — starter decks + campaign opponent decks — rather than the full
-// ~20k Pokemon TCG catalogue. The allow-list is derived at build time by
-// scanning src/game/cards.ts + src/campaign/decks.ts for card-ID literals.
+// **Card-set scope:** We ship every card from sets released in the last
+// 4 years (the "modern" pool that the daily free pack rolls from), PLUS
+// every card that's explicitly referenced from starter decks, campaign
+// decks, the CARD_ID_ALIASES table, or the unit tests — those cover
+// classic Base / Jungle / Fossil cards that the curated starter decks
+// rely on even though they're outside the date window.
 //
 // Run via the `prebuild` npm script. Re-running is idempotent.
 
@@ -20,17 +22,28 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
 const CARDS_DIR = join(REPO_ROOT, 'src', 'data', 'pokemon-tcg-data', 'cards', 'en');
+const SETS_FILE = join(REPO_ROOT, 'src', 'data', 'pokemon-tcg-data', 'sets', 'en.json');
 const OUTPUT = join(REPO_ROOT, 'src', 'data', 'card-manifest.generated.json');
 
+// Date-window cutoff. Cards from sets released on or after this date are
+// included even if no curated deck references them — they form the
+// "modern" pool that daily free packs and the deckbuilder pull from.
+// Sets older than this only appear if their cards are explicitly named
+// in a starter or campaign deck.
+const MODERN_WINDOW_YEARS = 4;
+const MODERN_CUTOFF_DATE = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - MODERN_WINDOW_YEARS);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}/${m}/${day}`;
+})();
+
 // Files we scan for card-ID literals. Anything quoted that matches the
-// `setid-cardnumber` pattern (alphanumerics + hyphens) inside these files
-// is added to the allow-list. Add new files here if a future feature
-// pulls in cards from outside of starter/campaign decks.
-//
-// Test files are scanned too so the unit tests keep working with the
-// trimmed manifest — they sometimes pin assertions to specific card
-// effects that don't appear in playable decks. Including them adds
-// only a handful of cards to the manifest.
+// `setid-cardnumber` pattern is added to the explicit-allow list — those
+// cards land in the manifest even if their parent set is outside the
+// modern date window.
 const SCAN_SOURCES = [
   join(REPO_ROOT, 'src', 'game', 'cards.ts'),
   join(REPO_ROOT, 'src', 'campaign', 'decks.ts'),
@@ -45,19 +58,15 @@ const SCAN_SOURCES = [
 ];
 
 // Pokemon TCG card IDs look like `base1-46`, `sv4pt5-87`, `bw11-RC10`, etc.
-// A set prefix of 2+ alnum chars, a hyphen, then a card number that may
-// itself include letters (RC10, TG12, GG56, SWSH123, etc.).
 const CARD_ID_RE = /['"`]([a-z][a-z0-9]*\d*(?:pt\d+)?-[A-Za-z0-9]+)['"`]/g;
 
-function buildAllowList() {
+function buildExplicitAllowList() {
   const allow = new Set();
   for (const file of SCAN_SOURCES) {
     const text = readFileSync(file, 'utf8');
     let match;
     while ((match = CARD_ID_RE.exec(text)) !== null) {
       const candidate = match[1];
-      // Guard against false positives. Real card IDs have a known set prefix.
-      // The list of allowed prefixes is conservative — extend as needed.
       if (looksLikeRealCardId(candidate)) {
         allow.add(candidate);
       }
@@ -66,18 +75,36 @@ function buildAllowList() {
   return allow;
 }
 
+function buildModernSetAllowList() {
+  const setsRaw = JSON.parse(readFileSync(SETS_FILE, 'utf8'));
+  if (!Array.isArray(setsRaw)) {
+    throw new Error(`Expected ${SETS_FILE} to be a JSON array.`);
+  }
+  const modern = new Set();
+  for (const set of setsRaw) {
+    if (!set?.id) continue;
+    const releaseDate = set.releaseDate ?? '0000/00/00';
+    if (releaseDate >= MODERN_CUTOFF_DATE) {
+      modern.add(set.id);
+    }
+  }
+  return modern;
+}
+
 function looksLikeRealCardId(id) {
-  // Set prefix must contain at least one letter, and may include a `pt`
-  // version suffix (e.g. sv4pt5). Card number must contain at least one
-  // digit (RC10, 87, TG12).
   const [setPrefix, cardNum] = id.split('-', 2);
   if (!setPrefix || !cardNum) return false;
   if (setPrefix.length < 2 || setPrefix.length > 12) return false;
   if (!/[a-z]/.test(setPrefix)) return false;
   if (!/\d/.test(cardNum)) return false;
-  // Reject obvious non-card matches (`some-other-thing`)
   if (id.includes('--')) return false;
   return true;
+}
+
+function setIdOf(card) {
+  if (!card?.id) return '';
+  const dash = card.id.indexOf('-');
+  return dash > 0 ? card.id.slice(0, dash) : card.id;
 }
 
 const IMAGE_BASE = 'https://images.pokemontcg.io';
@@ -176,46 +203,59 @@ function main() {
     throw new Error(`No card JSON files found in ${CARDS_DIR}`);
   }
 
-  const allowList = buildAllowList();
-  if (allowList.size === 0) {
+  const explicitAllow = buildExplicitAllowList();
+  const modernSets = buildModernSetAllowList();
+  if (explicitAllow.size === 0) {
     throw new Error('Card-ID allow-list is empty — check SCAN_SOURCES paths and the CARD_ID_RE regex.');
+  }
+  if (modernSets.size === 0) {
+    throw new Error('Modern-set allow-list is empty — check SETS_FILE path and MODERN_CUTOFF_DATE.');
   }
 
   const cards = [];
   let droppedFields = 0;
-  let skippedNotInAllowList = 0;
+  let skippedOldAndUnreferenced = 0;
+  let fromModernSets = 0;
+  let fromExplicitAllow = 0;
   for (const fileName of files) {
     const raw = JSON.parse(readFileSync(join(CARDS_DIR, fileName), 'utf8'));
     if (!Array.isArray(raw)) continue;
     for (const card of raw) {
-      if (!card?.id || !allowList.has(card.id)) {
-        skippedNotInAllowList += 1;
+      if (!card?.id) continue;
+      const inExplicit = explicitAllow.has(card.id);
+      const inModernSet = modernSets.has(setIdOf(card));
+      if (!inExplicit && !inModernSet) {
+        skippedOldAndUnreferenced += 1;
         continue;
       }
       const slim = slimCard(card);
       if (slim) {
         cards.push(slim);
         droppedFields += Object.keys(card).length - Object.keys(slim).length;
+        if (inExplicit) fromExplicitAllow += 1;
+        if (inModernSet && !inExplicit) fromModernSets += 1;
       }
     }
   }
 
-  // Sanity check: every entry the allow-list expects must have been found
-  // in the underlying JSON dataset. Anything missing is a typo in
-  // cards.ts / decks.ts or a card that simply doesn't exist in the set
-  // dump we ship. Fail loudly so we can fix it instead of silently
-  // shipping a deck that references nonexistent cards.
+  // Sanity check: every entry the explicit allow-list expects must have
+  // been found. Modern-set cards are best-effort — if a set in the date
+  // window is missing from the JSON dump for some reason, we silently
+  // skip it. Explicit references are different: they're hand-coded into
+  // decks / tests and a missing match is a real bug.
   const foundIds = new Set(cards.map((card) => card.id));
-  const missing = [...allowList].filter((id) => !foundIds.has(id)).sort();
+  const missing = [...explicitAllow].filter((id) => !foundIds.has(id)).sort();
 
   mkdirSync(dirname(OUTPUT), { recursive: true });
   writeFileSync(OUTPUT, JSON.stringify(cards));
 
   const sizeKb = (JSON.stringify(cards).length / 1024).toFixed(1);
   process.stdout.write(
-    `[card-manifest] wrote ${cards.length} cards (allow-list: ${allowList.size}, ` +
-      `skipped ${skippedNotInAllowList} not in starter+campaign decks) to ${OUTPUT} ` +
-      `(${sizeKb} KB, ~${droppedFields} fields trimmed)\n`,
+    `[card-manifest] wrote ${cards.length} cards to ${OUTPUT} (${sizeKb} KB, ` +
+      `~${droppedFields} fields trimmed)\n` +
+      `  modern-set window: ${modernSets.size} sets since ${MODERN_CUTOFF_DATE} (${fromModernSets} cards)\n` +
+      `  explicit-allow IDs: ${explicitAllow.size} (${fromExplicitAllow} cards)\n` +
+      `  skipped (old + unreferenced): ${skippedOldAndUnreferenced}\n`,
   );
 
   if (missing.length > 0) {
