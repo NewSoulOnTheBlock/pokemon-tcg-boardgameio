@@ -463,6 +463,43 @@ server.router.get('/api/phygitals/status', (ctx) => {
   ctx.body = { enabled: phygitals.enabled, baseUrl: phygitals.baseUrl };
 });
 
+/**
+ * Debug endpoint: makes the raw GET /api/vm/available call directly
+ * from the server using global fetch, and returns the full response
+ * status + first 600 chars of the body. Used to diagnose 403s where
+ * the same request works locally but fails from Render.
+ *
+ * Safe to leave in production — does not reveal the API key.
+ */
+server.router.get('/api/phygitals/debug', async (ctx) => {
+  const apiKey = process.env.PHYGITALS_API_KEY?.trim() ?? '';
+  const baseUrl = process.env.PHYGITALS_BASE_URL?.trim() || 'https://api.phygitals.com';
+  const probe = async (label: string, headers: Record<string, string>) => {
+    try {
+      const res = await fetch(`${baseUrl}/api/vm/available`, { headers });
+      const text = await res.text();
+      return {
+        label,
+        status: res.status,
+        contentType: res.headers.get('content-type'),
+        bodyPreview: text.slice(0, 600),
+      };
+    } catch (err) {
+      return { label, error: (err as Error).message };
+    }
+  };
+  ctx.body = {
+    apiKeyPresent: apiKey.length > 0,
+    apiKeyPrefix: apiKey.slice(0, 8),
+    apiKeyLength: apiKey.length,
+    baseUrl,
+    probes: await Promise.all([
+      probe('no-auth', { Accept: 'application/json' }),
+      probe('with-key', apiKey ? { Accept: 'application/json', 'X-API-Key': apiKey } : { Accept: 'application/json' }),
+    ]),
+  };
+});
+
 server.router.get('/api/phygitals/packs', async (ctx) => {
   try {
     ctx.body = { packs: await phygitals.listPacks() };
