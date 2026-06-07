@@ -94,6 +94,7 @@ import {
   type CampaignOpponent,
   type CampaignProgress,
 } from './campaign/data';
+import { deckForOpponent } from './campaign/decks';
 import {
   BadgeCase,
   CampaignHero,
@@ -2067,7 +2068,7 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
 
   function handleBattle(opponent: CampaignOpponent) {
     if (!selectedDeck || selectedDeck.issues.length > 0) return;
-    const botCardIds = STARTER_DECKS[opponent.deckType];
+    const botCardIds = deckForOpponent(opponent.id, opponent.deckType);
     setActiveMatch({
       seed: `gym-${opponent.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       playerDeck: { cardIds: selectedDeck.cardIds, label: selectedDeck.label },
@@ -2100,7 +2101,7 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
       matchName: `${profile.name} vs ${opponent.name}`,
       matchType: 'Casual',
       wagerCurrency: 'SOL',
-      seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': STARTER_DECKS[opponent.deckType] },
+      seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': deckForOpponent(opponent.id, opponent.deckType) },
       deckLabels: { '0': activeMatch.playerDeck.label, '1': `${opponent.name} (${opponent.themeLabel})` },
     };
     const customisedGame = {
