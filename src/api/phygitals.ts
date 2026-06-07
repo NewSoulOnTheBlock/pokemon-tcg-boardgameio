@@ -201,7 +201,7 @@ export async function preparePhygitalsBuy(args: {
   const currency = args.currency ?? 'usdc';
   const [{
     PublicKey, Connection, TransactionMessage, VersionedTransaction,
-    ComputeBudgetProgram, AddressLookupTableAccount,
+    ComputeBudgetProgram,
   }, Token] = await Promise.all([
     import('@solana/web3.js'),
     import('@solana/spl-token'),
@@ -211,46 +211,12 @@ export async function preparePhygitalsBuy(args: {
   const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
   const paymentMint = currency === 'usdc' ? USDC_MINT : USDT_MINT;
 
-  // Hardcoded ALT mirrors the reference script exactly. DO NOT swap
-  // this for a live RPC fetch — Phygitals' backend uses this exact
-  // snapshot of ALT state for fingerprint computation.
+  // Phygitals' partner ALT — fetched live from RPC each buy (see below).
+  // The hardcoded snapshot mirrored from the reference v6 script went
+  // stale; using a live fetch guarantees our compiled v0 message uses
+  // the same ALT state Phygitals' backend uses to reconstruct + hash
+  // the canonical tx.
   const LOOKUP_TABLE_KEY = new PublicKey('H5yQkXsVg9X21MvngdhCvzavTR9FC1R22Rm5sx8BERyJ');
-  const LOOKUP_TABLE_ADDRESSES = [
-    '62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS',
-    'Fufk5zDZao3YiEa8ZCaU319U8BuX84gEbHCsrc2ye9uq',
-    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
-    'AyW32YPRoy7YvsfJmotMiEv3qMQyqvTJLgpfdiWG8vyd',
-    '8d56BJgENF7v9A6YJnMinXqrQb7KKLxMhe3WmUf1Pa4N',
-    'hAsrSYBkzdaz4r3EJ6pwxNL1YbGbM5c1jNuhLV6Uzqi',
-    'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
-    'cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK',
-    '11111111111111111111111111111111',
-    'GCKQVnqNiPSwYNNWYR2BbRXQPhKdNrQtCCaQR2cEyznd',
-    '3kVjWDszwTz6aFzBVPsfGschFFCKDgG4tLNkH8QgLeUN',
-    'BMXiYRt6XMHVMG39My9c1ptPiocZzbGJ5hbVkD2W2Bid',
-    'EDkeaWtLoh2AHbkBVvykw4b3Z5i9AJ3aP89hyYjrqtGK',
-    'JDh7eiWiUWtiWn623iybHqjQ6AQ6c2Czz8m6ZxwSCkta',
-    'BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY',
-    'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV',
-    '8c4LJmTnDi3pAsqXELwpYJKjxjHCnQ1mzWqfLLkNe5CD',
-    'DQPERZ9e86pNJ4mhUnCEP8V75yxZofsipoVrRWT5Wdxd',
-    'CCryptWBYktukHDQ2vHGtVcmtjXxYzvw8XNVY64YN2Yf',
-    'BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM',
-    'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
-    'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',
-    'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',
-    'eBJLFYPxJmMGKuFwpDWkzxZeUrad92kZRC5BJLpzyT9',
-  ].map((a) => new PublicKey(a));
-  const HARDCODED_LOOKUP_TABLE = new AddressLookupTableAccount({
-    key: LOOKUP_TABLE_KEY,
-    state: {
-      deactivationSlot: BigInt('18446744073709551615'),
-      lastExtendedSlot: 382933344,
-      lastExtendedSlotStartIndex: 16,
-      authority: new PublicKey('62Q9eeDY3eM8A5CnprBGYMPShdBjAzdpBdr71QHsS8dS'),
-      addresses: LOOKUP_TABLE_ADDRESSES,
-    },
-  });
 
   const pubkeys = await fetchPhygitalsSignerPubkeys();
   const packs = await fetchPhygitalsPacks();
@@ -282,6 +248,17 @@ export async function preparePhygitalsBuy(args: {
       : pubkeys.vmBuyback;
 
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+
+  // Item #4 in the audit: ALT changed. Fetch the LIVE ALT from RPC
+  // every buy. The hardcoded snapshot at the top of this file went
+  // stale as Phygitals extended their on-chain ALT (more addresses
+  // added), causing our compiled v0 message to differ from what
+  // Phygitals' backend reconstructs. Fall back to no-ALT compile if
+  // the RPC lookup fails for any reason.
+  const liveLookupTable = await connection
+    .getAddressLookupTable(LOOKUP_TABLE_KEY)
+    .then((r) => r.value)
+    .catch(() => null);
 
   // RPC token-account lookup (reference uses this for BOTH sides).
   async function getTokenAccountForMint(owner: string, mint: InstanceType<typeof PublicKey>): Promise<InstanceType<typeof PublicKey>> {
@@ -331,28 +308,45 @@ export async function preparePhygitalsBuy(args: {
     }),
   ]);
 
-  const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
-    microLamports: 100 + Math.floor(Math.random() * 300),
+  // Item #6 in the audit: priority fee + compute-unit limit must be
+  // included BEFORE fingerprinting/signing. Both ixs at the very front
+  // of the instruction list so they're locked into the message before
+  // any other byte gets serialized.
+  const setComputeUnitLimit = ComputeBudgetProgram.setComputeUnitLimit({
+    units: 400_000,
+  });
+  const setComputeUnitPrice = ComputeBudgetProgram.setComputeUnitPrice({
+    // Fixed value, NOT random — random microLamports means consecutive
+    // fingerprints differ on every attempt, which would mask whether
+    // we're actually fixing the underlying mismatch.
+    microLamports: 200,
   });
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
   type Ix = ReturnType<typeof Token.createTransferInstruction>;
   const allIxs: Ix[] = [
-    addPriorityFee as unknown as Ix,
+    setComputeUnitLimit as unknown as Ix,
+    setComputeUnitPrice as unknown as Ix,
     paymentIx as Ix,
     ...((rewardsTransferIxGroups as unknown[]).flat() as Ix[]),
   ];
   const message = new TransactionMessage({
-    // The buyer is the natural fee payer here — they're the only
-    // signer this browser-flow has. The reference partner script
-    // uses Phygitals' solanaFeePayer because it runs server-side
-    // with both keypairs in scope; we don't have access to Phygitals'
-    // keypair from the browser, so flipping to buyer-as-fee-payer
-    // matches the only signature we can actually produce.
     payerKey: buyer,
     recentBlockhash: blockhash,
     instructions: allIxs,
-  }).compileToV0Message([HARDCODED_LOOKUP_TABLE]);
+  }).compileToV0Message(liveLookupTable ? [liveLookupTable] : []);
   const tx = new VersionedTransaction(message);
+
+  // Debug logger — capture the canonical fingerprint of the freshly
+  // built unsigned tx so we can compare against what the wallet sees
+  // post-sign. Only logs to console; safe to leave in production.
+  try {
+    const unsignedBytes = tx.serialize();
+    const hash = await crypto.subtle.digest('SHA-1', unsignedBytes.buffer.slice(unsignedBytes.byteOffset, unsignedBytes.byteOffset + unsignedBytes.byteLength) as ArrayBuffer);
+    const hex = Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    console.log('[phygitals] unsigned-tx SHA-1:', hex, 'len:', unsignedBytes.length);
+  } catch {
+    /* ignore */
+  }
 
   return {
     packId: pack.id,

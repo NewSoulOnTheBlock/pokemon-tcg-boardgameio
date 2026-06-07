@@ -97,9 +97,20 @@ export async function signVersionedTransaction({
     throw new Error('Connected Solana wallet does not support transaction signing.');
   }
   const signed = (await provider.signTransaction(tx)) as { serialize(): Uint8Array };
-  // VersionedTransaction.serialize() returns Uint8Array; convert to
-  // a plain number[] for JSON transport.
-  return Array.from(signed.serialize());
+  // Debug: log signed-tx fingerprint so we can compare against the
+  // unsigned-tx fingerprint logged at build-time. Mismatch in *byte
+  // length* means the wallet injected an instruction (priority fee,
+  // memo, etc.). Same length but different content means the wallet
+  // re-serialized differently.
+  try {
+    const signedBytes = signed.serialize();
+    const hash = await crypto.subtle.digest('SHA-1', signedBytes.buffer.slice(signedBytes.byteOffset, signedBytes.byteOffset + signedBytes.byteLength) as ArrayBuffer);
+    const hex = Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    console.log('[phygitals] signed-tx SHA-1:', hex, 'len:', signedBytes.length);
+    return Array.from(signedBytes);
+  } catch {
+    return Array.from(signed.serialize());
+  }
 }
 
 /**
