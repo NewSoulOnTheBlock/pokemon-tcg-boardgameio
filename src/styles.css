@@ -2720,3 +2720,42 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Floating menu music toggle (bottom-right). Hidden during matches via React. */
+.menu-music-control {
+  align-items: center;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+  position: fixed;
+  right: 16px;
+  z-index: 60;
+}
+.menu-music-toggle {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(192, 132, 252, 0.4);
+  border-radius: 999px;
+  color: var(--ink-primary);
+  cursor: pointer;
+  display: flex;
+  font-size: 1.1rem;
+  height: 40px;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  width: 40px;
+}
+.menu-music-toggle:hover {
+  border-color: rgba(192, 132, 252, 0.7);
+  transform: scale(1.05);
+}
+.menu-music-volume {
+  accent-color: #c084fc;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(192, 132, 252, 0.3);
+  border-radius: 999px;
+  padding: 0 8px;
+  width: 120px;
+}
+

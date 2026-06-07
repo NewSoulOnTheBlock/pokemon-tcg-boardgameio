@@ -20,6 +20,7 @@ import {
 } from './api/profiles';
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
+import { MenuMusicPlayer } from './components/MenuMusicPlayer';
 import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
@@ -1928,41 +1929,59 @@ export default function App() {
     setPage('signin');
   }
 
+  const isInMatch = (page === 'match' && Boolean(matchConfig)) || page === 'bot';
+
   if (page === 'signin' || !profile.name || !profile.wallet || isReservedName(profile.name)) {
-    return <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />;
+    return (
+      <>
+        <MenuMusicPlayer paused={isInMatch} />
+        <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />
+      </>
+    );
   }
 
   if (page === 'match' && matchConfig) {
     return (
-      <MatchClient
-        config={matchConfig}
-        onExit={() => { setMatchConfig(null); setPage('home'); }}
-        onProfileChange={updateProfile}
-        profile={profile}
-      />
+      <>
+        <MenuMusicPlayer paused={isInMatch} />
+        <MatchClient
+          config={matchConfig}
+          onExit={() => { setMatchConfig(null); setPage('home'); }}
+          onProfileChange={updateProfile}
+          profile={profile}
+        />
+      </>
     );
   }
 
   if (page === 'bot') {
-    return <BotMatchPage profile={profile} onExit={() => setPage('home')} />;
+    return (
+      <>
+        <MenuMusicPlayer paused={isInMatch} />
+        <BotMatchPage profile={profile} onExit={() => setPage('home')} />
+      </>
+    );
   }
 
   return (
-    <Shell page={page} profile={profile} onNavigate={setPage} onLogout={signOut}>
-      {page === 'profile' && <ProfilePage profile={profile} onProfileChange={updateProfile} />}
-      {page === 'matchmaking' && (
-        <MatchmakingPage
-          onProfileChange={updateProfile}
-          profile={profile}
-          onStartMatch={(config) => {
-            setMatchConfig(config);
-            setPage('match');
-          }}
-        />
-      )}
-      {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
-      {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
-      {page === 'home' && <HomePage profile={profile} onNavigate={setPage} />}
-    </Shell>
+    <>
+      <MenuMusicPlayer paused={isInMatch} />
+      <Shell page={page} profile={profile} onNavigate={setPage} onLogout={signOut}>
+        {page === 'profile' && <ProfilePage profile={profile} onProfileChange={updateProfile} />}
+        {page === 'matchmaking' && (
+          <MatchmakingPage
+            onProfileChange={updateProfile}
+            profile={profile}
+            onStartMatch={(config) => {
+              setMatchConfig(config);
+              setPage('match');
+            }}
+          />
+        )}
+        {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
+        {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
+        {page === 'home' && <HomePage profile={profile} onNavigate={setPage} />}
+      </Shell>
+    </>
   );
 }
