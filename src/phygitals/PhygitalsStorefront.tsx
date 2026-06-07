@@ -155,8 +155,16 @@ export function PhygitalsShopTab({ profile, onPurchased }: {
     return () => { cancelled = true; };
   }, []);
 
+  // Pokemon-only catalog. Phygitals' /api/vm/available also returns
+  // One Piece / Basketball / Baseball / Football / Yu-Gi-Oh / Riftbound
+  // / Soccer / Watches packs — we only want the pokemon-categorised
+  // ones since the rest of the app is Pokemon TCG focused.
   const visible = useMemo(
-    () => packs.filter((pack) => pack.enable !== false),
+    () => packs.filter((pack) =>
+      pack.enable !== false
+      && Array.isArray(pack.categories)
+      && pack.categories.some((c) => c?.toLowerCase() === 'pokemon'),
+    ),
     [packs],
   );
 
