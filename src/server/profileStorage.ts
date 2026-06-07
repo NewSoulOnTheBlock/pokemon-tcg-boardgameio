@@ -17,6 +17,15 @@ export interface ProfileStorage {
     alreadyClaimed?: { cardId: string; mintAddress?: string; signature?: string };
   }>;
   recordPrizeClaim?(userId: string, matchID: string, playerID: string, prize: { cardId: string; mintAddress?: string; signature?: string }): Promise<void>;
+  /** Atomically add USD credits to the user's Phygitals balance.
+   *  Returns the new balance. Used by the credits top-up flow after
+   *  the server has verified an on-chain USDC payment to the
+   *  treasury wallet. */
+  addPhygitalsCredits?(userId: string, deltaUsd: number): Promise<number>;
+  /** Atomically deduct USD credits from the user's Phygitals balance,
+   *  failing (throws) if the balance would go negative. Used by the
+   *  buy-with-credits flow before calling Phygitals. */
+  spendPhygitalsCredits?(userId: string, deltaUsd: number): Promise<number>;
 }
 
 const PROFILES_TABLE = 'app_profiles';
@@ -38,6 +47,7 @@ function normalizeProfile(profile: ProfileState): ProfileState {
     packPurchases: Array.isArray(profile.packPurchases) ? profile.packPurchases : [],
     matchRecords: Array.isArray(profile.matchRecords) ? profile.matchRecords : [],
     importedNfts: Array.isArray(profile.importedNfts) ? profile.importedNfts : [],
+    phygitalsCreditsUsd: Number.isFinite(profile.phygitalsCreditsUsd) ? Math.max(0, profile.phygitalsCreditsUsd ?? 0) : 0,
   };
 }
 
@@ -73,6 +83,11 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
     packPurchases: [...purchases.values()],
     matchRecords: [...matches.values()],
     importedNfts: [...imports.values()],
+    // Credits are SERVER-MANAGED — never let an incoming client write
+    // overwrite the server's persisted value. The server-side credit
+    // mutation paths (top-up + spend) call setPhygitalsCredits()
+    // directly, never via this merge function.
+    phygitalsCreditsUsd: existing.phygitalsCreditsUsd ?? 0,
     updatedAt: nowIso(),
     lastLoginAt: nowIso(),
   };
@@ -91,6 +106,7 @@ function storedProfileFromRow(row: {
   owned_cards: Record<string, number>;
   pack_purchases: PackPurchase[] | null;
   packs_opened: number;
+  phygitals_credits_usd: number | null;
   updated_at: string;
   user_id: string;
   wallet: ProfileState['wallet'];
@@ -108,6 +124,7 @@ function storedProfileFromRow(row: {
     packPurchases: row.pack_purchases ?? [],
     matchRecords: row.match_records ?? [],
     importedNfts: row.imported_nfts ?? [],
+    phygitalsCreditsUsd: Number(row.phygitals_credits_usd ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastLoginAt: row.last_login_at,
@@ -162,6 +179,7 @@ export class PostgresProfileStorage implements ProfileStorage {
     `);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS deck_library JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS imported_nfts JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS phygitals_credits_usd NUMERIC NOT NULL DEFAULT 0`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${PACKS_TABLE} (
         id BIGSERIAL PRIMARY KEY,
@@ -406,6 +424,44 @@ export class PostgresProfileStorage implements ProfileStorage {
     );
   }
 
+  async addPhygitalsCredits(userId: string, deltaUsd: number): Promise<number> {
+    if (!Number.isFinite(deltaUsd) || deltaUsd <= 0) {
+      throw new Error(`addPhygitalsCredits requires deltaUsd > 0, got ${deltaUsd}`);
+    }
+    const { rows } = await this.pool.query<{ phygitals_credits_usd: string }>(
+      `UPDATE ${PROFILES_TABLE}
+       SET phygitals_credits_usd = phygitals_credits_usd + $2,
+           updated_at = $3
+       WHERE user_id = $1
+       RETURNING phygitals_credits_usd`,
+      [userId, deltaUsd, nowIso()],
+    );
+    if (rows.length === 0) {
+      throw new Error(`Profile not found: ${userId}`);
+    }
+    return Number(rows[0]!.phygitals_credits_usd);
+  }
+
+  async spendPhygitalsCredits(userId: string, deltaUsd: number): Promise<number> {
+    if (!Number.isFinite(deltaUsd) || deltaUsd <= 0) {
+      throw new Error(`spendPhygitalsCredits requires deltaUsd > 0, got ${deltaUsd}`);
+    }
+    // Atomic conditional update: only debits if the user has enough.
+    // RETURNING gives back the new balance; zero rows = insufficient.
+    const { rows } = await this.pool.query<{ phygitals_credits_usd: string }>(
+      `UPDATE ${PROFILES_TABLE}
+       SET phygitals_credits_usd = phygitals_credits_usd - $2,
+           updated_at = $3
+       WHERE user_id = $1 AND phygitals_credits_usd >= $2
+       RETURNING phygitals_credits_usd`,
+      [userId, deltaUsd, nowIso()],
+    );
+    if (rows.length === 0) {
+      throw new Error('Insufficient Phygitals credits');
+    }
+    return Number(rows[0]!.phygitals_credits_usd);
+  }
+
   private async saveStoredProfile(profile: StoredProfile): Promise<StoredProfile> {
     const normalized = normalizeProfile(profile);
     await this.pool.query(
@@ -588,6 +644,32 @@ export class MemoryProfileStorage implements ProfileStorage {
       .filter((entry) => entry.matches > 0)
       .sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || b.matches - a.matches || a.name.localeCompare(b.name))
       .slice(0, 50);
+  }
+
+  async addPhygitalsCredits(userId: string, deltaUsd: number): Promise<number> {
+    if (!Number.isFinite(deltaUsd) || deltaUsd <= 0) {
+      throw new Error(`addPhygitalsCredits requires deltaUsd > 0, got ${deltaUsd}`);
+    }
+    const existing = this.profiles.get(userId);
+    if (!existing) throw new Error(`Profile not found: ${userId}`);
+    const next = (existing.phygitalsCreditsUsd ?? 0) + deltaUsd;
+    this.profiles.set(userId, { ...existing, phygitalsCreditsUsd: next, updatedAt: nowIso() });
+    return next;
+  }
+
+  async spendPhygitalsCredits(userId: string, deltaUsd: number): Promise<number> {
+    if (!Number.isFinite(deltaUsd) || deltaUsd <= 0) {
+      throw new Error(`spendPhygitalsCredits requires deltaUsd > 0, got ${deltaUsd}`);
+    }
+    const existing = this.profiles.get(userId);
+    if (!existing) throw new Error(`Profile not found: ${userId}`);
+    const current = existing.phygitalsCreditsUsd ?? 0;
+    if (current < deltaUsd) {
+      throw new Error('Insufficient Phygitals credits');
+    }
+    const next = current - deltaUsd;
+    this.profiles.set(userId, { ...existing, phygitalsCreditsUsd: next, updatedAt: nowIso() });
+    return next;
   }
 
   private saveStoredProfile(profile: StoredProfile): StoredProfile {

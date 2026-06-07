@@ -1864,7 +1864,7 @@ function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onP
 
       {activeTab === 'shop' && (
         <div className="profile-tab-pane">
-          <PhygitalsShopTab profile={profile} onPurchased={handlePurchased} />
+          <PhygitalsShopTab profile={profile} onProfileChange={onProfileChange} onPurchased={handlePurchased} />
         </div>
       )}
 

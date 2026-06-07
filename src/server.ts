@@ -297,37 +297,139 @@ server.router.post('/api/phygitals-buyer/preflight', jsonBody, async (ctx) => {
   }
 });
 
-server.router.post('/api/phygitals-buyer/buy', jsonBody, async (ctx) => {
+/**
+ * Top up credits. User signs a USDC transfer to the treasury wallet,
+ * sends us the signature. Server verifies the payment landed on-chain
+ * and credits the user's profile balance with the verified USD amount.
+ * Idempotent per-(userId, signature): repeating the call with the
+ * same signature returns the current balance without double-crediting.
+ */
+const creditedTopUps = new Set<string>(); // in-memory dedup key: `${userId}:${signature}`
+server.router.post('/api/phygitals-credits/topup', jsonBody, async (ctx) => {
   const body = ctx.request.body as {
+    userId?: string;
     buyerWallet?: string;
-    packId?: string;
-    amount?: number;
-    currency?: 'usdc' | 'usdt';
     paymentSignature?: string;
+    currency?: 'usdc' | 'usdt';
   } | undefined;
-  if (!body?.buyerWallet || !body.packId || !body.paymentSignature || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
-    ctx.throw(400, 'buyerWallet, packId, amount, and paymentSignature are required');
+  if (!body?.userId || !body.buyerWallet || !body.paymentSignature) {
+    ctx.throw(400, 'userId, buyerWallet, and paymentSignature are required');
+    return;
+  }
+  if (typeof profileStorage.addPhygitalsCredits !== 'function') {
+    ctx.throw(503, 'Profile storage does not support Phygitals credits.');
+    return;
+  }
+  const dedupKey = `${body.userId}:${body.paymentSignature}`;
+  if (creditedTopUps.has(dedupKey)) {
+    ctx.body = { alreadyCredited: true };
     return;
   }
   try {
-    const result = await phygitalsBuyer.buy({
+    const { amountUsd } = await phygitalsBuyer.verifyTopUp({
       buyerWallet: body.buyerWallet,
-      packId: body.packId,
-      amount: body.amount!,
-      currency: body.currency,
       paymentSignature: body.paymentSignature,
+      currency: body.currency,
     });
-    ctx.body = result;
+    if (amountUsd <= 0) {
+      ctx.throw(400, 'No USDC transfer to treasury found in that signature.');
+      return;
+    }
+    creditedTopUps.add(dedupKey);
+    const newBalance = await profileStorage.addPhygitalsCredits(body.userId, amountUsd);
+    ctx.body = { creditedUsd: amountUsd, balanceUsd: newBalance };
   } catch (err) {
     if (err instanceof PhygitalsBuyerError) {
       ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
       ctx.type = 'application/json';
-      // Include both the friendly err.message AND any structured body
-      // fields (e.g. {refunded, refundSignature}) so the client can
-      // surface the "your USDC has been refunded" copy with the
-      // refund signature.
-      const body = err.body && typeof err.body === 'object' ? err.body : {};
-      ctx.body = { error: err.message, ...body };
+      const errBody = err.body && typeof err.body === 'object' ? err.body : {};
+      ctx.body = { error: err.message, ...errBody };
+      return;
+    }
+    throw err;
+  }
+});
+
+/**
+ * Buy a pack using stored credits. Server:
+ *   1. Computes pack cost from /api/vm/available
+ *   2. Atomically deducts credits from the user's balance
+ *      (fails if insufficient)
+ *   3. Calls Phygitals' buy/crypto with the treasury wallet
+ *   4. On Phygitals failure, REFUNDS THE CREDITS to the user
+ */
+server.router.post('/api/phygitals-credits/buy', jsonBody, async (ctx) => {
+  const body = ctx.request.body as {
+    userId?: string;
+    packId?: string;
+    amount?: number;
+    currency?: 'usdc' | 'usdt';
+  } | undefined;
+  if (!body?.userId || !body.packId || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
+    ctx.throw(400, 'userId, packId, and amount are required');
+    return;
+  }
+  if (typeof profileStorage.spendPhygitalsCredits !== 'function' || typeof profileStorage.addPhygitalsCredits !== 'function') {
+    ctx.throw(503, 'Profile storage does not support Phygitals credits.');
+    return;
+  }
+  let priceUsd = 0;
+  try {
+    const preflight = await phygitalsBuyer.preflight({
+      packId: body.packId,
+      amount: body.amount!,
+      currency: body.currency,
+    });
+    priceUsd = preflight.expectedAmount / 1e6;
+
+    // Deduct credits BEFORE calling Phygitals — atomic conditional
+    // update fails with 'Insufficient Phygitals credits' if the user
+    // doesn't have enough.
+    let newBalance: number;
+    try {
+      newBalance = await profileStorage.spendPhygitalsCredits(body.userId, priceUsd);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.status = 402;
+      ctx.body = { error: msg, priceUsd };
+      return;
+    }
+
+    // Credits are gone. Any Phygitals failure must re-credit them.
+    try {
+      const result = await phygitalsBuyer.buyWithBalance({
+        packId: body.packId,
+        amount: body.amount!,
+        currency: body.currency,
+      });
+      ctx.body = { ...result, balanceUsd: newBalance };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[phygitals-credits] buy failed, refunding ${priceUsd} credits to ${body.userId}: ${reason}`);
+      const refundedBalance = await profileStorage.addPhygitalsCredits!(body.userId, priceUsd);
+      if (err instanceof PhygitalsBuyerError) {
+        ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
+        ctx.type = 'application/json';
+        ctx.body = {
+          error: `${err.message} — your $${priceUsd.toFixed(2)} in credits has been refunded.`,
+          refundedUsd: priceUsd,
+          balanceUsd: refundedBalance,
+        };
+        return;
+      }
+      ctx.status = 502;
+      ctx.body = {
+        error: `Phygitals buy failed (${reason}) — your $${priceUsd.toFixed(2)} in credits has been refunded.`,
+        refundedUsd: priceUsd,
+        balanceUsd: refundedBalance,
+      };
+    }
+  } catch (err) {
+    if (err instanceof PhygitalsBuyerError) {
+      ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
+      ctx.type = 'application/json';
+      const errBody = err.body && typeof err.body === 'object' ? err.body : {};
+      ctx.body = { error: err.message, ...errBody };
       return;
     }
     throw err;

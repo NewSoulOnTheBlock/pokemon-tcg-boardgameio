@@ -61,6 +61,10 @@ export interface ProfileState {
   packPurchases: PackPurchase[];
   matchRecords: MatchRecord[];
   importedNfts?: ImportedNftRecord[];
+  /** USD-denominated credit balance for the Phygitals storefront.
+   *  Users top up by signing a USDC transfer to the treasury wallet;
+   *  the server credits this field. Spending a pack debits it. */
+  phygitalsCreditsUsd?: number;
 }
 
 export interface StoredProfile extends ProfileState {

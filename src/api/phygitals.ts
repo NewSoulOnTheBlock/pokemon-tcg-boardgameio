@@ -570,16 +570,70 @@ export interface ServerBuyResult {
   sessionId?: string;
   publicId?: string;
   txHash?: string;
+  /** New post-purchase credit balance, in USD. */
+  balanceUsd?: number;
 }
 
-export async function serverBuyPhygitalsPack(args: {
+/**
+ * Top up the user's Phygitals credit balance. Two-step:
+ *   1. User signs a USDC transfer to the treasury for `amountUsd`.
+ *   2. Server verifies the on-chain payment + adds the credited amount
+ *      to the user's profile balance.
+ * Returns the new balance.
+ */
+export async function topUpPhygitalsCredits(args: {
+  userId: string;
   buyerWallet: string;
+  treasuryWallet: string;
+  amountUsd: number;
+  currency?: 'usdc' | 'usdt';
+}): Promise<{ creditedUsd: number; balanceUsd: number }> {
+  // Step 1: user signs the USDC transfer.
+  const signature = await payTreasuryUsdc({
+    buyerWallet: args.buyerWallet,
+    treasuryWallet: args.treasuryWallet,
+    amount: 1,
+    unitPriceUsd: args.amountUsd,
+    currency: args.currency,
+  });
+
+  // Step 2: server verifies + credits.
+  const res = await fetch(apiUrl('/api/phygitals-credits/topup'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: args.userId,
+      buyerWallet: args.buyerWallet,
+      paymentSignature: signature,
+      currency: args.currency,
+    }),
+  });
+  const text = await res.text();
+  let parsed: unknown = null;
+  if (text) {
+    try { parsed = JSON.parse(text); }
+    catch { parsed = text; }
+  }
+  if (!res.ok) {
+    const msg = (parsed && typeof parsed === 'object' && 'error' in parsed)
+      ? String((parsed as { error: unknown }).error)
+      : `Top-up failed (${res.status})`;
+    throw new PhygitalsApiError(res.status, parsed, msg);
+  }
+  return parsed as { creditedUsd: number; balanceUsd: number };
+}
+
+/**
+ * Buy a pack with stored credits. No wallet signature needed — server
+ * deducts credits + calls Phygitals + auto-refunds credits on failure.
+ */
+export async function buyPhygitalsPackWithCredits(args: {
+  userId: string;
   packId: string;
   amount: number;
   currency?: 'usdc' | 'usdt';
-  paymentSignature: string;
 }): Promise<ServerBuyResult> {
-  const res = await fetch(apiUrl('/api/phygitals-buyer/buy'), {
+  const res = await fetch(apiUrl('/api/phygitals-credits/buy'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(args),
@@ -593,7 +647,7 @@ export async function serverBuyPhygitalsPack(args: {
   if (!res.ok) {
     const msg = (parsed && typeof parsed === 'object' && 'error' in parsed)
       ? String((parsed as { error: unknown }).error)
-      : `server-buy failed (${res.status})`;
+      : `buy-with-credits failed (${res.status})`;
     throw new PhygitalsApiError(res.status, parsed, msg);
   }
   return parsed as ServerBuyResult;

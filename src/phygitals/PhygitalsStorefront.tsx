@@ -20,9 +20,8 @@ import {
   fetchPhygitalsStatus,
   finishPhygitalsSellback,
   initPhygitalsSellback,
-  payTreasuryUsdc,
-  preflightPhygitalsBuy,
-  serverBuyPhygitalsPack,
+  buyPhygitalsPackWithCredits,
+  topUpPhygitalsCredits,
   PhygitalsApiError,
   type PhygitalsPack,
   type PhygitalsPullItem,
@@ -137,8 +136,9 @@ export function PhygitalsHero({ profile }: { profile: ProfileState }) {
 // Shop tab — pack catalog
 // ============================================================================
 
-export function PhygitalsShopTab({ profile, onPurchased }: {
+export function PhygitalsShopTab({ profile, onProfileChange, onPurchased }: {
   profile: ProfileState;
+  onProfileChange: (profile: ProfileState) => void;
   onPurchased: (items: PhygitalsPullItem[]) => void;
 }) {
   const [packs, setPacks] = useState<PhygitalsPack[]>([]);
@@ -156,6 +156,10 @@ export function PhygitalsShopTab({ profile, onPurchased }: {
     return () => { cancelled = true; };
   }, []);
 
+  const handleBalanceChange = useCallback((balanceUsd: number) => {
+    onProfileChange({ ...profile, phygitalsCreditsUsd: balanceUsd });
+  }, [onProfileChange, profile]);
+
   // Pokemon-only catalog. Phygitals' /api/vm/available also returns
   // One Piece / Basketball / Baseball / Football / Yu-Gi-Oh / Riftbound
   // / Soccer / Watches packs — we only want the pokemon-categorised
@@ -169,32 +173,130 @@ export function PhygitalsShopTab({ profile, onPurchased }: {
     [packs],
   );
 
-  if (loading) return <div className="panel"><p className="empty-state">Loading Phygitals catalog…</p></div>;
-  if (error) return <div className="panel"><p className="error">Phygitals: {error}</p></div>;
-  if (visible.length === 0) {
-    return (
-      <div className="panel">
-        <p className="empty-state">No Phygitals packs available right now. Check back soon.</p>
-      </div>
-    );
-  }
-
   return (
     <>
-      <div className="phygitals-grid">
-        {visible.map((pack) => (
-          <PhygitalsPackCard key={pack.id} pack={pack} onOpen={() => setActivePack(pack)} />
-        ))}
-      </div>
+      <PhygitalsCreditsPanel profile={profile} onBalanceChange={handleBalanceChange} />
+      {loading ? (
+        <div className="panel"><p className="empty-state">Loading Phygitals catalog…</p></div>
+      ) : error ? (
+        <div className="panel"><p className="error">Phygitals: {error}</p></div>
+      ) : visible.length === 0 ? (
+        <div className="panel">
+          <p className="empty-state">No Phygitals packs available right now. Check back soon.</p>
+        </div>
+      ) : (
+        <div className="phygitals-grid">
+          {visible.map((pack) => (
+            <PhygitalsPackCard key={pack.id} pack={pack} onOpen={() => setActivePack(pack)} />
+          ))}
+        </div>
+      )}
       {activePack && (
         <PhygitalsPackDetailModal
           pack={activePack}
           profile={profile}
           onClose={() => setActivePack(null)}
           onPurchased={onPurchased}
+          onBalanceChange={handleBalanceChange}
         />
       )}
     </>
+  );
+}
+
+/**
+ * Credits panel — shows the user's current balance and a "Top up" form
+ * to add more USDC. Renders at the top of the Shop tab.
+ */
+function PhygitalsCreditsPanel({ profile, onBalanceChange }: {
+  profile: ProfileState;
+  onBalanceChange: (balanceUsd: number) => void;
+}) {
+  const [topUpAmount, setTopUpAmount] = useState(50);
+  const [busy, setBusy] = useState<'pay' | 'verify' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [treasuryPubkey, setTreasuryPubkey] = useState<string | null>(null);
+  const balance = profile.phygitalsCreditsUsd ?? 0;
+  const buyerWallet = profile.wallet?.address;
+  const userId = profile.userId;
+
+  useEffect(() => {
+    fetchPhygitalsBuyerStatus()
+      .then((status) => setTreasuryPubkey(status.enabled ? status.treasuryPubkey : null))
+      .catch(() => setTreasuryPubkey(null));
+  }, []);
+
+  const handleTopUp = useCallback(async () => {
+    if (!buyerWallet || !userId || !treasuryPubkey) {
+      setError('Sign in with a Solana wallet first.');
+      return;
+    }
+    if (!Number.isFinite(topUpAmount) || topUpAmount <= 0) {
+      setError('Enter a USD amount > 0');
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    try {
+      setBusy('pay');
+      const result = await topUpPhygitalsCredits({
+        userId,
+        buyerWallet,
+        treasuryWallet: treasuryPubkey,
+        amountUsd: topUpAmount,
+      });
+      onBalanceChange(result.balanceUsd);
+      setInfo(`Credited $${result.creditedUsd.toFixed(2)} — balance is now $${result.balanceUsd.toFixed(2)}`);
+    } catch (err) {
+      setError(err instanceof PhygitalsApiError ? err.message : (err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [buyerWallet, onBalanceChange, topUpAmount, treasuryPubkey, userId]);
+
+  return (
+    <section className="panel phygitals-credits-panel">
+      <div className="phygitals-credits-header">
+        <div>
+          <p className="eyebrow">Phygitals balance</p>
+          <h2>${balance.toFixed(2)} <span className="phygitals-credits-currency">USD</span></h2>
+          <p className="phygitals-credits-sub">Buy packs from the catalog below using these credits.</p>
+        </div>
+        <div className="phygitals-credits-topup">
+          <label>
+            Top up
+            <div className="phygitals-credits-input-row">
+              <span>$</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={topUpAmount}
+                onChange={(event) => setTopUpAmount(Math.max(0, Math.floor(Number(event.target.value) || 0)))}
+              />
+            </div>
+          </label>
+          <button
+            className="primary-cta"
+            onClick={handleTopUp}
+            disabled={busy !== null || !buyerWallet || !treasuryPubkey || topUpAmount <= 0}
+          >
+            {!buyerWallet
+              ? 'Connect wallet'
+              : !treasuryPubkey
+                ? 'Loading…'
+                : busy === 'pay'
+                  ? 'Approve in wallet…'
+                  : busy === 'verify'
+                    ? 'Crediting…'
+                    : `Add $${topUpAmount}`}
+          </button>
+        </div>
+      </div>
+      {info && <p className="success phygitals-credits-info">{info}</p>}
+      {error && <p className="error phygitals-credits-error">{error}</p>}
+    </section>
   );
 }
 
@@ -286,81 +388,57 @@ function PhygitalsPackCard({ pack, onOpen }: { pack: PhygitalsPack; onOpen: () =
   );
 }
 
-function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
+function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased, onBalanceChange }: {
   pack: PhygitalsPack;
   profile: ProfileState;
   onClose: () => void;
   onPurchased: (items: PhygitalsPullItem[]) => void;
+  onBalanceChange?: (balanceUsd: number) => void;
 }) {
   const [amount, setAmount] = useState(1);
   const [currency, setCurrency] = useState<'usdc' | 'usdt'>('usdc');
-  const [busy, setBusy] = useState<'preflight' | 'pay' | 'submit' | null>(null);
+  const [busy, setBusy] = useState<'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pulled, setPulled] = useState<PhygitalsPullItem[] | null>(null);
-  const [treasuryPubkey, setTreasuryPubkey] = useState<string | null>(null);
   const maxAmount = Math.max(1, pack.max_per_mint ?? 10);
   const totalCost = Number(pack.mint_price ?? 0) * amount;
-  const buyerWallet = profile.wallet?.address;
-
-  useEffect(() => {
-    fetchPhygitalsBuyerStatus()
-      .then((status) => setTreasuryPubkey(status.enabled ? status.treasuryPubkey : null))
-      .catch(() => setTreasuryPubkey(null));
-  }, []);
+  const userId = profile.userId;
+  const currentBalance = profile.phygitalsCreditsUsd ?? 0;
+  const insufficient = totalCost > currentBalance;
 
   const handleBuy = useCallback(async () => {
-    if (!buyerWallet) {
-      setError('Connect a Solana wallet first to buy a Phygitals pack.');
+    if (!userId) {
+      setError('Sign in first to buy a Phygitals pack.');
       return;
     }
-    if (!treasuryPubkey) {
-      setError('Phygitals server-buy is not configured. Try again in a moment, or contact support.');
+    if (insufficient) {
+      setError(`Not enough credits ($${currentBalance.toFixed(2)} available, $${totalCost.toFixed(2)} needed). Top up first.`);
       return;
     }
     setError(null);
     try {
-      // Step 0: preflight check — if Phygitals isn't reachable from our
-      // server (Cloudflare WAF, rate limit, pack delisted), abort here
-      // BEFORE the user pays anything.
-      setBusy('preflight');
-      await preflightPhygitalsBuy({
-        packId: pack.id,
-        amount,
-        currency,
-      });
-
-      // Step 1: user signs a USDC transfer to our treasury wallet.
-      setBusy('pay');
-      const paymentSignature = await payTreasuryUsdc({
-        buyerWallet,
-        treasuryWallet: treasuryPubkey,
-        amount,
-        unitPriceUsd: Number(pack.mint_price ?? 0),
-        currency,
-      });
-
-      // Step 2: server verifies the payment + executes the actual
-      // Phygitals buy with its API-bound wallet. Pulled NFTs land
-      // in the treasury wallet; we track ownership in-app. If the
-      // Phygitals call fails after this point, the server auto-refunds
-      // the user and surfaces a "your USDC has been refunded" message.
       setBusy('submit');
-      const result = await serverBuyPhygitalsPack({
-        buyerWallet,
+      const result = await buyPhygitalsPackWithCredits({
+        userId,
         packId: pack.id,
         amount,
         currency,
-        paymentSignature,
       });
-
       setPulled(result.nfts ?? []);
       onPurchased(result.nfts ?? []);
+      if (typeof result.balanceUsd === 'number') onBalanceChange?.(result.balanceUsd);
     } catch (err) {
       setError(err instanceof PhygitalsApiError ? err.message : (err as Error).message);
+      // Server auto-refunds credits on failure; refresh balance from
+      // the error body if it included one.
+      if (err instanceof PhygitalsApiError && err.body && typeof err.body === 'object' && 'balanceUsd' in err.body) {
+        const balance = (err.body as { balanceUsd: unknown }).balanceUsd;
+        if (typeof balance === 'number') onBalanceChange?.(balance);
+      }
     } finally {
       setBusy(null);
     }
-  }, [amount, buyerWallet, currency, onPurchased, pack.id, pack.mint_price, treasuryPubkey]);
+  }, [amount, currency, currentBalance, insufficient, onBalanceChange, onPurchased, pack.id, totalCost, userId]);
 
   return (
     <div className="phygitals-modal-backdrop" onClick={onClose}>
@@ -412,27 +490,26 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
                 </select>
               </label>
               <div className="phygitals-purchase-total">
-                <span className="label">Total</span>
+                <span className="label">Cost</span>
                 <strong>{formatUsd(totalCost)}</strong>
+                <span className="phygitals-purchase-cap">
+                  Balance: {formatUsd(currentBalance)}
+                </span>
               </div>
-              <button className="primary-cta" onClick={handleBuy} disabled={busy !== null || !buyerWallet || pack.in_stock === false || !treasuryPubkey}>
-                {!buyerWallet
-                  ? 'Connect wallet'
-                  : !treasuryPubkey
-                    ? 'Loading…'
-                    : busy === 'preflight'
-                      ? 'Checking availability…'
-                      : busy === 'pay'
-                        ? 'Approve payment in wallet…'
-                        : busy === 'submit'
-                          ? 'Pulling cards…'
-                          : `Buy ${amount} pull${amount === 1 ? '' : 's'}`}
+              <button className="primary-cta" onClick={handleBuy} disabled={busy !== null || !userId || pack.in_stock === false || insufficient}>
+                {!userId
+                  ? 'Sign in first'
+                  : insufficient
+                    ? `Need ${formatUsd(totalCost - currentBalance)} more credits`
+                    : busy === 'submit'
+                      ? 'Pulling cards…'
+                      : `Buy ${amount} pull${amount === 1 ? '' : 's'} (${formatUsd(totalCost)})`}
               </button>
             </div>
             {error && <p className="error">{error}</p>}
             <p className="phygitals-purchase-note">
-              Your wallet pays {formatUsd(totalCost)} {currency.toUpperCase()} to the in-app treasury,
-              then the app buys from Phygitals on your behalf. Cards arrive in My Pulls on success.
+              Pays {formatUsd(totalCost)} from your in-app Phygitals credits. No wallet signature needed.
+              Add more credits from the Shop hero panel.
             </p>
           </section>
         ) : (

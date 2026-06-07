@@ -128,16 +128,22 @@ export interface PhygitalsBuyerService {
     amount: number;
     currency?: 'usdc' | 'usdt';
   }): Promise<{ pack: { id: string; mint_price: number; rewards: Array<{ mint: string; amount: number }> }; expectedAmount: number; treasuryPubkey: string }>;
-  /** Verify a user's USDC payment landed in our treasury and matches
-   *  the expected pack price, then execute the Phygitals buy with the
-   *  bound API wallet. Returns the pulled NFTs. Auto-refunds the user
-   *  if the Phygitals call fails after their payment is verified. */
-  buy(args: {
+  /** Verify a user's USDC payment landed in our treasury — used by
+   *  the credits-top-up flow. Returns the USD amount they paid (so
+   *  the caller can credit the user's balance). */
+  verifyTopUp(args: {
     buyerWallet: string;
+    paymentSignature: string;
+    currency?: 'usdc' | 'usdt';
+  }): Promise<{ amountUsd: number }>;
+  /** Execute a Phygitals buy. Caller must have already deducted
+   *  credits from the user's balance — this method assumes payment
+   *  has been collected and does NOT verify any user-side signature.
+   *  Auto-refunds (in CREDITS) if the Phygitals call fails. */
+  buyWithBalance(args: {
     packId: string;
     amount: number;
     currency?: 'usdc' | 'usdt';
-    paymentSignature: string;
   }): Promise<{ nfts: PhygitalsPullItem[]; sessionId?: string; publicId?: string; txHash?: string }>;
 }
 
@@ -145,18 +151,13 @@ class DisabledPhygitalsBuyer implements PhygitalsBuyerService {
   enabled = false as const;
   treasuryPubkey = '';
   async preflight(): Promise<never> {
-    throw new PhygitalsBuyerError(
-      503,
-      null,
-      'Phygitals server-buy is not configured. Set PHYGITALS_API_KEY + PHYGITALS_BUYER_SECRET_KEY on the server.',
-    );
+    throw new PhygitalsBuyerError(503, null, 'Phygitals server-buy is not configured.');
   }
-  async buy(): Promise<never> {
-    throw new PhygitalsBuyerError(
-      503,
-      null,
-      'Phygitals server-buy is not configured. Set PHYGITALS_API_KEY + PHYGITALS_BUYER_SECRET_KEY on the server.',
-    );
+  async verifyTopUp(): Promise<never> {
+    throw new PhygitalsBuyerError(503, null, 'Phygitals server-buy is not configured.');
+  }
+  async buyWithBalance(): Promise<never> {
+    throw new PhygitalsBuyerError(503, null, 'Phygitals server-buy is not configured.');
   }
 }
 
@@ -242,9 +243,11 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
   private async verifyUserPayment(args: {
     paymentSignature: string;
     expectedSenderWallet: string;
-    expectedAmount: number;
     paymentMint: PublicKey;
-  }): Promise<void> {
+    /** Minimum acceptable amount in token base units (1e6 for
+     *  USDC/USDT). If omitted, returns whatever amount was paid. */
+    minAmount?: number;
+  }): Promise<{ amountInToken: number }> {
     const senderAta = Token.getAssociatedTokenAddressSync(args.paymentMint, new PublicKey(args.expectedSenderWallet), false);
     const treasuryAta = Token.getAssociatedTokenAddressSync(args.paymentMint, this.treasury.publicKey, false);
 
@@ -266,10 +269,6 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       throw new PhygitalsBuyerError(400, parsed.meta.err, 'User payment tx failed on chain.');
     }
 
-    // Scan the parsed instructions for a SPL token transfer matching
-    // our expectations. We accept either an inner SplToken transfer
-    // or a top-level one; some wallets wrap it inside the priority-fee
-    // ComputeBudget setup.
     const ixs: Array<{ program?: string; programId?: { toString(): string }; parsed?: { type?: string; info?: { source?: string; destination?: string; mint?: string; amount?: string; tokenAmount?: { amount?: string; uiAmount?: number } } } }> = [];
     for (const ix of parsed.transaction.message.instructions ?? []) {
       ixs.push(ix as never);
@@ -280,26 +279,47 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       }
     }
 
-    const matched = ixs.find((ix) => {
+    let matchedAmount = 0;
+    for (const ix of ixs) {
       const program = ix.program ?? '';
       const parsedInfo = ix.parsed;
-      if (program !== 'spl-token' || !parsedInfo?.info) return false;
-      if (parsedInfo.type !== 'transfer' && parsedInfo.type !== 'transferChecked') return false;
+      if (program !== 'spl-token' || !parsedInfo?.info) continue;
+      if (parsedInfo.type !== 'transfer' && parsedInfo.type !== 'transferChecked') continue;
       const info = parsedInfo.info;
-      if (info.source !== senderAta.toBase58()) return false;
-      if (info.destination !== treasuryAta.toBase58()) return false;
+      if (info.source !== senderAta.toBase58()) continue;
+      if (info.destination !== treasuryAta.toBase58()) continue;
       const amountRaw = info.amount ?? info.tokenAmount?.amount;
-      if (!amountRaw) return false;
-      return Number(amountRaw) >= args.expectedAmount;
-    });
+      if (!amountRaw) continue;
+      matchedAmount += Number(amountRaw);
+    }
 
-    if (!matched) {
+    if (matchedAmount === 0 || (args.minAmount !== undefined && matchedAmount < args.minAmount)) {
       throw new PhygitalsBuyerError(
         402,
-        { senderAta: senderAta.toBase58(), treasuryAta: treasuryAta.toBase58(), expectedAmount: args.expectedAmount },
-        `Payment of ${args.expectedAmount / 1e6} ${args.paymentMint.equals(USDC_MINT) ? 'USDC' : 'USDT'} from ${args.expectedSenderWallet} to treasury not found in tx ${args.paymentSignature}.`,
+        { senderAta: senderAta.toBase58(), treasuryAta: treasuryAta.toBase58(), expectedAmount: args.minAmount, paidAmount: matchedAmount },
+        `Payment to treasury not found or below expected amount in tx ${args.paymentSignature}.`,
       );
     }
+    return { amountInToken: matchedAmount };
+  }
+
+  async verifyTopUp(args: {
+    buyerWallet: string;
+    paymentSignature: string;
+    currency?: 'usdc' | 'usdt';
+  }): Promise<{ amountUsd: number }> {
+    const currency = args.currency ?? 'usdc';
+    const paymentMint = CURRENCY_MINTS[currency];
+    if (!paymentMint) {
+      throw new PhygitalsBuyerError(400, null, `Unsupported currency: ${currency}`);
+    }
+    const { amountInToken } = await this.verifyUserPayment({
+      paymentSignature: args.paymentSignature,
+      expectedSenderWallet: args.buyerWallet,
+      paymentMint,
+    });
+    // USDC + USDT are both 6-decimal mints, so amountInToken / 1e6 = USD.
+    return { amountUsd: amountInToken / 1e6 };
   }
 
   /**
@@ -347,49 +367,10 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
     };
   }
 
-  /**
-   * Refund a user payment by sending the same USDC amount back to
-   * their wallet. Called automatically when the Phygitals buy fails
-   * after we've already confirmed the user paid.
-   */
-  private async refundUser(args: {
-    buyerWallet: string;
-    paymentMint: PublicKey;
-    amount: number;
-    reason: string;
-  }): Promise<string | null> {
-    try {
-      const buyer = new PublicKey(args.buyerWallet);
-      const buyerAta = Token.getAssociatedTokenAddressSync(args.paymentMint, buyer, false);
-      const treasuryAta = Token.getAssociatedTokenAddressSync(args.paymentMint, this.treasury.publicKey, false);
-      const refundIx = Token.createTransferInstruction(treasuryAta, buyerAta, this.treasury.publicKey, args.amount);
-      const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
-      const tx = new VersionedTransaction(
-        new TransactionMessage({
-          payerKey: this.treasury.publicKey,
-          recentBlockhash: blockhash,
-          instructions: [
-            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 200 }),
-            refundIx,
-          ],
-        }).compileToV0Message(),
-      );
-      tx.sign([this.treasury]);
-      const sig = await this.connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-      console.error(`[phygitals-buyer] refunded ${args.amount / 1e6} ${args.paymentMint.equals(USDC_MINT) ? 'USDC' : 'USDT'} to ${args.buyerWallet} (reason: ${args.reason}) sig=${sig}`);
-      return sig;
-    } catch (err) {
-      console.error(`[phygitals-buyer] REFUND FAILED for ${args.buyerWallet}: ${err instanceof Error ? err.message : err}`);
-      return null;
-    }
-  }
-
-  async buy(args: {
-    buyerWallet: string;
+  async buyWithBalance(args: {
     packId: string;
     amount: number;
     currency?: 'usdc' | 'usdt';
-    paymentSignature: string;
   }): Promise<{ nfts: PhygitalsPullItem[]; sessionId?: string; publicId?: string; txHash?: string }> {
     const currency = args.currency ?? 'usdc';
     const paymentMint = CURRENCY_MINTS[currency];
@@ -397,10 +378,6 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
       throw new PhygitalsBuyerError(400, null, `Unsupported currency: ${currency}`);
     }
 
-    // Step 0: re-fetch packs + signer pubkeys. We already preflight-
-    // checked the catalog before the user paid, but Phygitals can
-    // de-list a pack between the preflight and now. Re-checking
-    // protects against that race.
     const [packs, pubkeys] = await Promise.all([this.fetchPacks(), this.fetchSignerPubkeys()]);
     const pack = packs.find((p) => p.id === args.packId || p.slug === args.packId);
     if (!pack) {
@@ -417,47 +394,14 @@ class RealPhygitalsBuyer implements PhygitalsBuyerService {
     const mintPrice = Number(pack.mint_price ?? 0);
     const expectedAmount = args.amount * mintPrice * 1e6;
 
-    // Step 1: verify the user paid us first.
-    await this.verifyUserPayment({
-      paymentSignature: args.paymentSignature,
-      expectedSenderWallet: args.buyerWallet,
-      expectedAmount,
+    return this.executePhygitalsBuy({
+      pack,
+      pubkeys,
+      amount: args.amount,
+      currency,
       paymentMint,
+      expectedAmount,
     });
-
-    // From this point on, the user has paid. Any failure must trigger
-    // a refund so we don't strand their money.
-    try {
-      return await this.executePhygitalsBuy({
-        pack,
-        pubkeys,
-        amount: args.amount,
-        currency,
-        paymentMint,
-        expectedAmount,
-      });
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      console.error(`[phygitals-buyer] post-payment buy failed, refunding ${args.buyerWallet}: ${reason}`);
-      const refundSig = await this.refundUser({
-        buyerWallet: args.buyerWallet,
-        paymentMint,
-        amount: expectedAmount,
-        reason,
-      });
-      if (err instanceof PhygitalsBuyerError) {
-        throw new PhygitalsBuyerError(
-          err.status,
-          { ...((err.body as object) ?? {}), refunded: Boolean(refundSig), refundSignature: refundSig },
-          `${err.message} — your USDC has been ${refundSig ? 'refunded' : 'flagged for manual refund'}.`,
-        );
-      }
-      throw new PhygitalsBuyerError(
-        502,
-        { refunded: Boolean(refundSig), refundSignature: refundSig },
-        `Phygitals buy failed (${reason}) — your USDC has been ${refundSig ? 'refunded' : 'flagged for manual refund'}.`,
-      );
-    }
   }
 
   /**
