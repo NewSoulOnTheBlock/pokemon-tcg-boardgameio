@@ -194,7 +194,6 @@ export async function preparePhygitalsBuy(args: {
   const currency = args.currency ?? 'usdc';
   const [{
     PublicKey, Connection, TransactionMessage, VersionedTransaction,
-    ComputeBudgetProgram,
   }, Token] = await Promise.all([
     import('@solana/web3.js'),
     import('@solana/spl-token'),
@@ -301,14 +300,21 @@ export async function preparePhygitalsBuy(args: {
     return [createDestAtaIx, transferIx];
   });
 
-  const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
-    microLamports: 100 + Math.floor(Math.random() * 300),
-  });
+  // Phygitals' canonical buy tx does NOT include a ComputeBudget
+  // priority-fee instruction — including one alters the message-byte
+  // layout and breaks their tx-fingerprint check. Use only the
+  // payment ix (+ any rewards transfers) so our compiled v0 message
+  // matches what their backend reconstructs.
+  //
+  // (The reference partner script ships with a priority fee, but
+  // their backend appears to fingerprint-check on the canonical
+  // tx without it. If you re-introduce the priority fee, expect
+  // 'Transaction fingerprint mismatch' on every buy.)
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
   const message = new TransactionMessage({
     payerKey: feePayerPk,
     recentBlockhash: blockhash,
-    instructions: [addPriorityFee, paymentIx, ...rewardsTransferIxGroups.flat()],
+    instructions: [paymentIx, ...rewardsTransferIxGroups.flat()],
   }).compileToV0Message(liveLookupTable ? [liveLookupTable] : []);
   const tx = new VersionedTransaction(message);
 
