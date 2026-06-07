@@ -288,7 +288,11 @@ class RealPhygitalsClient implements PhygitalsClient {
     if (this.packsCache && Date.now() - this.packsCache.fetchedAt < 30_000) {
       return this.packsCache.value;
     }
-    const packs = await this.apiCall<PhygitalsPack[]>('GET', '/api/vm/available');
+    // GET /api/vm/available is a PUBLIC endpoint — Phygitals' gateway
+    // returns 403 if X-API-Key is sent. The reference partner script
+    // calls fetch(url) with no headers; we mirror that here (the
+    // shared apiCall sets Accept: application/json which is fine).
+    const packs = await this.apiCall<PhygitalsPack[]>('GET', '/api/vm/available', undefined, false);
     this.packsCache = { value: packs, fetchedAt: Date.now() };
     return packs;
   }
