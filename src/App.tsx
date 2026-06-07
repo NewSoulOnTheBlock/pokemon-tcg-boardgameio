@@ -768,6 +768,39 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
     setError('');
   }
 
+  async function deleteDeck(deckEntry: CustomDeck) {
+    const confirmed = typeof window !== 'undefined'
+      ? window.confirm(`Delete "${deckEntry.name}"? This cannot be undone.`)
+      : true;
+    if (!confirmed) return;
+    setStatus('');
+    setError('');
+    const nextLibrary = deckLibrary.filter((candidate) => candidate.id !== deckEntry.id);
+    // If the deleted deck was the active deck, clear active state so the
+    // user lands on a blank deck and the profile's activeDeckName is
+    // freed up for the next save.
+    const wasActive = profile.activeDeckName === deckEntry.name;
+    const next: ProfileState = {
+      ...profile,
+      deckLibrary: nextLibrary,
+      activeDeckName: wasActive ? 'No Custom Deck' : profile.activeDeckName,
+      customDeck: wasActive ? [] : profile.customDeck,
+    };
+    try {
+      const saved = await persistAndStore(next);
+      onProfileChange(saved);
+      setDeckLibrary(saved.deckLibrary);
+      if (editingDeckId === deckEntry.id) {
+        setEditingDeckId(null);
+        setDeckName('New Custom Deck');
+        setDeck([]);
+      }
+      setStatus(`Deleted ${deckEntry.name}.`);
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+    }
+  }
+
   async function save() {
     setStatus('');
     setError('');
@@ -804,6 +837,33 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
     }
   }
 
+  const stats = useMemo(() => {
+    const records = profile.matchRecords ?? [];
+    const ranked = records.filter((r) => (r.matchType ?? 'Ranked') !== 'Casual' && r.result !== 'in_progress');
+    const rankedWins = ranked.filter((r) => r.result === 'win').length;
+    const rankedLosses = ranked.filter((r) => r.result === 'loss').length;
+    const rankedDraws = ranked.filter((r) => r.result === 'draw').length;
+    const casualMatches = records.filter((r) => r.matchType === 'Casual' && r.result !== 'in_progress').length;
+    const totalMatches = ranked.length + casualMatches;
+    const winRate = ranked.length > 0 ? Math.round((rankedWins / ranked.length) * 100) : 0;
+    const collectionTotal = collectionSize(profile.ownedCards);
+    const uniqueCards = Object.keys(profile.ownedCards).length;
+    const nftMints = profile.packPurchases.reduce((sum, pack) => sum + (pack.mints?.length ?? 0), 0);
+    return {
+      rankedWins, rankedLosses, rankedDraws,
+      rankedTotal: ranked.length,
+      casualMatches,
+      totalMatches,
+      winRate,
+      collectionTotal,
+      uniqueCards,
+      packsOpened: profile.packsOpened,
+      nftMints,
+      decksSaved: profile.deckLibrary.length,
+      importedNfts: profile.importedNfts?.length ?? 0,
+    };
+  }, [profile]);
+
   return (
     <main className="content-page profile-page">
       <section className="panel profile-panel">
@@ -818,6 +878,53 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
         </label>
         {status && <p className="success">{status}</p>}
         {error && <p className="error">{error}</p>}
+      </section>
+
+      <section className="panel profile-stats-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Trainer dossier</p>
+            <h2>Lifetime stats</h2>
+          </div>
+        </div>
+        <div className="profile-stats-grid">
+          <div className="profile-stat">
+            <strong>{stats.rankedWins}-{stats.rankedLosses}{stats.rankedDraws > 0 ? `-${stats.rankedDraws}` : ''}</strong>
+            <span>Ranked / Wager record</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.winRate}%</strong>
+            <span>Win rate ({stats.rankedTotal} ranked match{stats.rankedTotal === 1 ? '' : 'es'})</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.casualMatches}</strong>
+            <span>Casual matches played</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.totalMatches}</strong>
+            <span>Total matches</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.collectionTotal}</strong>
+            <span>Cards owned ({stats.uniqueCards} unique)</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.packsOpened}</strong>
+            <span>Booster packs opened</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.nftMints}</strong>
+            <span>NFTs minted to wallet</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.decksSaved}</strong>
+            <span>Custom decks saved</span>
+          </div>
+          <div className="profile-stat">
+            <strong>{stats.importedNfts}</strong>
+            <span>Phygitals / Collector Crypt imports</span>
+          </div>
+        </div>
       </section>
 
       <section className="panel deckbuilder-panel">
@@ -850,7 +957,10 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
                       <span>{deckEntry.cardIds.length}/{DECK_SIZE} cards</span>
                       <span>{deckIssues.length === 0 ? 'Ready for matches' : `${deckIssues.length} issue${deckIssues.length === 1 ? '' : 's'}`}</span>
                     </div>
-                    <button onClick={() => loadDeck(deckEntry)}>Load</button>
+                    <div className="deck-library-card-actions">
+                      <button onClick={() => loadDeck(deckEntry)}>Load</button>
+                      <button className="danger" onClick={() => deleteDeck(deckEntry)}>Delete</button>
+                    </div>
                   </article>
                 );
               })}
@@ -932,22 +1042,60 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
           </div>
         </div>
         {profile.matchRecords.length === 0 ? (
-          <p>No matches recorded yet.</p>
+          <p>No matches recorded yet. Play your first match from Matchmaking or vs Bot.</p>
         ) : (
           <div className="match-list">
-            {[...profile.matchRecords].reverse().map((record) => (
-              <article className="match-card" key={`${record.matchID}-${record.playerID}`}>
+            {[...profile.matchRecords].reverse().slice(0, 20).map((record) => (
+              <article className={`match-card match-card-result-${record.result}`} key={`${record.matchID}-${record.playerID}`}>
                 <div>
-                  <strong>{record.result.replace('_', ' ').toUpperCase()} - Match {record.matchID}</strong>
-                  <span>Player {record.playerID}: {record.playerDeckLabel} vs {record.opponentDeckLabel}</span>
+                  <div className="match-card-meta">
+                    <span className={`match-type-badge match-type-badge-${record.matchType ?? 'Casual'}`}>{record.matchType ?? 'Casual'}</span>
+                    <span className={`match-result-pill match-result-pill-${record.result}`}>
+                      {record.result === 'in_progress' ? 'In progress' : record.result.toUpperCase()}
+                    </span>
+                    <span className="match-id-chip">#{record.matchID.slice(0, 8)}</span>
+                    {record.wagerAmount && record.wagerAmount > 0 && (
+                      <span className="wager-chip">{record.wagerAmount} {record.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'}</span>
+                    )}
+                  </div>
+                  <strong>Player {record.playerID}: {record.playerDeckLabel} <em style={{ opacity: 0.6 }}>vs</em> {record.opponentDeckLabel}</strong>
                   <span>{record.completedAt ? `Completed ${new Date(record.completedAt).toLocaleString()}` : `Started ${new Date(record.startedAt).toLocaleString()}`}</span>
-                  {record.reason && <span>{record.reason}</span>}
+                  {record.reason && <span className="match-card-reason">{record.reason}</span>}
                 </div>
               </article>
             ))}
           </div>
         )}
       </section>
+
+      {profile.packPurchases.length > 0 && (
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Booster history</p>
+              <h2>{profile.packPurchases.length} pack{profile.packPurchases.length === 1 ? '' : 's'} opened</h2>
+            </div>
+          </div>
+          <div className="pack-history-list">
+            {[...profile.packPurchases].reverse().slice(0, 10).map((purchase) => (
+              <article className="pack-history-card" key={purchase.signature}>
+                <div>
+                  <strong>{purchase.cardIds.length} cards</strong>
+                  <span>{new Date(purchase.openedAt).toLocaleString()}</span>
+                  {purchase.mints && purchase.mints.length > 0 && (
+                    <span>{purchase.mints.length} NFT{purchase.mints.length === 1 ? '' : 's'} minted</span>
+                  )}
+                </div>
+                {purchase.signature && (
+                  <a href={`https://solscan.io/tx/${purchase.signature}`} target="_blank" rel="noreferrer">
+                    View tx ↗
+                  </a>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </main>
   );
 }
