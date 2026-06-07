@@ -36,6 +36,17 @@ services:
         sync: false
       - key: BGIO_STORAGE_DIR
         value: /tmp/bgio-storage
+      # Phygitals Partner API key (https://dev.phygitals.com). Production
+      # key from partners@phygitals.com — required for the Boosters page
+      # storefront (browse, buy, vault, sellback, ship). Without it the
+      # /api/phygitals/* endpoints respond 503 and the Shop tab shows
+      # an empty state.
+      - key: PHYGITALS_API_KEY
+        sync: false
+      # Defaults to https://api.phygitals.com (production). Set to
+      # https://api.phygitals.com/_ to point at the sandbox.
+      - key: PHYGITALS_BASE_URL
+        value: https://api.phygitals.com
 
 databases:
   - name: pokemon-tcg-db

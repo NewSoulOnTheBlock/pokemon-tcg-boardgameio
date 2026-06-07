@@ -81,50 +81,66 @@ export async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
   return request<MatchLeaderboardEntry[]>('/api/leaderboard');
 }
 
-export interface BoosterMintResponse {
-  treasury: string;
-  mints: Array<{ cardId: string; mintAddress: string; signature: string }>;
+export interface FreeBoosterPull {
+  card: {
+    id: string;
+    name: string;
+    rarity?: string;
+    images?: { small?: string; large?: string };
+  };
+  slot: 'Common' | 'Uncommon' | 'Rare';
 }
 
-export interface BoosterInvoice {
-  memo: string;
-  startTime: string;
-  endTime: string;
-  amount: string;
-  transactionBase64: string;
-  agentMint: string;
-  currencyMint: string;
-  /** Lamports of SOL the user is paying inside the same signed tx to
-   *  reimburse the treasury for the on-chain mint rent / tx fees. */
-  mintFeeLamports?: number;
+export interface FreeBoosterResult {
+  pack: FreeBoosterPull[];
+  set: { id: string; name: string; series: string };
+  source: string;
+  claimedAt: string;
 }
 
-export async function buildBoosterInvoice(walletAddress: string): Promise<BoosterInvoice> {
-  return request<BoosterInvoice>('/api/boosters/invoice', {
+export class DailyClaimError extends Error {
+  retryAfterMs: number;
+  constructor(retryAfterMs: number, message?: string) {
+    super(message ?? `Daily free pack already claimed. Try again in ${Math.ceil(retryAfterMs / 1000 / 3600)}h.`);
+    this.name = 'DailyClaimError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/**
+ * Claim a free Pokemon TCG booster pack. The server roll is local-only
+ * (no on-chain mint). `source: 'daily'` is gated to one claim per
+ * ~22 hours; other sources (quest rewards, level-ups) bypass the
+ * cooldown and rely on the client-side eligibility check.
+ */
+export async function claimFreeBooster(input: {
+  userId?: string;
+  walletAddress?: string;
+  setId?: string;
+  source?: string;
+}): Promise<FreeBoosterResult> {
+  const response = await fetch(apiUrl('/api/boosters/claim-free'), {
     method: 'POST',
-    body: JSON.stringify({ walletAddress }),
-  });
-}
-
-export interface BoosterRedeemResult {
-  treasury: string;
-  pack: Array<{ card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } }; slot: 'Common' | 'Uncommon' | 'Rare' }>;
-  mints: Array<{ cardId: string; mintAddress: string; signature: string }>;
-  invoice: { memo: string; startTime: string; endTime: string; walletAddress: string; setId: string; paymentSignature: string };
-}
-
-export async function redeemBoosterInvoice(input: {
-  walletAddress: string;
-  memo: string;
-  startTime: string;
-  endTime: string;
-  setId: string;
-  paymentSignature: string;
-}): Promise<BoosterRedeemResult> {
-  return request<BoosterRedeemResult>('/api/boosters/redeem', {
-    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+  const text = await response.text();
+  let parsed: unknown = null;
+  if (text) {
+    try { parsed = JSON.parse(text); }
+    catch { parsed = null; }
+  }
+  if (response.status === 429) {
+    const retryAfterMs = (parsed && typeof parsed === 'object' && 'retryAfterMs' in parsed && typeof (parsed as { retryAfterMs: unknown }).retryAfterMs === 'number')
+      ? (parsed as { retryAfterMs: number }).retryAfterMs
+      : 22 * 60 * 60 * 1000;
+    throw new DailyClaimError(retryAfterMs);
+  }
+  if (!response.ok) {
+    const msg = (parsed && typeof parsed === 'object' && 'error' in parsed) ? String((parsed as { error: unknown }).error) : `Claim failed (${response.status})`;
+    throw new ApiError(response.status, msg);
+  }
+  return parsed as FreeBoosterResult;
 }
 
 export interface ClaimedPrize {

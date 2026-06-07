@@ -6,14 +6,12 @@ import { Client } from 'boardgame.io/react';
 import { Local, SocketIO } from 'boardgame.io/multiplayer';
 import { RandomBot } from 'boardgame.io/ai';
 import {
-  buildBoosterInvoice,
   claimMatchPrize,
   fetchLeaderboard,
   loginProfile,
   persistMatchRecord,
   persistPackPurchase,
   persistProfile,
-  redeemBoosterInvoice,
   scanWalletForImports,
   type ClaimedPrize,
   type ImportCandidate,
@@ -21,6 +19,8 @@ import {
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
+import { DailyFreePack } from './boosters/DailyFreePack';
+import { PhygitalsHero, PhygitalsPullsTab, PhygitalsShopTab, PhygitalsVaultTab } from './phygitals/PhygitalsStorefront';
 import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
@@ -106,22 +106,8 @@ import {
   VictoryRewardModal,
 } from './campaign/components';
 import {
-  applyFilterAndSort,
-  computeSetCompletion,
-  getRarityEffectClass,
-  groupSetsByEra,
-  type BoosterFilter,
-  type BoosterSort,
-  type SetMetaLike,
-} from './boosters/helpers';
-import {
-  BoosterEmptyState,
-  BoosterEraSection,
-  BoosterFiltersBar,
-  BoosterHero,
   BoosterTabs,
   CollectionTab,
-  RecentOpeningsTab,
   type BoosterTabId,
 } from './boosters/components';
 import {
@@ -730,7 +716,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   );
 }
 
-function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: (page: Page) => void }) {
+function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void; onNavigate: (page: Page) => void }) {
   const stats = useMemo(() => {
     const records = profile.matchRecords ?? [];
     const wins = records.filter((record) => record.result === 'win').length;
@@ -763,6 +749,7 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
             <span>Packs</span>
           </div>
         </div>
+        <DailyFreePack profile={profile} onProfileChange={onProfileChange} />
         <HomeQuestWidget
           profile={profile}
           walletAddress={profile.wallet?.address}
@@ -782,8 +769,8 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
             <span>Manage your profile and custom deck library.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
-            <strong>Boosters</strong>
-            <span>Open packs for {PACK_PRICE_LABEL} and grow your collection.</span>
+            <strong>Phygitals Vault ↗</strong>
+            <span>Real graded cards, real liquidity. Buy, hold, sell back at 85%, or ship worldwide.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import phygitals / Collector Crypt</strong>
@@ -1197,7 +1184,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
 
       {activeTab === 'quests' && (
         <div className="profile-tab-pane">
-          <QuestCenter profile={profile} walletAddress={profile.wallet?.address} />
+          <QuestCenter profile={profile} walletAddress={profile.wallet?.address} onProfileChange={onProfileChange} />
         </div>
       )}
 
@@ -1838,205 +1825,43 @@ function DeckSelect({
 }
 
 function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void }) {
-  const [pack, setPack] = useState<BoosterPull[] | null>(null);
-  const [openedSetId, setOpenedSetId] = useState<string | null>(null);
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
-  const [buyingSetId, setBuyingSetId] = useState<string | null>(null);
-  const [filter, setFilter] = useState('');
-  const [filterMode, setFilterMode] = useState<BoosterFilter>('all');
-  const [sortMode, setSortMode] = useState<BoosterSort>('newest');
   const [activeTab, setActiveTab] = useState<BoosterTabId>('shop');
-  const [mintSummary, setMintSummary] = useState<Array<{ cardId: string; mintAddress: string; signature: string }>>([]);
-
-  const filteredSets = useMemo(() => {
-    return applyFilterAndSort(
-      BOOSTERABLE_SETS,
-      filterMode,
-      sortMode,
-      filter,
-      (set) => computeSetCompletion(profile, set, CARD_LIBRARY as Record<string, Card>),
-    );
-  }, [filter, filterMode, sortMode, profile]);
-
-  const erasGrouped = useMemo(() => groupSetsByEra(filteredSets), [filteredSets]);
-  const featuredSet = BOOSTERABLE_SETS[0]; // newest set is the default feature
+  // Bump this counter whenever a Phygitals purchase/sellback/shipment
+  // happens so the Vault tab refreshes itself on the next render.
+  const [vaultRefreshNonce, setVaultRefreshNonce] = useState(0);
+  const triggerVaultRefresh = useCallback(() => setVaultRefreshNonce((n) => n + 1), []);
+  // After a successful Phygitals buy, auto-jump to the Vault tab so
+  // the user sees what they just pulled.
+  const handlePurchased = useCallback(() => {
+    triggerVaultRefresh();
+    setActiveTab('vault');
+  }, [triggerVaultRefresh]);
   const totalUniqueCardsInLibrary = Object.keys(CARD_LIBRARY).length;
-  const openedSet = openedSetId ? BOOSTERABLE_SET_BY_ID.get(openedSetId) : undefined;
-
-  async function buyPackForSet(set: BoosterableSet) {
-    setStatus('');
-    setError('');
-    if (profile.wallet?.chain !== 'solana') {
-      setError('Connect a Solana wallet on sign-in before buying booster packs.');
-      return;
-    }
-    const walletAddress = profile.wallet.address;
-
-    setBuyingSetId(set.id);
-    try {
-      // 1. Server builds an unsigned pump.fun payment transaction.
-      setStatus('Requesting invoice from the server...');
-      const invoice = await buildBoosterInvoice(walletAddress);
-
-      // 2. User signs + submits the transaction through their wallet.
-      let signAndSendBase64Transaction: typeof import('./walletPayment')['signAndSendBase64Transaction'];
-      try {
-        ({ signAndSendBase64Transaction } = await import('./walletPayment'));
-      } catch (importErr) {
-        const message = importErr instanceof Error ? importErr.message : String(importErr);
-        if (/dynamically imported module|Failed to fetch|Loading chunk/i.test(message)) {
-          setError('A new version of the app was deployed. Reloading...');
-          window.setTimeout(() => window.location.reload(), 1200);
-          return;
-        }
-        throw importErr;
-      }
-      const feeSol = invoice.mintFeeLamports ? invoice.mintFeeLamports / 1_000_000_000 : 0;
-      const feeNote = feeSol > 0 ? ` + ~${feeSol.toFixed(4)} SOL mint gas` : '';
-      setStatus(`Approve the ${PACK_PRICE_LABEL}${feeNote} payment in your wallet...`);
-      const paymentSignature = await signAndSendBase64Transaction({
-        payerAddress: walletAddress,
-        rpcUrl: SOLANA_RPC_URL,
-        transactionBase64: invoice.transactionBase64,
-      });
-
-      // 3. Server verifies the on-chain payment, rolls pack contents
-      //    deterministically from the invoice memo, and mints NFTs.
-      setStatus('Payment sent. Confirming on-chain and minting NFTs...');
-      const redeemed = await redeemBoosterInvoice({
-        walletAddress,
-        memo: invoice.memo,
-        startTime: invoice.startTime,
-        endTime: invoice.endTime,
-        setId: set.id,
-        paymentSignature,
-      });
-
-      const cardIds = redeemed.pack.map((entry) => entry.card.id);
-      const purchase: PackPurchase = {
-        signature: paymentSignature,
-        openedAt: new Date().toISOString(),
-        cardIds,
-        mints: redeemed.mints.length > 0 ? redeemed.mints : undefined,
-      };
-      const updated = {
-        ...profile,
-        ownedCards: addCardsToCollection(profile.ownedCards, cardIds),
-        packsOpened: profile.packsOpened + 1,
-        packPurchases: [...profile.packPurchases, purchase],
-      };
-      const saved = await persistPackAndStore(updated, purchase);
-      onProfileChange(saved);
-      // Auto-award XP for opening a pack.
-      awardXPAndPersist(walletAddress, XP_REWARDS.packOpened);
-      setPack(redeemed.pack as unknown as BoosterPull[]);
-      setOpenedSetId(set.id);
-      setMintSummary(redeemed.mints);
-      setStatus(`${set.name} pack opened. ${cardIds.length} cards added to your collection and minted as NFTs.`);
-    } catch (err) {
-      setError(String(err instanceof Error ? err.message : err));
-    } finally {
-      setBuyingSetId(null);
-    }
-  }
-
-  function handleBuyAgain(setId: string) {
-    const set = BOOSTERABLE_SET_BY_ID.get(setId);
-    if (set) void buyPackForSet(set);
-  }
 
   return (
     <main className="content-page boosters-page">
-      <BoosterHero
-        profile={profile}
-        featuredSet={featuredSet}
-        priceLabel={PACK_PRICE_LABEL}
-        onBuy={() => featuredSet && buyPackForSet(featuredSet)}
-        onJumpToCollection={() => setActiveTab('collection')}
-      />
-
+      <PhygitalsHero profile={profile} />
       <BoosterTabs active={activeTab} onChange={setActiveTab} />
-
-      {status && <p className="success">{status}</p>}
-      {error && <p className="error">{error}</p>}
-
-      {/* Reveal panel shows on every tab when a pack was just opened. */}
-      {pack && openedSet && (
-        <section className="panel booster-reveal">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">✨ Latest pull</p>
-              <h2>{openedSet.name}</h2>
-              <p className="section-subtitle">{openedSet.series} · {new Date(openedSet.releaseDate).getFullYear()}</p>
-            </div>
-            <button onClick={() => { setPack(null); setOpenedSetId(null); setMintSummary([]); }}>Close</button>
-          </div>
-          <div className="booster-grid">
-            {pack.map(({ card, slot }, index) => {
-              const mint = mintSummary.find((m) => m.cardId === card.id);
-              return (
-                <article className={`booster-card ${getRarityEffectClass(card.rarity)}`} key={`${card.id}-${index}`}>
-                  <DeckbuilderCardArt card={card} />
-                  <strong>{card.name}</strong>
-                  <span>{cardLabel(card)}</span>
-                  <span>{slot} · {card.rarity ?? 'No rarity'}</span>
-                  {mint ? (
-                    <a className="booster-mint-link" href={`https://solscan.io/token/${mint.mintAddress}`} target="_blank" rel="noreferrer">
-                      NFT {shortAddr(mint.mintAddress)} ↗
-                    </a>
-                  ) : null}
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      )}
 
       {activeTab === 'shop' && (
         <div className="profile-tab-pane">
-          <BoosterFiltersBar
-            search={filter}
-            filter={filterMode}
-            sort={sortMode}
-            onSearch={setFilter}
-            onFilter={setFilterMode}
-            onSort={setSortMode}
-          />
-          {filteredSets.length === 0 ? (
-            <BoosterEmptyState
-              title="No booster sets match your search"
-              description="Try clearing your filters or searching for a different era."
-              actionLabel="Clear filters"
-              onAction={() => { setFilter(''); setFilterMode('all'); setSortMode('newest'); }}
-            />
-          ) : (
-            erasGrouped.map((group) => (
-              <BoosterEraSection
-                key={group.era.id}
-                era={group.era}
-                sets={group.sets}
-                profile={profile}
-                cardLibrary={CARD_LIBRARY as Record<string, Card>}
-                priceLabel={PACK_PRICE_LABEL}
-                buyingSetId={buyingSetId}
-                onBuy={(set) => buyPackForSet(set as BoosterableSet)}
-              />
-            ))
-          )}
+          <PhygitalsShopTab profile={profile} onPurchased={handlePurchased} />
         </div>
       )}
 
-      {activeTab === 'open-packs' && (
+      {activeTab === 'vault' && (
         <div className="profile-tab-pane">
-          <RecentOpeningsTab
+          <PhygitalsVaultTab
             profile={profile}
-            cardLibrary={CARD_LIBRARY as Record<string, Card>}
-            setMetaById={BOOSTERABLE_SET_BY_ID as Map<string, SetMetaLike & { logo?: string }>}
-            onBuyAgain={handleBuyAgain}
-            buyingSetId={buyingSetId}
-            priceLabel={PACK_PRICE_LABEL}
+            refreshNonce={vaultRefreshNonce}
+            onChanged={triggerVaultRefresh}
           />
+        </div>
+      )}
+
+      {activeTab === 'pulls' && (
+        <div className="profile-tab-pane">
+          <PhygitalsPullsTab />
         </div>
       )}
 
@@ -2653,7 +2478,7 @@ export default function App() {
         )}
         {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
-        {page === 'home' && <HomePage profile={profile} onNavigate={setPage} />}
+        {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>
     </>
   );

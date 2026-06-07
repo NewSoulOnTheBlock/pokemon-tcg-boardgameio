@@ -18,6 +18,7 @@ import { MemoryProfileStorage, PostgresProfileStorage, type ProfileStorage } fro
 import { rollPrizeCard } from './server/prizes';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
+import { awaitPurchase as awaitPhygitalsPurchase, createPhygitalsClient, PhygitalsError, type PhygitalsClient } from './server/phygitalsClient';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -49,6 +50,7 @@ const cardStorage: CardStorage = databaseUrl
 const lobbyChat: LobbyChatStore = databaseUrl
   ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
   : new MemoryLobbyChatStore();
+const phygitals: PhygitalsClient = createPhygitalsClient();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
@@ -255,105 +257,85 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
 });
 
 /**
- * Replaces /api/boosters/mint. Now a two-step flow gated by pump.fun:
- *   1) POST /api/boosters/invoice  -> server builds an unsigned base64
- *      Transaction targeting the agent token mint, returns invoice
- *      params + the tx for the client to sign.
- *   2) POST /api/boosters/redeem   -> client submits the signed signature
- *      back along with invoice params + pack choice; server verifies on
- *      chain via PumpAgent.validateInvoicePayment, then rolls the pack
- *      deterministically from (setId, memo) and mints NFTs.
+ * Free in-game booster pack. Pokemon TCG cards (NOT Phygitals) are
+ * issued by the server as a normal deck-eligible card collection — no
+ * payment, no on-chain mint. Phygitals packs (the paid real-card flow)
+ * live under /api/phygitals/* instead.
+ *
+ * Rate-limited per (userId | wallet) on a UTC-day basis so the daily
+ * claim button can be the canonical entry point.
+ *
+ * Other free-pack issuance paths (quest claims, level-up rewards, etc.)
+ * call this same endpoint with an optional `source` tag so we can keep
+ * a single roller + audit log.
  */
-server.router.post('/api/boosters/invoice', jsonBody, async (ctx) => {
-  if (!pumpPayments) {
-    ctx.throw(503, 'Booster payments are not configured on this server (AGENT_TOKEN_MINT_ADDRESS missing).');
-    return;
-  }
-  const body = ctx.request.body as { walletAddress?: string } | undefined;
-  const walletAddress = body?.walletAddress?.trim();
-  if (!walletAddress) {
-    ctx.throw(400, 'walletAddress (base58 pubkey) is required.');
-    return;
-  }
-  try {
-    const invoice = await pumpPayments.buildInvoice(walletAddress);
-    ctx.body = invoice;
-  } catch (err) {
-    console.error(`[invoice] build failed for ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`);
-    ctx.throw(502, `Failed to build invoice: ${err instanceof Error ? err.message : String(err)}`);
-  }
-});
+const claimRateLimit = new Map<string, number>(); // key -> last claim epoch ms
+const CLAIM_COOLDOWN_MS = 22 * 60 * 60 * 1000; // 22h so timezone slop doesn't lock a user out of "their" day
 
-server.router.post('/api/boosters/redeem', jsonBody, async (ctx) => {
-  if (!pumpPayments) {
-    ctx.throw(503, 'Booster payments are not configured on this server.');
+server.router.post('/api/boosters/claim-free', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { userId?: string; walletAddress?: string; setId?: string; source?: string } | undefined;
+  const key = (body?.userId?.trim() || body?.walletAddress?.trim() || '').toLowerCase();
+  if (!key) {
+    ctx.throw(400, 'userId or walletAddress is required to claim the daily pack.');
     return;
   }
-  if (!nftMinter) {
-    ctx.throw(503, 'NFT minter is not configured on this server (SOLANA_TREASURY_SECRET_KEY missing).');
-    return;
-  }
-  const body = ctx.request.body as {
-    walletAddress?: string;
-    memo?: string;
-    startTime?: string;
-    endTime?: string;
-    setId?: string;
-    paymentSignature?: string;
-  } | undefined;
-  const walletAddress = body?.walletAddress?.trim();
-  const memo = body?.memo?.trim();
-  const startTime = body?.startTime?.trim();
-  const endTime = body?.endTime?.trim();
-  const setId = body?.setId?.trim();
-  const paymentSignature = body?.paymentSignature?.trim() || '';
-  if (!walletAddress || !memo || !startTime || !endTime || !setId) {
-    ctx.throw(400, 'walletAddress, memo, startTime, endTime, and setId are required.');
-    return;
-  }
+  const source = body?.source?.trim() || 'daily';
 
-  // Step 1: verify the on-chain payment for this exact invoice.
-  const paid = await pumpPayments.verifyInvoice({ walletAddress, memo, startTime, endTime });
-  if (!paid) {
-    ctx.throw(402, 'Payment for this invoice has not been confirmed yet. Wait a few seconds and retry.');
-    return;
-  }
-
-  // Step 2: roll the pack contents deterministically from (setId, memo).
-  // Same invoice -> same cards on every redeem attempt, so the user can
-  // safely retry without minting a different pack each time.
-  const set = buildBoosterableSets().find((candidate) => candidate.id === setId);
-  if (!set) {
-    ctx.throw(400, `Unknown set: ${setId}`);
-    return;
-  }
-  const pack = rollBoosterPack(set, memo);
-
-  // Step 3: mint each card to the user's wallet as a Metaplex Core asset.
-  const base = publicOrigin || `${ctx.protocol}://${ctx.host}`;
-  const mints: Awaited<ReturnType<typeof nftMinter.mintCard>>[] = [];
-  for (const pulled of pack) {
-    const metadataUri = `${base}/api/cards/${encodeURIComponent(pulled.card.id)}/metadata`;
-    try {
-      mints.push(await nftMinter.mintCard(walletAddress, pulled.card, metadataUri));
-    } catch (err) {
-      console.error(`[mint] redeem mint failed for ${pulled.card.id} -> ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`);
-      ctx.status = 502;
-      ctx.body = {
-        error: `Payment confirmed but mint failed at ${pulled.card.id}: ${err instanceof Error ? err.message : String(err)}`,
-        pack,
-        mints,
-      };
+  // Quest-driven claims bypass the cooldown — they're already gated by
+  // the quest-progress check on the client. The "daily" source is the
+  // one we enforce.
+  if (source === 'daily') {
+    const lastClaimed = claimRateLimit.get(key);
+    if (lastClaimed && Date.now() - lastClaimed < CLAIM_COOLDOWN_MS) {
+      const retryMs = CLAIM_COOLDOWN_MS - (Date.now() - lastClaimed);
+      ctx.status = 429;
+      ctx.set('Retry-After', String(Math.ceil(retryMs / 1000)));
+      ctx.body = { error: 'Daily free pack already claimed', retryAfterMs: retryMs };
       return;
     }
+    claimRateLimit.set(key, Date.now());
   }
 
+  // Pick the set: respect explicit setId if given, otherwise rotate
+  // through the newest boosterable sets so the daily claim isn't always
+  // the same theme.
+  const sets = buildBoosterableSets();
+  let set = body?.setId ? sets.find((candidate) => candidate.id === body.setId) : undefined;
+  if (!set) {
+    set = sets[Math.floor(Math.random() * Math.min(5, sets.length))];
+  }
+  if (!set) {
+    ctx.throw(500, 'No boosterable sets configured.');
+    return;
+  }
+
+  // Roll the pack with a non-deterministic seed; free packs don't get
+  // an on-chain mint so we don't need the (paymentSignature, memo)
+  // determinism the old pay-to-open flow relied on.
+  const seed = `free-${source}-${key}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const pack = rollBoosterPack(set, seed);
+
   ctx.body = {
-    treasury: nftMinter.treasury,
     pack,
-    mints,
-    invoice: { memo, startTime, endTime, walletAddress, setId, paymentSignature },
+    set: { id: set.id, name: set.name, series: set.series },
+    source,
+    claimedAt: new Date().toISOString(),
   };
+});
+
+// Legacy: the pump.fun pay-to-open booster flow has been removed in
+// favour of free in-game packs (claim-free above) + Phygitals (paid
+// graded-card storefront, /api/phygitals/*). Keep a 410 here so any
+// old client bundle still in someone's cache fails fast with a clear
+// message instead of hanging on a deleted endpoint.
+server.router.post('/api/boosters/redeem', (ctx) => {
+  ctx.status = 410;
+  ctx.body = { error: 'Booster purchases have moved. Use /api/boosters/claim-free for free in-game packs or /api/phygitals/* for the Phygitals shop.' };
+});
+
+server.router.post('/api/boosters/invoice', (ctx) => {
+  ctx.status = 410;
+  ctx.body = { error: 'Booster purchases have moved. Use /api/boosters/claim-free for free in-game packs or /api/phygitals/* for the Phygitals shop.' };
 });
 
 server.router.post('/api/login', jsonBody, async (ctx) => {
@@ -445,6 +427,148 @@ server.router.post('/api/lobby/chat', jsonBody, async (ctx) => {
       return;
     }
     throw err;
+  }
+});
+
+/**
+ * Phygitals Partner API proxy. The server holds the partner X-API-Key
+ * (PHYGITALS_API_KEY env var) and forwards calls so the browser never
+ * sees it. Returns a 503 with a friendly error if PHYGITALS_API_KEY
+ * isn't set; UI can show a "shop is loading" placeholder in that case.
+ *
+ * See https://dev.phygitals.com for the full surface; we map every
+ * partner endpoint 1:1 here under /api/phygitals/*.
+ */
+function handlePhygitalsError(ctx: Context, err: unknown): void {
+  if (err instanceof PhygitalsError) {
+    ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
+    ctx.type = 'application/json';
+    ctx.body = err.body && typeof err.body === 'object' ? err.body : { error: err.message };
+    return;
+  }
+  throw err;
+}
+
+server.router.get('/api/phygitals/status', (ctx) => {
+  ctx.body = { enabled: phygitals.enabled, baseUrl: phygitals.baseUrl };
+});
+
+server.router.get('/api/phygitals/packs', async (ctx) => {
+  try {
+    ctx.body = { packs: await phygitals.listPacks() };
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.get('/api/phygitals/chase/:slug', async (ctx) => {
+  try {
+    ctx.body = { chase: await phygitals.listChase(ctx.params.slug) };
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.get('/api/phygitals/recent-pulls', async (ctx) => {
+  const rawClawIds = ctx.query.claw_ids;
+  const claw_ids = Array.isArray(rawClawIds)
+    ? rawClawIds
+    : typeof rawClawIds === 'string' ? [rawClawIds] : undefined;
+  const limitParam = typeof ctx.query.limit === 'string' ? Number(ctx.query.limit) : NaN;
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(100, Math.floor(limitParam)) : undefined;
+  try {
+    ctx.body = { pulls: await phygitals.recentPulls({ claw_ids, limit }) };
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+/**
+ * Combined buy + poll. The client hands us {id, amount, user_id}; we
+ * call /vm/buy/init, then poll /vm/buy/status until fulfilled (or
+ * 90s timeout) and return only the fulfilled result.
+ */
+server.router.post('/api/phygitals/buy', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { id?: string; amount?: number; user_id?: string } | undefined;
+  if (!body?.id || !body.user_id || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
+    ctx.throw(400, 'id, user_id, and amount >= 1 are required');
+    return;
+  }
+  try {
+    const init = await phygitals.buyInit({ id: body.id, amount: body.amount!, user_id: body.user_id });
+    // Sandbox may already include the nfts on init; if so we'd still
+    // poll for the canonical fulfilled envelope so the client never has
+    // to merge two shapes.
+    const result = await awaitPhygitalsPurchase(phygitals, init.session_id);
+    ctx.body = { ...result, session_id: init.session_id };
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.get('/api/phygitals/inventory/:userId', async (ctx) => {
+  try {
+    ctx.body = await phygitals.inventory(ctx.params.userId);
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.get('/api/phygitals/card/:itemId', async (ctx) => {
+  try {
+    ctx.body = await phygitals.card(ctx.params.itemId);
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.post('/api/phygitals/buyback', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { item_id?: string } | undefined;
+  if (!body?.item_id) {
+    ctx.throw(400, 'item_id is required');
+    return;
+  }
+  try {
+    ctx.body = await phygitals.buyback({ item_id: body.item_id });
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.post('/api/phygitals/ship/quote', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { item_ids?: string[]; destination?: unknown } | undefined;
+  if (!body?.item_ids?.length || !body.destination || typeof body.destination !== 'object') {
+    ctx.throw(400, 'item_ids and destination are required');
+    return;
+  }
+  try {
+    ctx.body = await phygitals.shipQuote({
+      item_ids: body.item_ids,
+      destination: body.destination as Parameters<typeof phygitals.shipQuote>[0]['destination'],
+    });
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.post('/api/phygitals/ship/request', jsonBody, async (ctx) => {
+  const body = ctx.request.body as { quote_id?: string } | undefined;
+  if (!body?.quote_id) {
+    ctx.throw(400, 'quote_id is required');
+    return;
+  }
+  try {
+    ctx.body = await phygitals.shipRequest({ quote_id: body.quote_id });
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
+  }
+});
+
+server.router.get('/api/phygitals/ship/order/:orderId', async (ctx) => {
+  try {
+    ctx.body = await phygitals.shipOrder(ctx.params.orderId);
+  } catch (err) {
+    handlePhygitalsError(ctx, err);
   }
 });
 
