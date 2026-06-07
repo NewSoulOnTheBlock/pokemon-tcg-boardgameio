@@ -1,4 +1,4 @@
-export type WalletChain = 'evm' | 'solana';
+export type WalletChain = 'evm' | 'solana' | 'telegram';
 type SolanaProvider = NonNullable<Window['solana']>;
 
 export interface ConnectedWallet {

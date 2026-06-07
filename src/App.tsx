@@ -51,6 +51,14 @@ import {
   shortAddr,
   type ConnectedWallet,
 } from './wallet';
+import {
+  getTelegramUser,
+  initTelegramWebApp,
+  isTelegramMiniApp,
+  showTelegramBackButton,
+  telegramDisplayName,
+  telegramPseudoAddress,
+} from './telegram';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
 type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match';
@@ -520,12 +528,24 @@ function isReservedName(value: string): boolean {
 function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void }) {
   const [name, setName] = useState(() => {
     const cached = loadProfile().name;
-    return cached && !isReservedName(cached) ? cached : '';
+    if (cached && !isReservedName(cached)) return cached;
+    const tgUser = getTelegramUser();
+    return tgUser ? telegramDisplayName(tgUser) : '';
   });
   const [wallet, setWallet] = useState<ConnectedWallet | null>(() => loadProfile().wallet);
   const [error, setError] = useState('');
   const [signingIn, setSigningIn] = useState(false);
   const solanaWallets = detectSolanaWallets();
+  const telegramUser = getTelegramUser();
+  const inTelegram = Boolean(telegramUser);
+  // Inside Telegram, the Telegram user identity replaces the wallet
+  // requirement — we synthesise a stable pseudo-wallet keyed by their
+  // Telegram user ID so the existing profile + leaderboard pipeline
+  // works without changes. Wallet-gated features (boosters, wager
+  // settlement, NFT prizes) are disabled downstream when chain === 'telegram'.
+  const effectiveWallet: ConnectedWallet | null = wallet ?? (telegramUser
+    ? { chain: 'telegram', address: telegramPseudoAddress(telegramUser) }
+    : null);
 
   async function connect(kind: 'evm' | 'solana') {
     setError('');
@@ -538,7 +558,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
 
   async function finish() {
     setError('');
-    if (!wallet) {
+    if (!effectiveWallet) {
       setError('Connect a wallet to enter the arena.');
       return;
     }
@@ -552,7 +572,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
       return;
     }
     setSigningIn(true);
-    const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: trimmedName, wallet };
+    const profile = { ...DEFAULT_PROFILE, ...loadProfile(), name: trimmedName, wallet: effectiveWallet };
     try {
       onSignIn(await loginAndStore(profile));
     } catch (err) {
@@ -563,14 +583,25 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   }
 
   const nameInvalid = name.length > 0 && isReservedName(name);
+  const canEnter = Boolean(effectiveWallet) && name.trim().length >= 2 && !isReservedName(name);
 
   return (
     <main className="signin-page">
       <section className="signin-card">
         <img className="signin-logo" src="/site-logo.png" alt="Pokemon Masters" />
-        <p className="eyebrow">Wallet sign-in required</p>
-        <h1>Pokemon TCG Arena</h1>
-        <p>Connect a Solana or EVM wallet to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
+        {inTelegram ? (
+          <>
+            <p className="eyebrow">Telegram sign-in</p>
+            <h1>Pokemon TCG Arena</h1>
+            <p>Signed in as <strong>{telegramDisplayName(telegramUser!)}</strong> via Telegram. You can play Casual matches and CPU games here — connect a Solana wallet from a browser to buy boosters, claim NFT prizes, or play Wager matches.</p>
+          </>
+        ) : (
+          <>
+            <p className="eyebrow">Wallet sign-in required</p>
+            <h1>Pokemon TCG Arena</h1>
+            <p>Connect a Solana or EVM wallet to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
+          </>
+        )}
         <label>
           Trainer name
           <input
@@ -581,23 +612,31 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
           />
         </label>
         {nameInvalid && <p className="action-hint" style={{ color: '#ff8a8a' }}>"{name.trim()}" is reserved — pick a different name.</p>}
-        <div className="wallet-actions">
-          <button onClick={() => connect('evm')}>Connect EVM Wallet</button>
-          <button onClick={() => connect('solana')}>Connect Solana Wallet</button>
-        </div>
-        <div className="wallet-list">
-          {solanaWallets.map((walletInfo) => (
-            <span key={walletInfo.kind}>{walletInfo.label}: {walletInfo.installed ? 'installed' : 'not found'}</span>
-          ))}
-        </div>
-        {wallet ? (
-          <p className="success">Connected {wallet.chain}: {shortAddr(wallet.address)}</p>
+        {!inTelegram && (
+          <>
+            <div className="wallet-actions">
+              <button onClick={() => connect('evm')}>Connect EVM Wallet</button>
+              <button onClick={() => connect('solana')}>Connect Solana Wallet</button>
+            </div>
+            <div className="wallet-list">
+              {solanaWallets.map((walletInfo) => (
+                <span key={walletInfo.kind}>{walletInfo.label}: {walletInfo.installed ? 'installed' : 'not found'}</span>
+              ))}
+            </div>
+          </>
+        )}
+        {effectiveWallet ? (
+          <p className="success">
+            {effectiveWallet.chain === 'telegram'
+              ? `Telegram identity ready: ${telegramUser ? telegramDisplayName(telegramUser) : shortAddr(effectiveWallet.address)}`
+              : `Connected ${effectiveWallet.chain}: ${shortAddr(effectiveWallet.address)}`}
+          </p>
         ) : (
           <p className="action-hint">No wallet connected yet — pick one above to unlock the arena.</p>
         )}
         {error && <p className="error">{error}</p>}
-        <button className="primary-cta" disabled={signingIn || !wallet || name.trim().length < 2 || isReservedName(name)} onClick={finish}>
-          {signingIn ? 'Loading profile...' : wallet ? 'Enter Arena' : 'Connect a wallet to continue'}
+        <button className="primary-cta" disabled={signingIn || !canEnter} onClick={finish}>
+          {signingIn ? 'Loading profile...' : effectiveWallet ? 'Enter Arena' : 'Connect a wallet to continue'}
         </button>
       </section>
     </main>
@@ -1916,6 +1955,27 @@ export default function App() {
     return stored.name && stored.wallet && !isReservedName(stored.name) ? 'home' : 'signin';
   });
   const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
+
+  // Initialise the Telegram Mini App once (expand viewport, apply theme
+  // colors, mark <html> with .telegram-mini-app). Outside Telegram this
+  // is a no-op so normal browser behaviour is unaffected.
+  useEffect(() => {
+    initTelegramWebApp();
+  }, []);
+
+  // Telegram BackButton -> in-app navigation. Sub-pages show it so the
+  // user can back out without leaving the mini app. Top-level pages
+  // (home, signin) hide it.
+  useEffect(() => {
+    if (!isTelegramMiniApp()) return;
+    if (page === 'signin' || page === 'home') return;
+    const backTarget: Page = page === 'match' || page === 'bot' ? 'home' : 'home';
+    const unsubscribe = showTelegramBackButton(() => {
+      if (page === 'match') setMatchConfig(null);
+      setPage(backTarget);
+    });
+    return unsubscribe;
+  }, [page]);
 
   function updateProfile(next: ProfileState) {
     setProfile(next);
