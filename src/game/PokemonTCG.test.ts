@@ -140,8 +140,13 @@ describe('PokemonTCG', () => {
     expect(G.players['1'].deck).toHaveLength(0);
   });
 
-  it('loads the vendored Pokemon TCG card database without API calls', () => {
-    expect(Object.keys(CARD_LIBRARY).length).toBeGreaterThan(20000);
+  it('loads the curated card library (cards used by starter + campaign decks)', () => {
+    // The manifest is intentionally trimmed at build time to ~150-200 cards
+    // — only those referenced by starter decks, campaign opponent decks,
+    // CARD_ID_ALIASES, or these tests. Keep this lower bound generous
+    // enough that adding new starter/campaign cards doesn't break it.
+    expect(Object.keys(CARD_LIBRARY).length).toBeGreaterThan(150);
+    expect(Object.keys(CARD_LIBRARY).length).toBeLessThan(1000);
     expect(cloneCard('sv1-1').name).toBe('Pineco');
     expect(cloneCard('sprigatito').sourceId).toBe('sv1-13');
   });
