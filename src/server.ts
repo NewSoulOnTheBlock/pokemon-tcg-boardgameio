@@ -17,6 +17,7 @@ import { MemoryProfileStorage, PostgresProfileStorage, type ProfileStorage } fro
 import { rollPrizeCard } from './server/prizes';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
+import { createPhygitalsBuyer, PhygitalsBuyerError, type PhygitalsBuyerService } from './server/phygitalsBuyer';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -48,6 +49,7 @@ const cardStorage: CardStorage = databaseUrl
 const lobbyChat: LobbyChatStore = databaseUrl
   ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
   : new MemoryLobbyChatStore();
+const phygitalsBuyer: PhygitalsBuyerService = createPhygitalsBuyer();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
@@ -254,9 +256,45 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
 });
 
 // All in-app booster routes have been removed. The Boosters page is
-// now Phygitals-only — browse + buy + sellback go directly from the
-// browser to api.phygitals.com via the CORS-proxy Cloudflare Worker.
-// See src/api/phygitals.ts + src/phygitals/PhygitalsStorefront.tsx.
+// now Phygitals-only. The buy flow is two-step: user pays USDC into
+// our treasury (user signs), then the server uses the API-key-bound
+// wallet to actually purchase from Phygitals via the route below.
+
+server.router.get('/api/phygitals-buyer/status', (ctx) => {
+  ctx.body = { enabled: phygitalsBuyer.enabled, treasuryPubkey: phygitalsBuyer.treasuryPubkey };
+});
+
+server.router.post('/api/phygitals-buyer/buy', jsonBody, async (ctx) => {
+  const body = ctx.request.body as {
+    buyerWallet?: string;
+    packId?: string;
+    amount?: number;
+    currency?: 'usdc' | 'usdt';
+    paymentSignature?: string;
+  } | undefined;
+  if (!body?.buyerWallet || !body.packId || !body.paymentSignature || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
+    ctx.throw(400, 'buyerWallet, packId, amount, and paymentSignature are required');
+    return;
+  }
+  try {
+    const result = await phygitalsBuyer.buy({
+      buyerWallet: body.buyerWallet,
+      packId: body.packId,
+      amount: body.amount!,
+      currency: body.currency,
+      paymentSignature: body.paymentSignature,
+    });
+    ctx.body = result;
+  } catch (err) {
+    if (err instanceof PhygitalsBuyerError) {
+      ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
+      ctx.type = 'application/json';
+      ctx.body = err.body && typeof err.body === 'object' ? err.body : { error: err.message };
+      return;
+    }
+    throw err;
+  }
+});
 
 server.router.post('/api/login', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState } | undefined;

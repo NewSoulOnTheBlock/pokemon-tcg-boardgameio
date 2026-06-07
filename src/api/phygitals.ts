@@ -451,3 +451,120 @@ export async function finishPhygitalsSellback(args: {
     { session_id: args.session_id, txs: args.signedTxBytes },
   );
 }
+
+// ============================================================================
+// Two-step server-buy flow (used when the Phygitals API key is bound to
+// a specific wallet — the API wallet must sign every buy, so the user
+// can't sign Phygitals' tx directly).
+//
+// Step 1: user signs a USDC transfer to OUR treasury wallet for the
+//         pack price. Browser sends the resulting on-chain signature
+//         to our server.
+// Step 2: server verifies the on-chain payment, then signs +
+//         submits a Phygitals buy with the API wallet, and returns
+//         the pulled NFTs.
+// ============================================================================
+
+import { apiUrl } from './server';
+
+export interface PhygitalsBuyerStatus {
+  enabled: boolean;
+  treasuryPubkey: string;
+}
+
+export async function fetchPhygitalsBuyerStatus(): Promise<PhygitalsBuyerStatus> {
+  const res = await fetch(apiUrl('/api/phygitals-buyer/status'));
+  if (!res.ok) {
+    throw new PhygitalsApiError(res.status, null, `phygitals-buyer status failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Build + sign the USDC transfer the user pays to the treasury wallet.
+ * Returns the on-chain signature; pass it to serverBuyPhygitalsPack().
+ */
+export async function payTreasuryUsdc(args: {
+  buyerWallet: string;
+  treasuryWallet: string;
+  amount: number;        // pack count (used to compute USDC subtotal)
+  unitPriceUsd: number;  // pack.mint_price as a number
+  currency?: 'usdc' | 'usdt';
+}): Promise<string> {
+  const currency = args.currency ?? 'usdc';
+  const [{ PublicKey, Connection, Transaction }, Token] = await Promise.all([
+    import('@solana/web3.js'),
+    import('@solana/spl-token'),
+  ]);
+  const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+  const USDT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
+  const mint = currency === 'usdc' ? USDC : USDT;
+  const buyer = new PublicKey(args.buyerWallet);
+  const treasury = new PublicKey(args.treasuryWallet);
+
+  const senderAta = Token.getAssociatedTokenAddressSync(mint, buyer, false);
+  const treasuryAta = Token.getAssociatedTokenAddressSync(mint, treasury, false);
+
+  const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+  // Create the treasury ATA idempotently in case it doesn't exist yet
+  // (only fires once per currency per treasury). Buyer pays the rent.
+  const treasuryAtaInfo = await connection.getAccountInfo(treasuryAta);
+  const ixs = [];
+  if (!treasuryAtaInfo) {
+    ixs.push(
+      Token.createAssociatedTokenAccountIdempotentInstruction(buyer, treasuryAta, treasury, mint),
+    );
+  }
+  const amountInToken = Math.round(args.amount * args.unitPriceUsd * 1e6);
+  ixs.push(Token.createTransferInstruction(senderAta, treasuryAta, buyer, amountInToken));
+
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+  const tx = new Transaction({ feePayer: buyer, recentBlockhash: blockhash }).add(...ixs);
+
+  // Ask the wallet to sign + send.
+  const { signAndSendBase64Transaction } = await import('../walletPayment');
+  const transactionBase64 = btoa(
+    Array.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false }))
+      .map((b) => String.fromCharCode(b))
+      .join(''),
+  );
+  return signAndSendBase64Transaction({
+    payerAddress: args.buyerWallet,
+    rpcUrl: SOLANA_RPC_URL,
+    transactionBase64,
+  });
+}
+
+export interface ServerBuyResult {
+  nfts: PhygitalsPullItem[];
+  sessionId?: string;
+  publicId?: string;
+  txHash?: string;
+}
+
+export async function serverBuyPhygitalsPack(args: {
+  buyerWallet: string;
+  packId: string;
+  amount: number;
+  currency?: 'usdc' | 'usdt';
+  paymentSignature: string;
+}): Promise<ServerBuyResult> {
+  const res = await fetch(apiUrl('/api/phygitals-buyer/buy'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  let parsed: unknown = null;
+  if (text) {
+    try { parsed = JSON.parse(text); }
+    catch { parsed = text; }
+  }
+  if (!res.ok) {
+    const msg = (parsed && typeof parsed === 'object' && 'error' in parsed)
+      ? String((parsed as { error: unknown }).error)
+      : `server-buy failed (${res.status})`;
+    throw new PhygitalsApiError(res.status, parsed, msg);
+  }
+  return parsed as ServerBuyResult;
+}

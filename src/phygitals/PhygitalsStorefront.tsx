@@ -16,18 +16,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchPhygitalsPacks,
+  fetchPhygitalsBuyerStatus,
   fetchPhygitalsStatus,
   finishPhygitalsSellback,
   initPhygitalsSellback,
-  preparePhygitalsBuy,
-  submitPhygitalsBuy,
+  payTreasuryUsdc,
+  serverBuyPhygitalsPack,
   PhygitalsApiError,
   type PhygitalsPack,
   type PhygitalsPullItem,
 } from '../api/phygitals';
 import {
   signManyVersionedTransactions,
-  signVersionedTransaction,
 } from '../walletPayment';
 import type { ProfileState } from '../shared/profile';
 
@@ -293,40 +293,51 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
 }) {
   const [amount, setAmount] = useState(1);
   const [currency, setCurrency] = useState<'usdc' | 'usdt'>('usdc');
-  const [busy, setBusy] = useState<'prepare' | 'sign' | 'submit' | null>(null);
+  const [busy, setBusy] = useState<'pay' | 'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pulled, setPulled] = useState<PhygitalsPullItem[] | null>(null);
+  const [treasuryPubkey, setTreasuryPubkey] = useState<string | null>(null);
   const maxAmount = Math.max(1, pack.max_per_mint ?? 10);
   const totalCost = Number(pack.mint_price ?? 0) * amount;
   const buyerWallet = profile.wallet?.address;
+
+  useEffect(() => {
+    fetchPhygitalsBuyerStatus()
+      .then((status) => setTreasuryPubkey(status.enabled ? status.treasuryPubkey : null))
+      .catch(() => setTreasuryPubkey(null));
+  }, []);
 
   const handleBuy = useCallback(async () => {
     if (!buyerWallet) {
       setError('Connect a Solana wallet first to buy a Phygitals pack.');
       return;
     }
+    if (!treasuryPubkey) {
+      setError('Phygitals server-buy is not configured. Try again in a moment, or contact support.');
+      return;
+    }
     setError(null);
     try {
-      setBusy('prepare');
-      const prepared = await preparePhygitalsBuy({
+      // Step 1: user signs a USDC transfer to our treasury wallet.
+      setBusy('pay');
+      const paymentSignature = await payTreasuryUsdc({
+        buyerWallet,
+        treasuryWallet: treasuryPubkey,
+        amount,
+        unitPriceUsd: Number(pack.mint_price ?? 0),
+        currency,
+      });
+
+      // Step 2: server verifies the payment + executes the actual
+      // Phygitals buy with its API-bound wallet. Pulled NFTs land
+      // in the treasury wallet; we track ownership in-app.
+      setBusy('submit');
+      const result = await serverBuyPhygitalsPack({
         buyerWallet,
         packId: pack.id,
         amount,
         currency,
-      });
-
-      setBusy('sign');
-      const signedTxBytes = await signVersionedTransaction({
-        payerAddress: buyerWallet,
-        tx: prepared.tx,
-      });
-
-      setBusy('submit');
-      const result = await submitPhygitalsBuy({
-        packId: prepared.packId,
-        amount: prepared.amount,
-        currency: prepared.currency,
-        signedTxBytes,
+        paymentSignature,
       });
 
       setPulled(result.nfts ?? []);
@@ -336,7 +347,7 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
     } finally {
       setBusy(null);
     }
-  }, [amount, buyerWallet, currency, onPurchased, pack.id]);
+  }, [amount, buyerWallet, currency, onPurchased, pack.id, pack.mint_price, treasuryPubkey]);
 
   return (
     <div className="phygitals-modal-backdrop" onClick={onClose}>
@@ -391,23 +402,22 @@ function PhygitalsPackDetailModal({ pack, profile, onClose, onPurchased }: {
                 <span className="label">Total</span>
                 <strong>{formatUsd(totalCost)}</strong>
               </div>
-              <button className="primary-cta" onClick={handleBuy} disabled={busy !== null || !buyerWallet || pack.in_stock === false}>
+              <button className="primary-cta" onClick={handleBuy} disabled={busy !== null || !buyerWallet || pack.in_stock === false || !treasuryPubkey}>
                 {!buyerWallet
                   ? 'Connect wallet'
-                  : busy === 'prepare'
-                    ? 'Preparing tx…'
-                    : busy === 'sign'
-                      ? 'Approve in wallet…'
+                  : !treasuryPubkey
+                    ? 'Loading…'
+                    : busy === 'pay'
+                      ? 'Approve payment in wallet…'
                       : busy === 'submit'
-                        ? 'Submitting…'
+                        ? 'Pulling cards…'
                         : `Buy ${amount} pull${amount === 1 ? '' : 's'}`}
               </button>
             </div>
             {error && <p className="error">{error}</p>}
             <p className="phygitals-purchase-note">
-              Your wallet pays {formatUsd(totalCost)} {currency.toUpperCase()} directly to Phygitals.
-              Phygitals' fee payer signer covers Solana gas — you only need USDC/USDT in the wallet.
-              Cards arrive in My Pulls on success.
+              Your wallet pays {formatUsd(totalCost)} {currency.toUpperCase()} to the in-app treasury,
+              then the app buys from Phygitals on your behalf. Cards arrive in My Pulls on success.
             </p>
           </section>
         ) : (
