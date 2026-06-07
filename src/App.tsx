@@ -93,6 +93,7 @@ import {
   type CampaignOpponent,
   type CampaignProgress,
 } from './campaign/data';
+import { createCampaignBot } from './campaign/bot';
 import { deckForOpponent } from './campaign/decks';
 import {
   BadgeCase,
@@ -2117,11 +2118,12 @@ function GymChallengePage({ profile, onExit }: { profile: ProfileState; onExit: 
         onMatchComplete={({ winner }) => recordCampaignMatchComplete(opponent, { winner })}
       />
     );
+    const campaignBot = createCampaignBot(activeMatch.opponent);
     return Client({
       game: customisedGame,
       board: Board,
       numPlayers: 2,
-      multiplayer: Local({ bots: { '1': RandomBot } }),
+      multiplayer: Local({ bots: { '1': campaignBot } }),
       loading: () => <div className="match-loading">Loading {opponent.name}'s gym...</div>,
       debug: false,
     });
