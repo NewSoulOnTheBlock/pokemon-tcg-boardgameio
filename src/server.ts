@@ -322,7 +322,12 @@ server.router.post('/api/phygitals-buyer/buy', jsonBody, async (ctx) => {
     if (err instanceof PhygitalsBuyerError) {
       ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
       ctx.type = 'application/json';
-      ctx.body = err.body && typeof err.body === 'object' ? err.body : { error: err.message };
+      // Include both the friendly err.message AND any structured body
+      // fields (e.g. {refunded, refundSignature}) so the client can
+      // surface the "your USDC has been refunded" copy with the
+      // refund signature.
+      const body = err.body && typeof err.body === 'object' ? err.body : {};
+      ctx.body = { error: err.message, ...body };
       return;
     }
     throw err;
