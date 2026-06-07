@@ -65,6 +65,28 @@ import {
   summariseRecentForm,
 } from './matchmaking/helpers';
 import {
+  computeRegionProgress,
+  computeTypeBreakdown,
+  countOwnedRarity,
+  dominantTypeForProfile,
+  findShowcaseCard,
+  MOCK_ACHIEVEMENTS,
+  mostPlayedDeck,
+  overallCollectionPct,
+  summariseDeck,
+} from './profile/data';
+import {
+  AchievementBadgeGrid,
+  CollectionProgress,
+  LeaderboardPanel as ProfileLeaderboardPanel,
+  MatchHistory as ProfileMatchHistory,
+  ProfileTabs,
+  StatCard,
+  StatSection,
+  TrainerHeroBanner,
+  type ProfileTabId,
+} from './profile/components';
+import {
   getTelegramUser,
   initTelegramWebApp,
   isTelegramMiniApp,
@@ -853,267 +875,300 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
     }
   }
 
-  const stats = useMemo(() => {
-    const records = profile.matchRecords ?? [];
-    const ranked = records.filter((r) => (r.matchType ?? 'Ranked') !== 'Casual' && r.result !== 'in_progress');
-    const rankedWins = ranked.filter((r) => r.result === 'win').length;
-    const rankedLosses = ranked.filter((r) => r.result === 'loss').length;
-    const rankedDraws = ranked.filter((r) => r.result === 'draw').length;
-    const casualMatches = records.filter((r) => r.matchType === 'Casual' && r.result !== 'in_progress').length;
-    const totalMatches = ranked.length + casualMatches;
-    const winRate = ranked.length > 0 ? Math.round((rankedWins / ranked.length) * 100) : 0;
-    // "Cards owned" excludes the starter-deck seed and only counts real
-    // NFT-backed cards: every successfully-minted booster pull + every
-    // imported phygital / Collector Crypt NFT.
-    const collectionTotal = nftOwnedCount(profile);
-    const uniqueCards = nftOwnedUniqueCount(profile);
-    const nftMints = profile.packPurchases.reduce((sum, pack) => sum + (pack.mints?.length ?? 0), 0);
-    return {
-      rankedWins, rankedLosses, rankedDraws,
-      rankedTotal: ranked.length,
-      casualMatches,
-      totalMatches,
-      winRate,
-      collectionTotal,
-      uniqueCards,
-      packsOpened: profile.packsOpened,
-      nftMints,
-      decksSaved: profile.deckLibrary.length,
-      importedNfts: profile.importedNfts?.length ?? 0,
-    };
-  }, [profile]);
+  const stats = useMemo(() => getTrainerStats(profile), [profile]);
+  const showcase = useMemo(() => findShowcaseCard(profile), [profile]);
+  const typeBreakdown = useMemo(() => computeTypeBreakdown(profile), [profile]);
+  const regionProgress = useMemo(() => computeRegionProgress(profile), [profile]);
+  const overallPct = useMemo(() => overallCollectionPct(profile), [profile]);
+  const collectionTotal = nftOwnedCount(profile);
+  const uniqueCardsCount = nftOwnedUniqueCount(profile);
+  const secretRareCount = useMemo(() => countOwnedRarity(profile, /Secret|Rainbow|Hyper/i), [profile]);
+  const fullArtCount = useMemo(() => countOwnedRarity(profile, /Full Art|Illustration|Trainer Gallery/i), [profile]);
+  const nftMints = profile.packPurchases.reduce((sum, pack) => sum + (pack.mints?.length ?? 0), 0);
+  const favoriteDeck = useMemo(() => mostPlayedDeck(profile), [profile]);
+  const dominantType = useMemo(() => dominantTypeForProfile(profile), [profile]);
+  const avgDeckSize = profile.deckLibrary.length === 0
+    ? 0
+    : Math.round(profile.deckLibrary.reduce((sum, d) => sum + d.cardIds.length, 0) / profile.deckLibrary.length);
+
+  const [activeTab, setActiveTab] = useState<ProfileTabId>('profile');
+  const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
+  useEffect(() => {
+    if (activeTab !== 'leaderboard') return;
+    let cancelled = false;
+    fetchLeaderboard().then((rows) => { if (!cancelled) setLeaderboard(rows); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [activeTab]);
 
   return (
     <main className="content-page profile-page">
-      <section className="panel profile-panel">
-        <div>
-          <p className="eyebrow">Trainer profile</p>
-          <h1>{profile.name}</h1>
-          <p>{profile.wallet ? `${profile.wallet.chain.toUpperCase()} ${shortAddr(profile.wallet.address)}` : 'No wallet connected'}</p>
-        </div>
-        <label>
-          Display name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        {status && <p className="success">{status}</p>}
-        {error && <p className="error">{error}</p>}
-      </section>
+      <TrainerHeroBanner
+        profile={profile}
+        stats={stats}
+        collectionScore={Math.round(overallPct * 10) / 10}
+        cardsOwned={collectionTotal}
+        showcaseCardId={showcase?.cardId}
+        showcaseReason={showcase?.reason}
+      />
 
-      <section className="panel profile-stats-panel">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Trainer dossier</p>
-            <h2>Lifetime stats</h2>
-          </div>
-        </div>
-        <div className="profile-stats-grid">
-          <div className="profile-stat">
-            <strong>{stats.rankedWins}-{stats.rankedLosses}{stats.rankedDraws > 0 ? `-${stats.rankedDraws}` : ''}</strong>
-            <span>Ranked / Wager record</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.winRate}%</strong>
-            <span>Win rate ({stats.rankedTotal} ranked match{stats.rankedTotal === 1 ? '' : 'es'})</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.casualMatches}</strong>
-            <span>Casual matches played</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.totalMatches}</strong>
-            <span>Total matches</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.collectionTotal}</strong>
-            <span>NFT cards owned ({stats.uniqueCards} unique)</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.packsOpened}</strong>
-            <span>Booster packs opened</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.nftMints}</strong>
-            <span>NFTs minted to wallet</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.decksSaved}</strong>
-            <span>Custom decks saved</span>
-          </div>
-          <div className="profile-stat">
-            <strong>{stats.importedNfts}</strong>
-            <span>Phygitals / Collector Crypt imports</span>
-          </div>
-        </div>
-      </section>
+      <ProfileTabs active={activeTab} onChange={setActiveTab} />
 
-      <section className="panel deckbuilder-panel">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Deckbuilder</p>
-            <h2>{deckName}</h2>
-            <p className="section-subtitle">Collection: {collectionSize(profile.ownedCards)} cards / {Object.keys(profile.ownedCards).length} unique. Starter decks stay in matchmaking and cannot be edited here.</p>
-          </div>
-          <div className={issues.length === 0 ? 'deck-valid' : 'deck-invalid'}>{deck.length}/{DECK_SIZE}</div>
-        </div>
-        <section className="deck-library-section">
-          <div className="deck-library-heading">
+      {activeTab === 'profile' && (
+        <div className="profile-tab-pane">
+          <section className="panel profile-panel">
             <div>
-              <h3>Custom deck library</h3>
-              <p className="section-subtitle">Load a saved custom deck, or start a new blank deck from 0 cards.</p>
+              <p className="eyebrow">Identity</p>
+              <h2>Display name</h2>
+              <p>{profile.wallet ? `${profile.wallet.chain.toUpperCase()} ${shortAddr(profile.wallet.address)}` : 'No wallet connected'}</p>
             </div>
-            <button className="primary-cta" onClick={newDeck}>New deck</button>
-          </div>
-          {deckLibrary.length === 0 ? (
-            <p className="action-hint">No custom decks saved yet. Click New deck, add cards, then save it to your library.</p>
-          ) : (
-            <div className="deck-library">
-              {deckLibrary.map((deckEntry) => {
-                const deckIssues = validateDeck(deckEntry.cardIds);
-                return (
-                  <article className={`deck-library-card ${editingDeckId === deckEntry.id ? 'deck-library-card-active' : ''}`} key={deckEntry.id}>
-                    <div>
-                      <strong>{deckEntry.name}</strong>
-                      <span>{deckEntry.cardIds.length}/{DECK_SIZE} cards</span>
-                      <span>{deckIssues.length === 0 ? 'Ready for matches' : `${deckIssues.length} issue${deckIssues.length === 1 ? '' : 's'}`}</span>
-                    </div>
-                    <div className="deck-library-card-actions">
-                      <button onClick={() => loadDeck(deckEntry)}>Load</button>
-                      <button className="danger" onClick={() => deleteDeck(deckEntry)}>Delete</button>
-                    </div>
-                  </article>
-                );
-              })}
+            <label>
+              Display name
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            {status && <p className="success">{status}</p>}
+            {error && <p className="error">{error}</p>}
+          </section>
+
+          <StatSection title="Battle stats">
+            <StatCard label="Wins" value={stats.rankedWins} />
+            <StatCard label="Losses" value={stats.rankedLosses} />
+            <StatCard label="Win rate" value={`${stats.winRate}%`} hint={`${stats.rankedTotal} ranked`} />
+            <StatCard label="Ranked record" value={`${stats.rankedWins}-${stats.rankedLosses}${stats.rankedDraws ? `-${stats.rankedDraws}` : ''}`} />
+            <StatCard label="Casual matches" value={stats.casualMatches} />
+            <StatCard label="Total matches" value={stats.totalMatches} />
+          </StatSection>
+
+          <StatSection title="Collection stats">
+            <StatCard label="NFT cards owned" value={collectionTotal} hint={`${uniqueCardsCount} unique`} />
+            <StatCard label="Unique cards" value={uniqueCardsCount} />
+            <StatCard label="Secret / Hyper rares" value={secretRareCount} />
+            <StatCard label="Full Art / Illustration" value={fullArtCount} />
+            <StatCard label="Packs opened" value={profile.packsOpened} />
+            <StatCard label="NFTs minted" value={nftMints} />
+            <StatCard label="NFTs imported" value={profile.importedNfts?.length ?? 0} />
+          </StatSection>
+
+          <StatSection title="Deck stats">
+            <StatCard label="Custom decks saved" value={profile.deckLibrary.length} />
+            <StatCard label="Favourite deck" value={favoriteDeck ?? '—'} hint={favoriteDeck ? 'Most played in match history' : 'Play a match to set'} />
+            <StatCard label="Most played type" value={dominantType ?? '—'} hint={dominantType ? 'By NFT mints' : 'Open packs to set'} />
+            <StatCard label="Avg deck size" value={`${avgDeckSize}/60`} />
+          </StatSection>
+        </div>
+      )}
+
+      {activeTab === 'collection' && (
+        <div className="profile-tab-pane">
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Collection progress</p>
+                <h2>{collectionTotal} NFTs · {uniqueCardsCount} unique</h2>
+              </div>
             </div>
-          )}
-        </section>
-        <label>
-          Deck name
-          <input value={deckName} onChange={(event) => setDeckName(event.target.value)} />
-        </label>
-        {issues.length > 0 && (
-          <ul className="issues">
-            {issues.map((issue) => <li key={issue}>{issue}</li>)}
-          </ul>
-        )}
-        <div className="deckbuilder-layout">
-          <aside className="deck-list">
-            <h3>Current custom deck</h3>
-            {Object.keys(counts).length === 0 ? (
-              <p className="action-hint">This deck starts from 0 cards.</p>
-            ) : (
-              Object.entries(counts).map(([cardId, count]) => (
-                <div key={cardId}>
-                  <span>
-                    {CARD_LIBRARY[cardId]?.images?.small && (
-                      <img alt="" className="deck-list-thumb" loading="lazy" src={CARD_LIBRARY[cardId].images.small} />
-                    )}
-                    {CARD_LIBRARY[cardId]?.name ?? cardId}
-                  </span>
-                  <strong>x{count}</strong>
+            <CollectionProgress
+              overallPct={overallPct}
+              regions={regionProgress}
+              types={typeBreakdown}
+            />
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'decks' && (
+        <div className="profile-tab-pane">
+          <section className="panel deckbuilder-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Deckbuilder</p>
+                <h2>{deckName}</h2>
+                <p className="section-subtitle">Collection: {collectionSize(profile.ownedCards)} cards / {Object.keys(profile.ownedCards).length} unique. Starter decks stay in matchmaking and cannot be edited here.</p>
+              </div>
+              <div className={issues.length === 0 ? 'deck-valid' : 'deck-invalid'}>{deck.length}/{DECK_SIZE}</div>
+            </div>
+            <section className="deck-library-section">
+              <div className="deck-library-heading">
+                <div>
+                  <h3>Custom deck library</h3>
+                  <p className="section-subtitle">Load a saved custom deck, or start a new blank deck from 0 cards.</p>
                 </div>
-              ))
-            )}
-          </aside>
-          <div className="card-pool">
-            <div className="filters">
-              <button className={filter === 'all' ? 'nav-active' : ''} onClick={() => setFilter('all')}>All</button>
-              {STARTER_ENERGY_TYPES.map((type) => (
-                <button className={filter === type ? 'nav-active' : ''} key={type} onClick={() => setFilter(type)}>{type}</button>
-              ))}
-            </div>
-            <div className="card-pool-grid">
-              {visibleCards.map((card) => {
-                const count = counts[card.id] ?? 0;
-                const ownedCount = profile.ownedCards[card.id] ?? 0;
-                const maxAllowed = card.kind === 'energy' ? ownedCount : Math.min(ownedCount, MAX_CARD_COPIES);
-                const canAdd = deck.length < DECK_SIZE && count < maxAllowed;
-                return (
-                  <article className={`builder-card ${count ? 'builder-card-owned' : ''}`} key={card.id} tabIndex={0}>
-                    <DeckbuilderCardArt card={card} />
-                    <div className="builder-card-copy-count">x{count}</div>
-                    <div className="builder-card-info">
-                      <strong>{card.name}</strong>
-                      <span>{cardLabel(card)}</span>
-                      <span>Owned: {ownedCount} / usable: {maxAllowed}</span>
-                    </div>
-                    <div className="builder-card-controls">
-                      <button disabled={count <= 0} onClick={() => updateDeck(card.id, -1)}>-</button>
-                      <span>{count}</span>
-                      <button disabled={!canAdd} onClick={() => updateDeck(card.id, 1)}>+</button>
-                    </div>
-                  </article>
-                );
-              })}
-              {visibleCards.length === 0 && (
-                <p className="action-hint">No owned cards match this filter. Open boosters or choose another type.</p>
+                <button className="primary-cta" onClick={newDeck}>New deck</button>
+              </div>
+              {deckLibrary.length === 0 ? (
+                <p className="action-hint">No custom decks saved yet. Click New deck, add cards, then save it to your library.</p>
+              ) : (
+                <div className="deck-library">
+                  {deckLibrary.map((deckEntry) => {
+                    const deckIssues = validateDeck(deckEntry.cardIds);
+                    const breakdown = summariseDeck(deckEntry.cardIds);
+                    const matchesWithDeck = profile.matchRecords.filter((r) => r.playerDeckLabel === deckEntry.name);
+                    const wins = matchesWithDeck.filter((r) => r.result === 'win').length;
+                    const losses = matchesWithDeck.filter((r) => r.result === 'loss').length;
+                    const lastPlayed = matchesWithDeck.length > 0 ? matchesWithDeck[matchesWithDeck.length - 1].startedAt : undefined;
+                    return (
+                      <article className={`deck-library-card ${editingDeckId === deckEntry.id ? 'deck-library-card-active' : ''}`} key={deckEntry.id}>
+                        <div>
+                          <strong>{deckEntry.name}</strong>
+                          <span className="deck-library-card-breakdown">
+                            {breakdown.size}/{DECK_SIZE} · 🐉 {breakdown.pokemonCount} · 🎓 {breakdown.trainerCount} · ⚡ {breakdown.energyCount}
+                            {breakdown.dominantType && <> · {breakdown.dominantType}</>}
+                          </span>
+                          {matchesWithDeck.length > 0 && (
+                            <span className="deck-library-card-record">{wins}W / {losses}L · {matchesWithDeck.length > 0 ? Math.round((wins / matchesWithDeck.length) * 100) : 0}% win</span>
+                          )}
+                          {lastPlayed && (
+                            <span className="deck-library-card-last">Last played {new Date(lastPlayed).toLocaleDateString()}</span>
+                          )}
+                          <span>{deckIssues.length === 0 ? '✓ Ready for matches' : `${deckIssues.length} issue${deckIssues.length === 1 ? '' : 's'}`}</span>
+                        </div>
+                        <div className="deck-library-card-actions">
+                          <button onClick={() => loadDeck(deckEntry)}>Edit</button>
+                          <button className="danger" onClick={() => deleteDeck(deckEntry)}>Delete</button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
               )}
-            </div>
-          </div>
-        </div>
-        <button className="primary-cta" onClick={save} disabled={!deckName.trim()}>Save deck to library</button>
-      </section>
-
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Match records</p>
-            <h2>{profile.matchRecords.length} saved match{profile.matchRecords.length === 1 ? '' : 'es'}</h2>
-          </div>
-        </div>
-        {profile.matchRecords.length === 0 ? (
-          <p>No matches recorded yet. Play your first match from Matchmaking or vs Bot.</p>
-        ) : (
-          <div className="match-list">
-            {[...profile.matchRecords].reverse().slice(0, 20).map((record) => (
-              <article className={`match-card match-card-result-${record.result}`} key={`${record.matchID}-${record.playerID}`}>
-                <div>
-                  <div className="match-card-meta">
-                    <span className={`match-type-badge match-type-badge-${record.matchType ?? 'Casual'}`}>{record.matchType ?? 'Casual'}</span>
-                    <span className={`match-result-pill match-result-pill-${record.result}`}>
-                      {record.result === 'in_progress' ? 'In progress' : record.result.toUpperCase()}
-                    </span>
-                    <span className="match-id-chip">#{record.matchID.slice(0, 8)}</span>
-                    {record.wagerAmount && record.wagerAmount > 0 && (
-                      <span className="wager-chip">{record.wagerAmount} {record.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'}</span>
-                    )}
-                  </div>
-                  <strong>Player {record.playerID}: {record.playerDeckLabel} <em style={{ opacity: 0.6 }}>vs</em> {record.opponentDeckLabel}</strong>
-                  <span>{record.completedAt ? `Completed ${new Date(record.completedAt).toLocaleString()}` : `Started ${new Date(record.startedAt).toLocaleString()}`}</span>
-                  {record.reason && <span className="match-card-reason">{record.reason}</span>}
+            </section>
+            <label>
+              Deck name
+              <input value={deckName} onChange={(event) => setDeckName(event.target.value)} />
+            </label>
+            {issues.length > 0 && (
+              <ul className="issues">
+                {issues.map((issue) => <li key={issue}>{issue}</li>)}
+              </ul>
+            )}
+            <div className="deckbuilder-layout">
+              <aside className="deck-list">
+                <h3>Current custom deck</h3>
+                {Object.keys(counts).length === 0 ? (
+                  <p className="action-hint">This deck starts from 0 cards.</p>
+                ) : (
+                  Object.entries(counts).map(([cardId, count]) => (
+                    <div key={cardId}>
+                      <span>
+                        {CARD_LIBRARY[cardId]?.images?.small && (
+                          <img alt="" className="deck-list-thumb" loading="lazy" src={CARD_LIBRARY[cardId].images.small} />
+                        )}
+                        {CARD_LIBRARY[cardId]?.name ?? cardId}
+                      </span>
+                      <strong>x{count}</strong>
+                    </div>
+                  ))
+                )}
+              </aside>
+              <div className="card-pool">
+                <div className="filters">
+                  <button className={filter === 'all' ? 'nav-active' : ''} onClick={() => setFilter('all')}>All</button>
+                  {STARTER_ENERGY_TYPES.map((type) => (
+                    <button className={filter === type ? 'nav-active' : ''} key={type} onClick={() => setFilter(type)}>{type}</button>
+                  ))}
                 </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {profile.packPurchases.length > 0 && (
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Booster history</p>
-              <h2>{profile.packPurchases.length} pack{profile.packPurchases.length === 1 ? '' : 's'} opened</h2>
-            </div>
-          </div>
-          <div className="pack-history-list">
-            {[...profile.packPurchases].reverse().slice(0, 10).map((purchase) => (
-              <article className="pack-history-card" key={purchase.signature}>
-                <div>
-                  <strong>{purchase.cardIds.length} cards</strong>
-                  <span>{new Date(purchase.openedAt).toLocaleString()}</span>
-                  {purchase.mints && purchase.mints.length > 0 && (
-                    <span>{purchase.mints.length} NFT{purchase.mints.length === 1 ? '' : 's'} minted</span>
+                <div className="card-pool-grid">
+                  {visibleCards.map((card) => {
+                    const count = counts[card.id] ?? 0;
+                    const ownedCount = profile.ownedCards[card.id] ?? 0;
+                    const maxAllowed = card.kind === 'energy' ? ownedCount : Math.min(ownedCount, MAX_CARD_COPIES);
+                    const canAdd = deck.length < DECK_SIZE && count < maxAllowed;
+                    return (
+                      <article className={`builder-card ${count ? 'builder-card-owned' : ''}`} key={card.id} tabIndex={0}>
+                        <DeckbuilderCardArt card={card} />
+                        <div className="builder-card-copy-count">x{count}</div>
+                        <div className="builder-card-info">
+                          <strong>{card.name}</strong>
+                          <span>{cardLabel(card)}</span>
+                          <span>Owned: {ownedCount} / usable: {maxAllowed}</span>
+                        </div>
+                        <div className="builder-card-controls">
+                          <button disabled={count <= 0} onClick={() => updateDeck(card.id, -1)}>-</button>
+                          <span>{count}</span>
+                          <button disabled={!canAdd} onClick={() => updateDeck(card.id, 1)}>+</button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {visibleCards.length === 0 && (
+                    <p className="action-hint">No owned cards match this filter. Open boosters or choose another type.</p>
                   )}
                 </div>
-                {purchase.signature && (
-                  <a href={`https://solscan.io/tx/${purchase.signature}`} target="_blank" rel="noreferrer">
-                    View tx ↗
-                  </a>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
+              </div>
+            </div>
+            <button className="primary-cta" onClick={save} disabled={!deckName.trim()}>Save deck to library</button>
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'match-history' && (
+        <div className="profile-tab-pane">
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Battle log</p>
+                <h2>{profile.matchRecords.length} match{profile.matchRecords.length === 1 ? '' : 'es'} on record</h2>
+              </div>
+            </div>
+            <ProfileMatchHistory records={profile.matchRecords} />
+          </section>
+
+          {profile.packPurchases.length > 0 && (
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Booster history</p>
+                  <h2>{profile.packPurchases.length} pack{profile.packPurchases.length === 1 ? '' : 's'} opened</h2>
+                </div>
+              </div>
+              <div className="pack-history-list">
+                {[...profile.packPurchases].reverse().slice(0, 10).map((purchase) => (
+                  <article className="pack-history-card" key={purchase.signature}>
+                    <div>
+                      <strong>{purchase.cardIds.length} cards</strong>
+                      <span>{new Date(purchase.openedAt).toLocaleString()}</span>
+                      {purchase.mints && purchase.mints.length > 0 && (
+                        <span>{purchase.mints.length} NFT{purchase.mints.length === 1 ? '' : 's'} minted</span>
+                      )}
+                    </div>
+                    {purchase.signature && (
+                      <a href={`https://solscan.io/tx/${purchase.signature}`} target="_blank" rel="noreferrer">
+                        View tx ↗
+                      </a>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'achievements' && (
+        <div className="profile-tab-pane">
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Achievements <span className="mock-tag">(catalogue isolated; unlock checks read real data)</span></p>
+                <h2>{MOCK_ACHIEVEMENTS.filter((a) => a.unlocked(profile)).length} / {MOCK_ACHIEVEMENTS.length} unlocked</h2>
+              </div>
+            </div>
+            <AchievementBadgeGrid profile={profile} achievements={MOCK_ACHIEVEMENTS} />
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'leaderboard' && (
+        <div className="profile-tab-pane">
+          <section className="panel leaderboard-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Hall of fame</p>
+                <h2>🏆 Leaderboard</h2>
+              </div>
+            </div>
+            <ProfileLeaderboardPanel entries={leaderboard} selfUserId={profile.userId} />
+          </section>
+        </div>
       )}
     </main>
   );

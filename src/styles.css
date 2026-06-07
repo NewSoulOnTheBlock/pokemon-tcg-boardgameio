@@ -3765,3 +3765,276 @@ button:disabled {
 
 /* Tame the now-redundant old PlayerSummary block + log strip. */
 .player-summaries-hidden { display: none; }
+
+/* ===================================================================== */
+/* ===== Profile dashboard (tabbed) =================================== */
+/* ===================================================================== */
+
+/* Trainer hero banner */
+.trainer-hero {
+  align-items: stretch;
+  background:
+    linear-gradient(135deg, rgba(192, 132, 252, 0.12), rgba(34, 211, 238, 0.12)),
+    rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(192, 132, 252, 0.4);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: grid;
+  gap: 24px;
+  grid-template-columns: auto 1fr auto;
+  margin-bottom: 16px;
+  padding: 24px;
+  max-width: 1380px;
+  width: min(1380px, 100%);
+  box-sizing: border-box;
+}
+@media (max-width: 960px) {
+  .trainer-hero { grid-template-columns: 1fr; text-align: center; }
+}
+.trainer-hero-left, .trainer-hero-right { display: flex; flex-direction: column; gap: 10px; }
+.trainer-hero-center { display: flex; flex-direction: column; gap: 6px; justify-content: center; min-width: 0; }
+.trainer-hero-name {
+  background: linear-gradient(120deg, #fef3c7, #fbbf24, #e879f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-size: clamp(2rem, 4vw, 3rem);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.trainer-hero-wallet {
+  align-items: center;
+  color: var(--ink-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  gap: 6px;
+  margin: 0;
+}
+.trainer-hero-wallet code { background: rgba(2, 6, 12, 0.6); border-radius: 6px; font-size: 0.78rem; padding: 2px 8px; }
+.trainer-hero-wallet-chip { background: linear-gradient(135deg, #c084fc, #22d3ee); border-radius: 999px; color: #0f172a; font-size: 0.7rem; font-weight: 800; padding: 2px 8px; }
+.trainer-hero-stats {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  margin-top: 12px;
+}
+.hero-stat {
+  background: rgba(2, 6, 12, 0.55);
+  border: 1px solid rgba(192, 132, 252, 0.2);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+}
+.hero-stat strong {
+  background: linear-gradient(120deg, #fef3c7, #fbbf24, #e879f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+}
+.hero-stat span { color: var(--ink-secondary); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+
+/* Trainer avatar card */
+.trainer-avatar-card {
+  align-items: center;
+  background: rgba(2, 6, 12, 0.55);
+  border: 1px solid rgba(192, 132, 252, 0.3);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  width: 200px;
+}
+.trainer-avatar-image {
+  align-items: center;
+  border: 3px solid rgba(251, 191, 36, 0.6);
+  border-radius: 50%;
+  box-shadow: 0 0 30px rgba(251, 191, 36, 0.3);
+  display: flex;
+  font-size: 3rem;
+  font-weight: 900;
+  height: 120px;
+  justify-content: center;
+  width: 120px;
+}
+.trainer-avatar-image span { color: rgba(255, 255, 255, 0.95); text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6); }
+.trainer-avatar-change {
+  background: rgba(192, 132, 252, 0.15);
+  border: 1px solid rgba(192, 132, 252, 0.4);
+  border-radius: 8px;
+  color: var(--ink-secondary);
+  cursor: not-allowed;
+  font-size: 0.78rem;
+  padding: 4px 12px;
+}
+.trainer-avatar-rank {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 4px 12px;
+}
+.trainer-avatar-level {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+.trainer-avatar-level span { color: var(--ink-secondary); font-size: 0.78rem; }
+.trainer-avatar-xp-bar {
+  background: rgba(2, 6, 12, 0.7);
+  border: 1px solid rgba(192, 132, 252, 0.2);
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+  width: 100%;
+}
+.trainer-avatar-xp-fill {
+  background: linear-gradient(90deg, #fbbf24, #e879f9);
+  height: 100%;
+  transition: width 0.6s ease;
+}
+.trainer-avatar-xp-text { font-size: 0.7rem !important; }
+
+/* Favorite showcase */
+.favorite-showcase {
+  align-items: center;
+  background: rgba(2, 6, 12, 0.55);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  width: 200px;
+}
+.favorite-showcase-empty p { color: var(--ink-secondary); font-size: 0.85rem; margin: 0; text-align: center; }
+.favorite-showcase-card {
+  align-items: center;
+  display: flex;
+  height: 200px;
+  justify-content: center;
+  width: 140px;
+}
+.favorite-showcase-card img { border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); max-height: 100%; max-width: 100%; }
+.favorite-showcase-fallback {
+  align-items: center;
+  background: rgba(192, 132, 252, 0.2);
+  border-radius: 8px;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  text-align: center;
+  width: 100%;
+}
+.favorite-showcase strong { color: #fbbf24; text-align: center; }
+.favorite-showcase-reason { color: var(--ink-secondary); font-size: 0.72rem; text-align: center; }
+
+/* Tabs */
+.profile-tabs {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(192, 132, 252, 0.25);
+  border-radius: 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin: 0 auto 16px;
+  max-width: 1380px;
+  overflow-x: auto;
+  padding: 6px;
+  width: min(1380px, 100%);
+}
+.profile-tab {
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 8px 14px;
+  transition: background 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+.profile-tab:hover { background: rgba(192, 132, 252, 0.1); color: var(--ink-primary); }
+.profile-tab-active {
+  background: linear-gradient(135deg, rgba(192, 132, 252, 0.3), rgba(34, 211, 238, 0.25));
+  color: var(--ink-primary);
+  box-shadow: 0 0 16px rgba(192, 132, 252, 0.2);
+}
+.profile-tab:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
+.profile-tab-pane { display: flex; flex-direction: column; gap: 16px; max-width: 1380px; width: min(1380px, 100%); }
+
+/* Stat sections */
+.stat-section { background: rgba(15, 23, 42, 0.65); backdrop-filter: blur(10px); border: 1px solid rgba(192, 132, 252, 0.2); border-radius: 14px; padding: 18px; }
+.stat-section-title { color: #fbbf24; font-size: 1rem; letter-spacing: 0.04em; margin: 0 0 12px; text-transform: uppercase; }
+.stat-section-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.stat-card { background: rgba(2, 6, 12, 0.55); border: 1px solid rgba(192, 132, 252, 0.2); border-radius: 10px; display: flex; flex-direction: column; gap: 4px; padding: 12px; transition: transform 0.15s ease, border-color 0.15s ease; }
+.stat-card:hover { border-color: rgba(192, 132, 252, 0.5); transform: translateY(-1px); }
+.stat-card strong { background: linear-gradient(120deg, #fef3c7, #fbbf24, #e879f9); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; font-size: 1.5rem; }
+.stat-card span { color: var(--ink-secondary); font-size: 0.78rem; font-weight: 600; }
+.stat-card-hint { color: var(--ink-secondary); font-size: 0.7rem; font-style: italic; opacity: 0.7; }
+
+/* Collection progress */
+.collection-progress { display: flex; flex-direction: column; gap: 18px; }
+.collection-progress-overall { background: rgba(2, 6, 12, 0.55); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 12px; display: flex; flex-direction: column; gap: 6px; padding: 16px; }
+.collection-progress-overall strong { background: linear-gradient(120deg, #fef3c7, #fbbf24, #e879f9); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; font-size: 2rem; }
+.collection-progress-overall span { color: var(--ink-secondary); font-size: 0.85rem; }
+.collection-progress-bar { background: rgba(2, 6, 12, 0.7); border-radius: 999px; height: 10px; overflow: hidden; }
+.collection-progress-fill { background: linear-gradient(90deg, #fbbf24, #e879f9); height: 100%; transition: width 0.6s ease; }
+.collection-progress-regions, .collection-progress-types { display: flex; flex-direction: column; gap: 6px; }
+.collection-progress-regions h3, .collection-progress-types h3 { color: #c084fc; font-size: 0.92rem; margin: 0 0 4px; }
+.region-progress-row, .type-progress-row { align-items: center; display: grid; gap: 10px; grid-template-columns: 130px 1fr 80px; }
+.region-progress-label, .type-progress-label { font-size: 0.85rem; font-weight: 700; }
+.region-progress-bar, .type-progress-bar { background: rgba(2, 6, 12, 0.7); border-radius: 999px; height: 8px; overflow: hidden; }
+.region-progress-fill { background: linear-gradient(90deg, #c084fc, #22d3ee); height: 100%; transition: width 0.6s ease; }
+.type-progress-fill { height: 100%; transition: width 0.6s ease; }
+.region-progress-count, .type-progress-count { color: var(--ink-secondary); font-size: 0.75rem; text-align: right; }
+
+/* Achievements */
+.achievement-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.achievement-badge { align-items: flex-start; background: rgba(2, 6, 12, 0.5); border: 1px solid rgba(192, 132, 252, 0.2); border-radius: 12px; display: flex; gap: 12px; padding: 14px; transition: transform 0.15s ease, border-color 0.15s ease; }
+.achievement-badge-unlocked { background: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(192, 132, 252, 0.12)); border-color: rgba(251, 191, 36, 0.55); box-shadow: 0 0 24px rgba(251, 191, 36, 0.2); }
+.achievement-badge-unlocked:hover { box-shadow: 0 0 32px rgba(251, 191, 36, 0.4); transform: translateY(-1px); }
+.achievement-badge-locked { opacity: 0.55; filter: grayscale(0.3); }
+.achievement-badge-icon { font-size: 2rem; line-height: 1; }
+.achievement-badge-body { display: flex; flex-direction: column; flex: 1; gap: 4px; }
+.achievement-badge-body strong { color: var(--ink-primary); }
+.achievement-badge-body p { color: var(--ink-secondary); font-size: 0.82rem; margin: 0; }
+.achievement-badge-state { color: #fbbf24; font-size: 0.78rem; font-weight: 800; }
+.achievement-badge-progress { align-items: center; display: flex; gap: 8px; margin-top: 4px; }
+.achievement-badge-progress-bar { background: rgba(2, 6, 12, 0.7); border-radius: 999px; flex: 1; height: 6px; overflow: hidden; }
+.achievement-badge-progress-fill { background: linear-gradient(90deg, #22d3ee, #c084fc); height: 100%; transition: width 0.6s ease; }
+.achievement-badge-progress span { color: var(--ink-secondary); font-size: 0.72rem; }
+
+/* Deck library card extras */
+.deck-library-card-breakdown { color: var(--ink-secondary); font-size: 0.78rem; }
+.deck-library-card-record { color: #86efac; font-size: 0.78rem; font-weight: 700; }
+.deck-library-card-last { color: var(--ink-secondary); font-size: 0.7rem; font-style: italic; }
+
+/* Match history list */
+.match-history-empty { background: rgba(2, 6, 12, 0.5); border: 2px dashed rgba(192, 132, 252, 0.3); border-radius: 14px; color: var(--ink-secondary); padding: 28px 20px; text-align: center; }
+.match-history-list { display: flex; flex-direction: column; gap: 8px; }
+.match-history-row { align-items: center; background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(192, 132, 252, 0.2); border-radius: 10px; display: flex; gap: 14px; padding: 12px 14px; }
+.match-history-result { flex-shrink: 0; min-width: 60px; }
+.match-history-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+
+/* Leaderboard row highlight when it's you */
+.leaderboard-row-self { background: rgba(251, 191, 36, 0.15) !important; box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0.5); }
+
+@media (prefers-reduced-motion: reduce) {
+  .trainer-avatar-image, .achievement-badge-unlocked, .stat-card, .collection-progress-fill, .region-progress-fill, .type-progress-fill, .achievement-badge-progress-fill, .trainer-avatar-xp-fill { transition: none !important; animation: none !important; }
+}
