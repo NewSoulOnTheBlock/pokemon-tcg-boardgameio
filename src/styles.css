@@ -1356,6 +1356,24 @@ button:disabled {
   color: var(--tier-wager);
 }
 
+.prize-modal {
+  border-color: rgba(251, 191, 36, 0.55);
+  box-shadow: var(--shadow-3), 0 0 80px rgba(251, 191, 36, 0.3);
+}
+
+.prize-modal .eyebrow {
+  color: #fbbf24;
+}
+
+.prize-modal-card {
+  align-self: center;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  max-height: 320px;
+  max-width: 220px;
+  object-fit: contain;
+}
+
 .wager-modal-sub {
   color: var(--ink-secondary);
   font-size: 0.9rem;

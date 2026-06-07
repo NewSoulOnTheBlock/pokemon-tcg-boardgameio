@@ -7,6 +7,7 @@ import { Local, SocketIO } from 'boardgame.io/multiplayer';
 import { RandomBot } from 'boardgame.io/ai';
 import {
   buildBoosterInvoice,
+  claimMatchPrize,
   fetchLeaderboard,
   loginProfile,
   persistMatchRecord,
@@ -14,6 +15,7 @@ import {
   persistProfile,
   redeemBoosterInvoice,
   scanWalletForImports,
+  type ClaimedPrize,
   type ImportCandidate,
 } from './api/profiles';
 import { MULTIPLAYER_SERVER } from './api/server';
@@ -1805,6 +1807,7 @@ function MatchClient({
   profile: ProfileState;
 }) {
   const [recordedGameover, setRecordedGameover] = useState(false);
+  const [prizeClaim, setPrizeClaim] = useState<ClaimedPrize | null>(null);
   const recordMatchCompletion = useCallback(async ({ reason, winner, winnerWallet }: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => {
     if (recordedGameover) {
       return;
@@ -1831,14 +1834,48 @@ function MatchClient({
       startedAt: startedRecord?.startedAt ?? new Date().toISOString(),
       completedAt: new Date().toISOString(),
     };
-    onProfileChange(await persistMatchAndStore(profile, record));
-  }, [config.matchID, config.matchType, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, config.wagerAmount, config.wagerCurrency, onProfileChange, profile, recordedGameover]);
+    const saved = await persistMatchAndStore(profile, record);
+    onProfileChange(saved);
+
+    // Free prize card for winning. Server enforces once-per-match via
+    // app_match_records.prize_claimed. Skip if the player didn't sign
+    // in with a Solana wallet — we have nothing to mint to.
+    if (result !== 'win') return;
+    const winnerWalletAddress = config.playerWallet ?? (profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined);
+    if (!winnerWalletAddress) return;
+    try {
+      const claim = await claimMatchPrize({
+        matchID: config.matchID,
+        walletAddress: winnerWalletAddress,
+        playerID: config.playerID,
+      });
+      setPrizeClaim(claim);
+      if (claim.card && !claim.alreadyClaimed) {
+        const updated: ProfileState = {
+          ...saved,
+          ownedCards: addCardsToCollection(saved.ownedCards, [claim.card.id]),
+        };
+        const persistedWithPrize = await persistProfile(updated);
+        onProfileChange(persistedWithPrize);
+      }
+    } catch (err) {
+      console.warn('[prize] claim failed', err);
+    }
+  }, [config.matchID, config.matchType, config.opponentDeckLabel, config.playerDeckLabel, config.playerID, config.playerWallet, config.wagerAmount, config.wagerCurrency, onProfileChange, profile, recordedGameover]);
 
   const MatchBoard = useMemo(() => (
     function MatchBoard(props: BoardProps<PokemonTCGState>) {
-      return <PokemonBoard {...props} onMatchComplete={recordMatchCompletion} selectedDeck={config.playerDeck} playerWallet={config.playerWallet} />;
+      return (
+        <PokemonBoard
+          {...props}
+          onMatchComplete={recordMatchCompletion}
+          prizeClaim={prizeClaim}
+          selectedDeck={config.playerDeck}
+          playerWallet={config.playerWallet}
+        />
+      );
     }
-  ), [config.playerDeck, config.playerWallet, recordMatchCompletion]);
+  ), [config.playerDeck, config.playerWallet, prizeClaim, recordMatchCompletion]);
 
   const PokemonClient = useMemo(() => {
     return Client({

@@ -3,13 +3,20 @@ import { Pool, type PoolConfig } from 'pg';
 import type { MatchLeaderboardEntry, MatchRecord, PackPurchase, ProfileState, StoredProfile } from '../shared/profile';
 import { loginKeyForProfile, maxCollections } from '../shared/profile';
 
-interface ProfileStorage {
+export interface ProfileStorage {
   connect(): Promise<void>;
   login(profile: ProfileState): Promise<StoredProfile>;
   saveProfile(userId: string, profile: ProfileState): Promise<StoredProfile>;
   recordPack(userId: string, purchase: PackPurchase, profile: ProfileState): Promise<StoredProfile>;
   recordMatch(userId: string, record: MatchRecord): Promise<StoredProfile>;
   listLeaderboard(): Promise<MatchLeaderboardEntry[]>;
+  findProfileByWallet?(walletAddress: string): Promise<StoredProfile | undefined>;
+  reservePrizeClaim?(userId: string, matchID: string, playerID: string): Promise<{
+    eligible: boolean;
+    reason?: string;
+    alreadyClaimed?: { cardId: string; mintAddress?: string; signature?: string };
+  }>;
+  recordPrizeClaim?(userId: string, matchID: string, playerID: string, prize: { cardId: string; mintAddress?: string; signature?: string }): Promise<void>;
 }
 
 const PROFILES_TABLE = 'app_profiles';
@@ -185,6 +192,10 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS wager_amount NUMERIC`);
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS wager_currency TEXT`);
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS winner_wallet TEXT`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_claimed BOOLEAN NOT NULL DEFAULT FALSE`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_card_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_mint_address TEXT`);
+    await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_mint_signature TEXT`);
   }
 
   async login(profile: ProfileState): Promise<StoredProfile> {
@@ -320,6 +331,78 @@ export class PostgresProfileStorage implements ProfileStorage {
   private async findByUserId(userId: string): Promise<StoredProfile | undefined> {
     const { rows } = await this.pool.query(`SELECT * FROM ${PROFILES_TABLE} WHERE user_id = $1`, [userId]);
     return rows[0] ? storedProfileFromRow(rows[0]) : undefined;
+  }
+
+  // Used by the per-match prize endpoint to map a Solana wallet address
+  // back to the StoredProfile (and its userId) so we can look up + update
+  // the match record. wallet JSONB looks like `{ chain, address, label }`,
+  // so we filter on the address subkey.
+  async findProfileByWallet(walletAddress: string): Promise<StoredProfile | undefined> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${PROFILES_TABLE} WHERE wallet->>'address' = $1 ORDER BY last_login_at DESC LIMIT 1`,
+      [walletAddress],
+    );
+    return rows[0] ? storedProfileFromRow(rows[0]) : undefined;
+  }
+
+  /**
+   * Atomically check whether this (user, match, player) can claim a prize
+   * and reserve the slot. Uses a single UPDATE with WHERE clauses so two
+   * concurrent calls can't both mint a prize for the same match.
+   *
+   * Returns `{ eligible: true }` if the caller is now responsible for
+   * rolling + minting and then calling `recordPrizeClaim`. Returns
+   * `{ eligible: false, reason, alreadyClaimed? }` otherwise (no record,
+   * not a win, or already claimed).
+   */
+  async reservePrizeClaim(userId: string, matchID: string, playerID: string): Promise<{
+    eligible: boolean;
+    reason?: string;
+    alreadyClaimed?: { cardId: string; mintAddress?: string; signature?: string };
+  }> {
+    const existing = await this.pool.query(
+      `SELECT result, prize_claimed, prize_card_id, prize_mint_address, prize_mint_signature
+       FROM ${MATCHES_TABLE}
+       WHERE user_id = $1 AND match_id = $2 AND player_id = $3`,
+      [userId, matchID, playerID],
+    );
+    const row = existing.rows[0];
+    if (!row) return { eligible: false, reason: 'no_match_record' };
+    if (row.result !== 'win') return { eligible: false, reason: 'not_a_win' };
+    if (row.prize_claimed) {
+      return {
+        eligible: false,
+        reason: 'already_claimed',
+        alreadyClaimed: row.prize_card_id ? {
+          cardId: row.prize_card_id,
+          mintAddress: row.prize_mint_address ?? undefined,
+          signature: row.prize_mint_signature ?? undefined,
+        } : undefined,
+      };
+    }
+    return { eligible: true };
+  }
+
+  /**
+   * Persist the rolled prize + mint info on the match record. Called by
+   * the endpoint after `reservePrizeClaim` returned `eligible: true` and
+   * the NFT mint has succeeded.
+   */
+  async recordPrizeClaim(
+    userId: string,
+    matchID: string,
+    playerID: string,
+    prize: { cardId: string; mintAddress?: string; signature?: string },
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${MATCHES_TABLE}
+       SET prize_claimed = TRUE,
+           prize_card_id = $4,
+           prize_mint_address = $5,
+           prize_mint_signature = $6
+       WHERE user_id = $1 AND match_id = $2 AND player_id = $3`,
+      [userId, matchID, playerID, prize.cardId, prize.mintAddress ?? null, prize.signature ?? null],
+    );
   }
 
   private async saveStoredProfile(profile: StoredProfile): Promise<StoredProfile> {
@@ -512,5 +595,3 @@ export class MemoryProfileStorage implements ProfileStorage {
     return profile;
   }
 }
-
-export type { ProfileStorage };

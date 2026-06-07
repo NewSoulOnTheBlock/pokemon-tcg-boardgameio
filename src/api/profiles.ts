@@ -124,6 +124,19 @@ export async function redeemBoosterInvoice(input: {
   });
 }
 
+export interface ClaimedPrize {
+  alreadyClaimed: boolean;
+  card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } } | null;
+  mint: { mintAddress: string; signature: string } | null;
+}
+
+export async function claimMatchPrize(input: { matchID: string; walletAddress: string; playerID: string }): Promise<ClaimedPrize> {
+  return request<ClaimedPrize>(`/api/matches/${encodeURIComponent(input.matchID)}/prize`, {
+    method: 'POST',
+    body: JSON.stringify({ walletAddress: input.walletAddress, playerID: input.playerID }),
+  });
+}
+
 export interface ImportCandidate {
   mintAddress: string;
   nftName: string;

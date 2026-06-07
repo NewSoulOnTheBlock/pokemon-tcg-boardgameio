@@ -14,7 +14,8 @@ import { buildBoosterableSets, rollBoosterPack } from './server/boosters';
 import { createNftMinter, type NftMinter } from './server/nftMinter';
 import { buildSetNameIndex, scanWalletForPokemonNfts } from './server/nftScanner';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
-import { MemoryProfileStorage, PostgresProfileStorage } from './server/profileStorage';
+import { MemoryProfileStorage, PostgresProfileStorage, type ProfileStorage } from './server/profileStorage';
+import { rollPrizeCard } from './server/prizes';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
@@ -36,7 +37,7 @@ const origins = allowedOrigins.length > 0
 const db = databaseUrl
   ? new PostgresStorage({ connectionString: databaseUrl, ssl: postgresSslFromEnv() })
   : new FlatFile({ dir: storageDir, logging: false });
-const profileStorage = databaseUrl
+const profileStorage: ProfileStorage = databaseUrl
   ? new PostgresProfileStorage(databaseUrl, postgresSslFromEnv(), {
       leaderboardResetAt: process.env.LEADERBOARD_RESET_AT?.trim() || undefined,
     })
@@ -372,6 +373,97 @@ server.router.post('/api/profiles/:userId/matches', jsonBody, async (ctx) => {
 
 server.router.get('/api/leaderboard', async (ctx) => {
   ctx.body = await profileStorage.listLeaderboard();
+});
+
+/**
+ * Free prize card for the winner of a multiplayer match. Idempotent per
+ * (winner profile, match, player slot) — the prize_claimed flag on
+ * app_match_records prevents a second roll. Mints the card as a Metaplex
+ * Core NFT to the wallet, falling back to a no-mint claim if the
+ * treasury minter isn't configured (still records the prize so the user
+ * gets it in their collection).
+ */
+server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
+  if (typeof profileStorage.findProfileByWallet !== 'function'
+      || typeof profileStorage.reservePrizeClaim !== 'function'
+      || typeof profileStorage.recordPrizeClaim !== 'function') {
+    ctx.throw(503, 'Prize claiming requires Postgres-backed profile storage.');
+    return;
+  }
+  const matchID = ctx.params.matchID;
+  const body = ctx.request.body as { walletAddress?: string; playerID?: string } | undefined;
+  const walletAddress = body?.walletAddress?.trim();
+  const playerID = body?.playerID?.trim();
+  if (!matchID || !walletAddress || !playerID) {
+    ctx.throw(400, 'matchID, walletAddress, and playerID are required.');
+    return;
+  }
+  if (playerID !== '0' && playerID !== '1') {
+    ctx.throw(400, 'playerID must be "0" or "1".');
+    return;
+  }
+
+  const profile = await profileStorage.findProfileByWallet(walletAddress);
+  if (!profile) {
+    ctx.throw(404, 'No profile found for that wallet. Sign in first.');
+    return;
+  }
+
+  const reservation = await profileStorage.reservePrizeClaim(profile.userId, matchID, playerID);
+  if (!reservation.eligible) {
+    if (reservation.reason === 'already_claimed' && reservation.alreadyClaimed) {
+      const cachedCard = CARD_LIBRARY[reservation.alreadyClaimed.cardId];
+      ctx.status = 200;
+      ctx.body = {
+        alreadyClaimed: true,
+        card: cachedCard ?? null,
+        mint: reservation.alreadyClaimed.mintAddress ? {
+          mintAddress: reservation.alreadyClaimed.mintAddress,
+          signature: reservation.alreadyClaimed.signature ?? '',
+        } : null,
+      };
+      return;
+    }
+    if (reservation.reason === 'no_match_record') {
+      ctx.throw(404, 'Match record not found. Make sure the match was completed and recorded.');
+      return;
+    }
+    if (reservation.reason === 'not_a_win') {
+      ctx.throw(403, 'Prize cards are only awarded for wins.');
+      return;
+    }
+    ctx.throw(409, `Prize claim rejected: ${reservation.reason ?? 'unknown'}.`);
+    return;
+  }
+
+  const { card } = rollPrizeCard();
+  let mint: { mintAddress: string; signature: string } | undefined;
+  if (nftMinter) {
+    const base = publicOrigin || `${ctx.protocol}://${ctx.host}`;
+    const metadataUri = `${base}/api/cards/${encodeURIComponent(card.id)}/metadata`;
+    try {
+      const result = await nftMinter.mintCard(walletAddress, card, metadataUri);
+      mint = { mintAddress: result.mintAddress, signature: result.signature };
+    } catch (err) {
+      console.error(`[prize] mint failed for ${card.id} -> ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`);
+      // Record the claim without mint info — the user still gets the
+      // card added to their collection client-side. We do NOT release
+      // the reservation because rolling a different card on retry would
+      // be surprising; the prize is the card, the NFT is the bonus.
+    }
+  }
+
+  await profileStorage.recordPrizeClaim(profile.userId, matchID, playerID, {
+    cardId: card.id,
+    mintAddress: mint?.mintAddress,
+    signature: mint?.signature,
+  });
+
+  ctx.body = {
+    alreadyClaimed: false,
+    card,
+    mint: mint ?? null,
+  };
 });
 
 /**

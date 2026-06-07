@@ -9,6 +9,11 @@ interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
   onMatchComplete?: (payload: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => void | Promise<void>;
   playerID: string | null;
   playerWallet?: string;
+  prizeClaim?: {
+    alreadyClaimed: boolean;
+    card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } } | null;
+    mint: { mintAddress: string; signature: string } | null;
+  } | null;
   selectedDeck?: {
     cardIds: string[];
     label: string;
@@ -319,7 +324,7 @@ function PlayerSummary({ id, player }: { id: PlayerID; player: PlayerState }) {
   );
 }
 
-export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerWallet, selectedDeck }: PokemonBoardProps) {
+export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerWallet, prizeClaim, selectedDeck }: PokemonBoardProps) {
   const actingPlayer = (playerID === '1' ? '1' : '0') as PlayerID;
   const player = G.players[actingPlayer];
   const isCurrent = ctx.currentPlayer === actingPlayer;
@@ -330,11 +335,14 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
   const [boardHint, setBoardHint] = useState('');
   const [wagerCopied, setWagerCopied] = useState(false);
   const [wagerDismissed, setWagerDismissed] = useState(false);
+  const [prizeDismissed, setPrizeDismissed] = useState(false);
   const playmatImage = PLAYMAT_IMAGE_BY_ID[G.playmatId];
   const visibleDeckCount = player.deckCount ?? player.deck.length;
   const isLoadingSelectedDeck = Boolean(selectedDeck && isSetup && !player.ready && player.hand.length === 0 && visibleDeckCount === 0);
   const winnerWallet = gameover?.winner ? G.walletAddresses?.[gameover.winner] : undefined;
   const isWager = G.matchType === 'Wager' && G.wagerAmount > 0;
+  const youWon = gameover?.winner === actingPlayer;
+  const showPrize = Boolean(gameover && youWon && prizeClaim?.card && !prizeDismissed);
 
   // Forfeit guard: if the player closes the tab, navigates away, or clicks
   // Exit (which unmounts MatchClient → PokemonClient → PokemonBoard), fire
@@ -721,6 +729,39 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
                 </a>
               )}
               <button onClick={() => setWagerDismissed(true)}>Dismiss</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPrize && prizeClaim?.card && (
+        <div className="wager-modal-backdrop" role="dialog" aria-modal="true" aria-label="Prize card unlocked">
+          <div className="wager-modal prize-modal">
+            <p className="eyebrow">🎁 Prize card unlocked</p>
+            <h2>You won {prizeClaim.card.name}!</h2>
+            <p className="wager-modal-sub">
+              One free card per match win — added straight to your collection{prizeClaim.mint ? ' and minted as an NFT to your wallet' : ''}.
+              {prizeClaim.card.rarity ? ` Rarity: ${prizeClaim.card.rarity}.` : ''}
+            </p>
+            {prizeClaim.card.images?.large || prizeClaim.card.images?.small ? (
+              <img
+                alt={prizeClaim.card.name}
+                className="prize-modal-card"
+                src={prizeClaim.card.images.large || prizeClaim.card.images.small}
+              />
+            ) : null}
+            <div className="wager-modal-actions">
+              {prizeClaim.mint?.signature && (
+                <a
+                  className="primary-cta"
+                  href={`https://solscan.io/tx/${prizeClaim.mint.signature}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View mint on Solscan ↗
+                </a>
+              )}
+              <button onClick={() => setPrizeDismissed(true)}>Awesome</button>
             </div>
           </div>
         </div>
