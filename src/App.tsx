@@ -1922,10 +1922,11 @@ function MatchClient({
           prizeClaim={prizeClaim}
           selectedDeck={config.playerDeck}
           playerWallet={config.playerWallet}
+          playerName={profile.name}
         />
       );
     }
-  ), [config.playerDeck, config.playerWallet, prizeClaim, recordMatchCompletion]);
+  ), [config.playerDeck, config.playerWallet, prizeClaim, profile.name, recordMatchCompletion]);
 
   const PokemonClient = useMemo(() => {
     return Client({

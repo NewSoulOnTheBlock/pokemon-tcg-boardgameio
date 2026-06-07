@@ -1,6 +1,7 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import type { BoardProps } from 'boardgame.io/react';
 import { CardImage as SharedCardImage } from './components/CardImage';
+import { MatchChatPanel } from './components/MatchChatPanel';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
 import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
@@ -8,6 +9,7 @@ import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
   onMatchComplete?: (payload: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => void | Promise<void>;
   playerID: string | null;
+  playerName?: string;
   playerWallet?: string;
   prizeClaim?: {
     alreadyClaimed: boolean;
@@ -324,7 +326,7 @@ function PlayerSummary({ id, player }: { id: PlayerID; player: PlayerState }) {
   );
 }
 
-export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerWallet, prizeClaim, selectedDeck }: PokemonBoardProps) {
+export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, playerID, playerName, playerWallet, prizeClaim, selectedDeck, sendChatMessage }: PokemonBoardProps) {
   const actingPlayer = (playerID === '1' ? '1' : '0') as PlayerID;
   const player = G.players[actingPlayer];
   const isCurrent = ctx.currentPlayer === actingPlayer;
@@ -657,6 +659,13 @@ export function PokemonBoard({ G, ctx, moves, onMatchComplete, playerID, playerW
 
   return (
     <main>
+      <MatchChatPanel
+        chatMessages={chatMessages}
+        sendChatMessage={sendChatMessage}
+        selfPlayerID={actingPlayer}
+        selfName={playerName}
+        opponentName={G.deckLabels?.[actingPlayer === '0' ? '1' : '0']}
+      />
       <header className="hero">
         <div>
           <h1>{G.matchName}</h1>
