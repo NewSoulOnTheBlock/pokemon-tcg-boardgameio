@@ -393,11 +393,23 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
     };
   }, [gameover, moves]);
 
+  // Guard so onMatchComplete fires exactly once per gameover, regardless
+  // of how many times the parent re-renders (which mutates the inline
+  // onMatchComplete callback identity and would otherwise reproc the
+  // useEffect on every re-render → infinite "you won" loop in campaign).
+  // Track the (winner, reason) we've already reported via a ref.
+  const reportedGameoverRef = useRef<string | null>(null);
+  // Keep onMatchComplete in a ref so we always call the latest version
+  // without putting it in the dep array.
+  const onMatchCompleteRef = useRef(onMatchComplete);
+  onMatchCompleteRef.current = onMatchComplete;
   useEffect(() => {
-    if (gameover) {
-      void onMatchComplete?.({ reason: gameover.reason, winner: gameover.winner, winnerWallet });
-    }
-  }, [gameover?.reason, gameover?.winner, onMatchComplete, winnerWallet]);
+    if (!gameover) return;
+    const fingerprint = `${gameover.winner ?? ''}:${gameover.reason ?? ''}`;
+    if (reportedGameoverRef.current === fingerprint) return;
+    reportedGameoverRef.current = fingerprint;
+    void onMatchCompleteRef.current?.({ reason: gameover.reason, winner: gameover.winner, winnerWallet });
+  }, [gameover?.reason, gameover?.winner, winnerWallet]);
 
   useEffect(() => {
     if (!selectedDeck || !isSetup || player.ready || player.hand.length > 0 || visibleDeckCount > 0 || player.active || player.bench.length > 0) {
