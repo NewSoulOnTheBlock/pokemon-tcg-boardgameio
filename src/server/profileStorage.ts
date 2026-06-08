@@ -11,6 +11,7 @@ export interface ProfileStorage {
   recordMatch(userId: string, record: MatchRecord): Promise<StoredProfile>;
   listLeaderboard(): Promise<MatchLeaderboardEntry[]>;
   findProfileByWallet?(walletAddress: string): Promise<StoredProfile | undefined>;
+  findProfileByUserId?(userId: string): Promise<StoredProfile | undefined>;
   reservePrizeClaim?(userId: string, matchID: string, playerID: string): Promise<{
     eligible: boolean;
     reason?: string;
@@ -26,6 +27,12 @@ export interface ProfileStorage {
    *  failing (throws) if the balance would go negative. Used by the
    *  buy-with-credits flow before calling Phygitals. */
   spendPhygitalsCredits?(userId: string, deltaUsd: number): Promise<number>;
+  /** Atomically claim the user's daily-free-pack reward.
+   *  - Checks `lastDailyPackAt` against `cooldownMs`; throws if still on cooldown.
+   *  - Inserts a pack-purchase row keyed on the synthetic signature.
+   *  - Adds the rolled cards to `ownedCards` and bumps `packsOpened`.
+   *  Returns the new profile + the recorded PackPurchase. */
+  claimDailyPack?(userId: string, cardIds: string[], cooldownMs: number): Promise<{ profile: StoredProfile; purchase: PackPurchase }>;
 }
 
 const PROFILES_TABLE = 'app_profiles';
@@ -34,6 +41,17 @@ const MATCHES_TABLE = 'app_match_records';
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** Thrown by claimDailyPack when the user is still on cooldown.
+ *  Carries the wall-clock time when the next claim becomes available. */
+export class DailyPackCooldownError extends Error {
+  nextClaimAt: string;
+  constructor(nextClaimAt: string) {
+    super(`Daily pack on cooldown until ${nextClaimAt}`);
+    this.name = 'DailyPackCooldownError';
+    this.nextClaimAt = nextClaimAt;
+  }
 }
 
 function normalizeProfile(profile: ProfileState): ProfileState {
@@ -48,6 +66,7 @@ function normalizeProfile(profile: ProfileState): ProfileState {
     matchRecords: Array.isArray(profile.matchRecords) ? profile.matchRecords : [],
     importedNfts: Array.isArray(profile.importedNfts) ? profile.importedNfts : [],
     phygitalsCreditsUsd: Number.isFinite(profile.phygitalsCreditsUsd) ? Math.max(0, profile.phygitalsCreditsUsd ?? 0) : 0,
+    lastDailyPackAt: typeof profile.lastDailyPackAt === 'string' ? profile.lastDailyPackAt : undefined,
   };
 }
 
@@ -88,6 +107,9 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
     // mutation paths (top-up + spend) call setPhygitalsCredits()
     // directly, never via this merge function.
     phygitalsCreditsUsd: existing.phygitalsCreditsUsd ?? 0,
+    // lastDailyPackAt is server-managed too — claimDailyPack() updates
+    // it atomically with a cooldown check. The client only reads it.
+    lastDailyPackAt: existing.lastDailyPackAt,
     updatedAt: nowIso(),
     lastLoginAt: nowIso(),
   };
@@ -107,6 +129,7 @@ function storedProfileFromRow(row: {
   pack_purchases: PackPurchase[] | null;
   packs_opened: number;
   phygitals_credits_usd: number | null;
+  last_daily_pack_at: string | null;
   updated_at: string;
   user_id: string;
   wallet: ProfileState['wallet'];
@@ -125,6 +148,7 @@ function storedProfileFromRow(row: {
     matchRecords: row.match_records ?? [],
     importedNfts: row.imported_nfts ?? [],
     phygitalsCreditsUsd: Number(row.phygitals_credits_usd ?? 0),
+    lastDailyPackAt: row.last_daily_pack_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastLoginAt: row.last_login_at,
@@ -180,6 +204,7 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS deck_library JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS imported_nfts JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS phygitals_credits_usd NUMERIC NOT NULL DEFAULT 0`);
+    await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS last_daily_pack_at TIMESTAMPTZ`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${PACKS_TABLE} (
         id BIGSERIAL PRIMARY KEY,
@@ -347,6 +372,10 @@ export class PostgresProfileStorage implements ProfileStorage {
     return rows[0] ? storedProfileFromRow(rows[0]) : undefined;
   }
 
+  async findProfileByUserId(userId: string): Promise<StoredProfile | undefined> {
+    return this.findByUserId(userId);
+  }
+
   private async findByUserId(userId: string): Promise<StoredProfile | undefined> {
     const { rows } = await this.pool.query(`SELECT * FROM ${PROFILES_TABLE} WHERE user_id = $1`, [userId]);
     return rows[0] ? storedProfileFromRow(rows[0]) : undefined;
@@ -462,14 +491,65 @@ export class PostgresProfileStorage implements ProfileStorage {
     return Number(rows[0]!.phygitals_credits_usd);
   }
 
+  async claimDailyPack(
+    userId: string,
+    cardIds: string[],
+    cooldownMs: number,
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase }> {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      throw new Error('claimDailyPack requires at least one cardId');
+    }
+    const now = nowIso();
+    const cutoff = new Date(Date.now() - cooldownMs).toISOString();
+    // Atomic cooldown check + reservation in a single UPDATE.
+    // Zero rows returned => still on cooldown OR profile doesn't exist.
+    const { rows } = await this.pool.query<{ owned_cards: Record<string, number>; packs_opened: number; last_daily_pack_at: string | null }>(
+      `UPDATE ${PROFILES_TABLE}
+       SET last_daily_pack_at = $2, updated_at = $2
+       WHERE user_id = $1
+         AND (last_daily_pack_at IS NULL OR last_daily_pack_at < $3)
+       RETURNING owned_cards, packs_opened, last_daily_pack_at`,
+      [userId, now, cutoff],
+    );
+    if (rows.length === 0) {
+      // Either no profile or cooldown active — disambiguate.
+      const probe = await this.findByUserId(userId);
+      if (!probe) throw new Error(`Profile not found: ${userId}`);
+      const last = probe.lastDailyPackAt ? Date.parse(probe.lastDailyPackAt) : 0;
+      const next = new Date(last + cooldownMs).toISOString();
+      throw new DailyPackCooldownError(next);
+    }
+    const ownedCards: Record<string, number> = { ...(rows[0]!.owned_cards ?? {}) };
+    for (const id of cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    const signature = `daily-pack:${userId}:${now}`;
+    await this.pool.query(
+      `UPDATE ${PROFILES_TABLE}
+       SET owned_cards = $2::jsonb, packs_opened = packs_opened + 1, updated_at = $3
+       WHERE user_id = $1`,
+      [userId, JSON.stringify(ownedCards), now],
+    );
+    await this.pool.query(
+      `INSERT INTO ${PACKS_TABLE} (user_id, signature, opened_at, card_ids)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (user_id, signature) DO NOTHING`,
+      [userId, signature, now, JSON.stringify(cardIds)],
+    );
+    const profile = await this.findByUserId(userId);
+    if (!profile) throw new Error(`Profile vanished after claim: ${userId}`);
+    return {
+      profile,
+      purchase: { signature, openedAt: now, cardIds: [...cardIds] },
+    };
+  }
+
   private async saveStoredProfile(profile: StoredProfile): Promise<StoredProfile> {
     const normalized = normalizeProfile(profile);
     await this.pool.query(
       `
         INSERT INTO ${PROFILES_TABLE}
-          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, imported_nfts, owned_cards, packs_opened, created_at, updated_at, last_login_at)
+          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, imported_nfts, owned_cards, packs_opened, last_daily_pack_at, created_at, updated_at, last_login_at)
         VALUES
-          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13)
+          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT (user_id)
         DO UPDATE SET
           name = EXCLUDED.name,
@@ -494,6 +574,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         JSON.stringify(normalized.importedNfts ?? []),
         JSON.stringify(normalized.ownedCards),
         normalized.packsOpened,
+        profile.lastDailyPackAt ?? null,
         profile.createdAt,
         profile.updatedAt,
         profile.lastLoginAt,
@@ -574,6 +655,10 @@ export class MemoryProfileStorage implements ProfileStorage {
 
   async connect(): Promise<void> {
     return;
+  }
+
+  async findProfileByUserId(userId: string): Promise<StoredProfile | undefined> {
+    return this.profiles.get(userId);
   }
 
   async login(profile: ProfileState): Promise<StoredProfile> {
@@ -670,6 +755,38 @@ export class MemoryProfileStorage implements ProfileStorage {
     const next = current - deltaUsd;
     this.profiles.set(userId, { ...existing, phygitalsCreditsUsd: next, updatedAt: nowIso() });
     return next;
+  }
+
+  async claimDailyPack(
+    userId: string,
+    cardIds: string[],
+    cooldownMs: number,
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase }> {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      throw new Error('claimDailyPack requires at least one cardId');
+    }
+    const existing = this.profiles.get(userId);
+    if (!existing) throw new Error(`Profile not found: ${userId}`);
+    const last = existing.lastDailyPackAt ? Date.parse(existing.lastDailyPackAt) : 0;
+    if (Date.now() - last < cooldownMs) {
+      const next = new Date(last + cooldownMs).toISOString();
+      throw new DailyPackCooldownError(next);
+    }
+    const now = nowIso();
+    const ownedCards: Record<string, number> = { ...existing.ownedCards };
+    for (const id of cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    const signature = `daily-pack:${userId}:${now}`;
+    const purchase: PackPurchase = { signature, openedAt: now, cardIds: [...cardIds] };
+    const updated: StoredProfile = {
+      ...existing,
+      ownedCards,
+      packsOpened: existing.packsOpened + 1,
+      packPurchases: [...existing.packPurchases, purchase],
+      lastDailyPackAt: now,
+      updatedAt: now,
+    };
+    this.profiles.set(userId, updated);
+    return { profile: updated, purchase };
   }
 
   private saveStoredProfile(profile: StoredProfile): StoredProfile {

@@ -115,6 +115,7 @@ import {
   QuestCenter,
   awardXPAndPersist,
 } from './quests/components';
+import { DailyPackWidget } from './rewards/DailyPackWidget';
 import {
   xpForCampaignWin,
   xpForMatchResult,
@@ -735,7 +736,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   );
 }
 
-function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: (page: Page) => void }) {
+function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void; onNavigate: (page: Page) => void }) {
   const stats = useMemo(() => {
     const records = profile.matchRecords ?? [];
     const wins = records.filter((record) => record.result === 'win').length;
@@ -773,6 +774,7 @@ function HomePage({ profile, onNavigate }: { profile: ProfileState; onNavigate: 
           walletAddress={profile.wallet?.address}
           onOpenQuests={() => onNavigate('profile')}
         />
+        <DailyPackWidget profile={profile} onProfileChange={onProfileChange} />
         <div className="home-button-stack">
           <button className="home-menu-button primary-cta" onClick={() => onNavigate('matchmaking')}>
             <strong>Matchmaking</strong>
@@ -2499,7 +2501,7 @@ export default function App() {
         )}
         {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
-        {page === 'home' && <HomePage profile={profile} onNavigate={setPage} />}
+        {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>
       {/* Boosters page already shows the big "Powered by Phygitals" footer,
           so we skip the corner badge there to avoid double-branding. */}

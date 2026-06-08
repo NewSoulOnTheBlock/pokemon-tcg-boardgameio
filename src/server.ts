@@ -13,8 +13,9 @@ import { MemoryCardStorage, PostgresCardStorage, type CardStorage } from './serv
 import { createNftMinter, type NftMinter } from './server/nftMinter';
 import { buildSetNameIndex, scanWalletForPokemonNfts } from './server/nftScanner';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
-import { MemoryProfileStorage, PostgresProfileStorage, type ProfileStorage } from './server/profileStorage';
+import { MemoryProfileStorage, PostgresProfileStorage, DailyPackCooldownError, type ProfileStorage } from './server/profileStorage';
 import { rollPrizeCard } from './server/prizes';
+import { rollDailyPack } from './server/packRoller';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
 import { createPhygitalsBuyer, PhygitalsBuyerError, type PhygitalsBuyerService } from './server/phygitalsBuyer';
@@ -475,6 +476,76 @@ server.router.post('/api/profiles/:userId/matches', jsonBody, async (ctx) => {
     return;
   }
   ctx.body = await profileStorage.recordMatch(ctx.params.userId, record);
+});
+
+// ---------------------------------------------------------------------------
+// Free-pack rewards
+//
+// `/api/rewards/daily-pack/status` — cheap cooldown check for the home widget.
+// `/api/rewards/daily-pack/claim`  — atomic claim. Server rolls the cards (5C
+//   + 3U + 1 rare-or-better), inserts a pack-purchase row keyed on a synthetic
+//   signature, and bumps ownedCards. Returns the new profile + the rolled
+//   cardIds so the client can show a reveal animation immediately.
+//
+// 22h cooldown (slightly under 24h so users can claim "every day" without
+// having to wait for the exact wall-clock time they claimed yesterday).
+// ---------------------------------------------------------------------------
+
+const DAILY_PACK_COOLDOWN_MS = 22 * 60 * 60 * 1000;
+
+function nextDailyPackAt(lastIso?: string): string | null {
+  if (!lastIso) return null;
+  const last = Date.parse(lastIso);
+  if (!Number.isFinite(last)) return null;
+  return new Date(last + DAILY_PACK_COOLDOWN_MS).toISOString();
+}
+
+server.router.get('/api/rewards/daily-pack/status/:userId', async (ctx) => {
+  if (!profileStorage.findProfileByUserId) {
+    ctx.throw(501, 'findProfileByUserId not supported by this storage backend');
+    return;
+  }
+  const profile = await profileStorage.findProfileByUserId(ctx.params.userId);
+  const last = profile?.lastDailyPackAt;
+  const nextAt = nextDailyPackAt(last);
+  const canClaim = !last || (nextAt !== null && Date.parse(nextAt) <= Date.now());
+  ctx.body = {
+    lastClaimAt: last ?? null,
+    nextClaimAt: nextAt,
+    canClaim,
+    cooldownMs: DAILY_PACK_COOLDOWN_MS,
+  };
+});
+
+server.router.post('/api/rewards/daily-pack/claim/:userId', async (ctx) => {
+  if (!profileStorage.claimDailyPack) {
+    ctx.throw(501, 'claimDailyPack not supported by this storage backend');
+    return;
+  }
+  if (cardLibrarySize() === 0) {
+    ctx.throw(503, 'Card library not initialized');
+    return;
+  }
+  const cardIds = rollDailyPack();
+  try {
+    const { profile, purchase } = await profileStorage.claimDailyPack(
+      ctx.params.userId,
+      cardIds,
+      DAILY_PACK_COOLDOWN_MS,
+    );
+    ctx.body = {
+      profile,
+      purchase,
+      nextClaimAt: nextDailyPackAt(profile.lastDailyPackAt),
+    };
+  } catch (err) {
+    if (err instanceof DailyPackCooldownError) {
+      ctx.status = 429;
+      ctx.body = { error: 'Daily pack on cooldown', nextClaimAt: err.nextClaimAt };
+      return;
+    }
+    throw err;
+  }
 });
 
 server.router.get('/api/leaderboard', async (ctx) => {
