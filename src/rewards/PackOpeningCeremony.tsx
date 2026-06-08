@@ -1,17 +1,14 @@
 // Shared dramatic pack-opening reveal. Used by both DailyPackWidget
-// (free daily) and BurnPackPanel ($POKETCG burn). Replaces the tiny
-// flip-card grid with a full-bleed ceremony:
+// (free daily) and BurnPackPanel ($POKETCG burn). Full-screen takeover:
 //
-//   - One big card at a time, centered, click to flip
-//   - Slow, anticipation-driven 3D flip animation
-//   - Holographic shimmer overlay on uncommon+ cards
-//   - Gold burst + screen flash for rare-or-better pulls
-//   - Final summary grid + Done button after the last card
-//
-// Falls back to auto-advance after 2.5s so impatient users can just
-// watch. Skip button at top-right always closes immediately.
+//   - HUGE single card center stage (uses up to 85vh tall)
+//   - Click to flip → click again to advance (NO auto-timers)
+//   - Holographic shimmer on uncommon+ cards
+//   - Gold burst + screen flash on rare reveal
+//   - Summary grid at the end with hover-preview that pops out a
+//     large card image when the user hovers any thumbnail.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { CARD_LIBRARY } from '../game/cards';
 
 type Tier = 'rare' | 'uncommon' | 'common';
@@ -27,8 +24,6 @@ function safeCard(id: string) {
   try { return CARD_LIBRARY[id]; }
   catch { return undefined; }
 }
-
-const AUTO_ADVANCE_MS = 2500;
 
 export function PackOpeningCeremony({
   cardIds,
@@ -50,36 +45,17 @@ export function PackOpeningCeremony({
     [cardIds],
   );
 
-  // Auto-flip the current card after a short delay if the user hasn't
-  // clicked it themselves.
-  useEffect(() => {
-    if (flipped || showSummary) return;
-    const t = window.setTimeout(() => setFlipped(true), AUTO_ADVANCE_MS);
-    return () => window.clearTimeout(t);
-  }, [flipped, idx, showSummary]);
-
-  // After flip, advance to the next card automatically (or jump to summary).
-  useEffect(() => {
-    if (!flipped || showSummary) return;
-    const t = window.setTimeout(() => {
-      if (idx + 1 >= cards.length) {
-        setShowSummary(true);
-      } else {
-        setIdx((n) => n + 1);
-        setFlipped(false);
-      }
-    }, AUTO_ADVANCE_MS);
-    return () => window.clearTimeout(t);
-  }, [flipped, idx, cards.length, showSummary]);
-
   const handleCardClick = useCallback(() => {
     if (showSummary) return;
     if (!flipped) {
+      // First click: flip the current card open.
       setFlipped(true);
     } else if (idx + 1 < cards.length) {
+      // Second click: advance to the next card.
       setIdx((n) => n + 1);
       setFlipped(false);
     } else {
+      // Last card already flipped: jump to summary.
       setShowSummary(true);
     }
   }, [flipped, idx, cards.length, showSummary]);
@@ -108,7 +84,13 @@ export function PackOpeningCeremony({
           <div className="pack-opening-counter">
             Card <strong>{idx + 1}</strong> of {cards.length}
           </div>
-          <div className="pack-opening-card-stage" onClick={handleCardClick}>
+          <div
+            className="pack-opening-card-stage"
+            onClick={handleCardClick}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(); } }}
+          >
             {rareReveal && <div className="pack-opening-flash" aria-hidden="true" />}
             {rareReveal && <PackBurst tier={tier} />}
             <article
@@ -136,10 +118,12 @@ export function PackOpeningCeremony({
               </div>
             </article>
           </div>
-          <p className="pack-opening-hint">
-            {flipped
-              ? (idx + 1 < cards.length ? 'Tap or wait for the next card' : 'Tap or wait for summary')
-              : 'Tap card to flip'}
+          <p className="pack-opening-hint pack-opening-hint-pulse">
+            {!flipped
+              ? '👆 Click the card to flip it'
+              : idx + 1 < cards.length
+                ? '👆 Click again for the next card'
+                : '👆 Click again to see your full pull'}
           </p>
           <div className="pack-opening-queue" aria-hidden="true">
             {cards.map((_, i) => (
@@ -179,14 +163,16 @@ function PackSummary({
         <span className="pack-opening-summary-pill pack-opening-summary-pill-uncommon">{breakdown.uncommon} uncommon</span>
         <span className="pack-opening-summary-pill pack-opening-summary-pill-common">{breakdown.common} common</span>
       </div>
+      <p className="pack-opening-summary-hint">Hover any card to enlarge it</p>
       <div className="pack-opening-summary-grid">
         {cards.map((entry, i) => {
           const tier: Tier = entry.card ? rarityTier(entry.card.rarity) : 'common';
+          const imgLarge = entry.card?.images?.large ?? entry.card?.images?.small;
           return (
             <article
               key={`${entry.id}-${i}`}
               className={`pack-opening-summary-card pack-opening-summary-card-${tier}`}
-              title={entry.card ? `${entry.card.name}${entry.card.rarity ? ` — ${entry.card.rarity}` : ''}` : entry.id}
+              tabIndex={0}
             >
               {entry.card?.images?.small ? (
                 <img src={entry.card.images.small} alt={entry.card.name} loading="lazy" />
@@ -194,6 +180,15 @@ function PackSummary({
                 <div className="pack-opening-summary-card-text">
                   <strong>{entry.card?.name ?? '(unknown)'}</strong>
                   <span>{entry.card?.rarity ?? 'Common'}</span>
+                </div>
+              )}
+              {imgLarge && (
+                <div className="pack-opening-summary-hover" aria-hidden="true">
+                  <img src={imgLarge} alt="" />
+                  <div className="pack-opening-summary-hover-meta">
+                    <strong>{entry.card?.name ?? '(unknown)'}</strong>
+                    <span>{entry.card?.rarity ?? 'Common'}</span>
+                  </div>
                 </div>
               )}
             </article>
@@ -209,15 +204,14 @@ function PackSummary({
   );
 }
 
-/** Confetti / sparkle burst behind rare reveals. Pure CSS — 12
- *  positioned spans with staggered animation delays. */
 function PackBurst({ tier }: { tier: Tier }) {
   const color = tier === 'rare' ? 'gold' : tier === 'uncommon' ? 'silver' : 'common';
   return (
     <div className={`pack-opening-burst pack-opening-burst-${color}`} aria-hidden="true">
-      {Array.from({ length: 12 }).map((_, i) => (
-        <span key={i} style={{ '--burst-angle': `${i * 30}deg`, '--burst-delay': `${i * 30}ms` } as React.CSSProperties} />
+      {Array.from({ length: 16 }).map((_, i) => (
+        <span key={i} style={{ '--burst-angle': `${i * 22.5}deg`, '--burst-delay': `${i * 20}ms` } as React.CSSProperties} />
       ))}
     </div>
   );
 }
+

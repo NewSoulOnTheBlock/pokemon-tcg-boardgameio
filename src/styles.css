@@ -5700,21 +5700,30 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
   flex: 1;
   justify-content: center;
   margin: 12px 0;
+  min-height: 0;
   perspective: 1500px;
   position: relative;
   width: 100%;
   z-index: 1;
 }
+.pack-opening-card-stage:focus-visible {
+  outline: 2px solid rgba(251, 191, 36, 0.5);
+  outline-offset: 8px;
+  border-radius: 18px;
+}
 .pack-opening-card {
   aspect-ratio: 5 / 7;
-  max-height: 60vh;
-  max-width: min(380px, 90vw);
+  /* HUGE — fills almost the entire viewport height. The aspect-ratio
+     constraint clamps the width so the card stays proportional even
+     on ultrawide monitors. */
+  height: 80vh;
+  max-height: 80vh;
+  max-width: min(560px, 95vw);
   position: relative;
   transform-style: preserve-3d;
   transition: transform 700ms cubic-bezier(0.22, 1.2, 0.36, 1);
-  width: 100%;
 }
-.pack-opening-card-flipped { transform: rotateY(180deg) scale(1.04); }
+.pack-opening-card-flipped { transform: rotateY(180deg) scale(1.02); }
 .pack-opening-card-back,
 .pack-opening-card-front {
   backface-visibility: hidden;
@@ -5895,10 +5904,10 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 .pack-opening-summary-pill-common   { background: rgba(100, 116, 139, 0.18); color: #cbd5e1; }
 .pack-opening-summary-grid {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   margin: 18px 0;
-  max-width: 720px;
+  max-width: 1100px;
   position: relative;
   width: 100%;
   z-index: 1;
@@ -5928,4 +5937,90 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 .pack-opening-summary-actions {
   position: relative;
   z-index: 1;
+}
+
+/* Pulsing "Click the card" hint */
+.pack-opening-hint-pulse {
+  animation: pack-opening-hint-pulse 1.4s ease-in-out infinite;
+  color: #fbbf24;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 18px rgba(251, 191, 36, 0.45);
+}
+@keyframes pack-opening-hint-pulse {
+  0%, 100% { opacity: 0.65; }
+  50%      { opacity: 1; }
+}
+
+/* Summary hover-preview — a big floating card image that appears
+   above any thumbnail the user hovers or focuses. */
+.pack-opening-summary-hint {
+  color: var(--ink-secondary);
+  font-size: 0.82rem;
+  font-style: italic;
+  margin: 4px 0 12px;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+.pack-opening-summary-card {
+  position: relative;
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+.pack-opening-summary-card:hover,
+.pack-opening-summary-card:focus {
+  outline: none;
+  transform: translateY(-3px) scale(1.04);
+  z-index: 50;
+}
+.pack-opening-summary-hover {
+  background: rgba(2, 6, 12, 0.95);
+  border: 2px solid rgba(251, 191, 36, 0.5);
+  border-radius: 12px;
+  bottom: calc(100% + 14px);
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  left: 50%;
+  padding: 10px 10px 14px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 320px;
+  z-index: 100;
+}
+.pack-opening-summary-hover img {
+  border-radius: 8px;
+  height: auto;
+  width: 100%;
+}
+.pack-opening-summary-hover-meta {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+}
+.pack-opening-summary-hover-meta strong {
+  color: var(--ink-primary);
+  font-size: 0.95rem;
+}
+.pack-opening-summary-hover-meta span {
+  color: var(--ink-secondary);
+  font-size: 0.78rem;
+}
+.pack-opening-summary-card:hover .pack-opening-summary-hover,
+.pack-opening-summary-card:focus .pack-opening-summary-hover {
+  display: flex;
+}
+/* Flip the hover-preview below the card for cards in the top row,
+   so it doesn't get clipped by the top of the viewport. We can't
+   know which row a card is in via CSS alone, so detect via a CSS
+   container query approximation: any card whose offsetTop is less
+   than the hover-preview height. Easier solution: just keep the
+   preview above but allow the viewport to scroll if needed. */
+.pack-opening-summary-grid:has(.pack-opening-summary-card:hover) {
+  overflow: visible;
 }
