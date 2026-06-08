@@ -9,6 +9,7 @@ import {
   claimLeaderboardReward,
   claimMatchPrize,
   fetchLeaderboard,
+  fetchLeaderboardHistory,
   fetchUnclaimedLeaderboardRewards,
   loginProfile,
   persistMatchRecord,
@@ -16,6 +17,7 @@ import {
   persistProfile,
   scanWalletForImports,
   type ClaimedPrize,
+  type DailyLeaderboardHistoryDay,
   type DailyLeaderboardReward,
   type ImportCandidate,
 } from './api/profiles';
@@ -1257,6 +1259,8 @@ function MatchmakingPage({
   const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
   const [leaderboardMeta, setLeaderboardMeta] = useState<{ dateKey: string; resetAt: string } | null>(null);
   const [unclaimedRewards, setUnclaimedRewards] = useState<DailyLeaderboardReward[]>([]);
+  const [championHistory, setChampionHistory] = useState<DailyLeaderboardHistoryDay[]>([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [claimingRewardKey, setClaimingRewardKey] = useState<string | null>(null);
   const [rewardRevealCards, setRewardRevealCards] = useState<string[] | null>(null);
   const [resetCountdown, setResetCountdown] = useState<string>('');
@@ -1335,6 +1339,18 @@ function MatchmakingPage({
   }, [profile.userId]);
 
   useEffect(() => { void refreshRewards(); }, [refreshRewards, leaderboardMeta?.dateKey]);
+
+  // Past Daily Champions history — last 14 days of top-3 podiums.
+  // Triggered on mount + whenever the date key flips at UTC midnight.
+  const refreshHistory = useCallback(async () => {
+    try {
+      const days = await fetchLeaderboardHistory(14);
+      setChampionHistory(days);
+    } catch {
+      setChampionHistory([]);
+    }
+  }, []);
+  useEffect(() => { void refreshHistory(); }, [refreshHistory, leaderboardMeta?.dateKey]);
 
   // Live countdown to the next UTC midnight (when the daily leaderboard
   // resets + the top-3 trainer packs are awarded). Tick once per second.
@@ -1862,6 +1878,57 @@ function MatchmakingPage({
                   })}
                 </tbody>
               </table>
+            )}
+
+            {championHistory.length > 0 && (
+              <div className="daily-champions-history">
+                <button
+                  type="button"
+                  className="daily-champions-history-toggle"
+                  onClick={() => setHistoryExpanded((v) => !v)}
+                  aria-expanded={historyExpanded}
+                >
+                  <span>👑 Past Daily Champions ({championHistory.length} day{championHistory.length === 1 ? '' : 's'})</span>
+                  <span className="daily-champions-history-chevron" aria-hidden="true">{historyExpanded ? '▾' : '▸'}</span>
+                </button>
+                {historyExpanded && (
+                  <ol className="daily-champions-history-list">
+                    {championHistory.map((day) => (
+                      <li key={day.dateKey} className="daily-champions-history-day">
+                        <header>
+                          <span className="daily-champions-history-date">{day.dateKey}</span>
+                          <span className="daily-champions-history-day-eyebrow">UTC</span>
+                        </header>
+                        <ul className="daily-champions-history-podium">
+                          {day.winners.map((winner) => {
+                            const medal = winner.rank === 1 ? '🥇' : winner.rank === 2 ? '🥈' : '🥉';
+                            const wr = winner.matches > 0 ? Math.round((winner.wins / winner.matches) * 100) : 0;
+                            const isYou = winner.userId === profile.userId;
+                            return (
+                              <li
+                                key={`${day.dateKey}-${winner.rank}`}
+                                className={`daily-champions-history-podium-row daily-champions-history-rank-${winner.rank}${isYou ? ' daily-champions-history-self' : ''}`}
+                              >
+                                <span className="daily-champions-history-medal">{medal}</span>
+                                <span className="daily-champions-history-name">
+                                  {winner.name}{isYou ? ' (you)' : ''}
+                                </span>
+                                <span className="daily-champions-history-record">{winner.wins}W · {winner.losses}L · {wr}%</span>
+                                <span
+                                  className={`daily-champions-history-claim ${winner.claimed ? 'is-claimed' : 'is-unclaimed'}`}
+                                  title={winner.claimed ? 'Trainer pack claimed' : 'Trainer pack unclaimed'}
+                                >
+                                  {winner.claimed ? '🎁 ✓' : '🎁 ◯'}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             )}
           </section>
         </div>

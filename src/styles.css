@@ -3659,6 +3659,134 @@ button:disabled {
   color: var(--ink-muted, #475569);
 }
 
+/* ===== Past Daily Champions history (collapsible) =================== */
+.daily-champions-history {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.daily-champions-history-toggle {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  color: #e2e8f0;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-weight: 600;
+  justify-content: space-between;
+  padding: 10px 14px;
+  transition: background 120ms ease, border-color 120ms ease;
+  width: 100%;
+}
+.daily-champions-history-toggle:hover,
+.daily-champions-history-toggle:focus-visible {
+  background: rgba(247, 197, 72, 0.08);
+  border-color: rgba(247, 197, 72, 0.4);
+  outline: none;
+}
+.daily-champions-history-chevron {
+  color: #94a3b8;
+  font-size: 1.1rem;
+}
+.daily-champions-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  margin: 12px 0 0;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 4px 4px 4px 0;
+}
+.daily-champions-history-day {
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.daily-champions-history-day > header {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.daily-champions-history-date {
+  color: #f1f5f9;
+  font-family: 'JetBrains Mono', 'Menlo', monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.daily-champions-history-day-eyebrow {
+  color: var(--ink-muted, #64748b);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.daily-champions-history-podium {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.daily-champions-history-podium-row {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: grid;
+  font-size: 0.88rem;
+  gap: 10px;
+  grid-template-columns: 26px 1fr auto auto;
+  padding: 6px 10px;
+}
+.daily-champions-history-rank-1 {
+  background: linear-gradient(90deg, rgba(247, 197, 72, 0.15), rgba(247, 197, 72, 0.02));
+  border-color: rgba(247, 197, 72, 0.32);
+}
+.daily-champions-history-rank-2 {
+  background: linear-gradient(90deg, rgba(203, 213, 225, 0.12), transparent);
+  border-color: rgba(203, 213, 225, 0.2);
+}
+.daily-champions-history-rank-3 {
+  background: linear-gradient(90deg, rgba(217, 119, 6, 0.12), transparent);
+  border-color: rgba(217, 119, 6, 0.22);
+}
+.daily-champions-history-self {
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4) inset;
+}
+.daily-champions-history-medal {
+  font-size: 1.05rem;
+  text-align: center;
+}
+.daily-champions-history-name {
+  color: #f8fafc;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.daily-champions-history-record {
+  color: var(--ink-secondary, #94a3b8);
+  font-family: 'JetBrains Mono', 'Menlo', monospace;
+  font-size: 0.78rem;
+}
+.daily-champions-history-claim {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.daily-champions-history-claim.is-claimed {
+  color: #4ade80;
+}
+.daily-champions-history-claim.is-unclaimed {
+  color: var(--ink-muted, #64748b);
+}
+
 /* ===================================================================== */
 /* ===== Battle screen / arena layout (full-screen playmat upgrade) === */
 /* ===================================================================== */

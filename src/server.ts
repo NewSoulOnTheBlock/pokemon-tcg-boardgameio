@@ -729,6 +729,48 @@ server.router.post('/api/leaderboard/rewards/:userId/claim', koaBody(), async (c
   }
 });
 
+server.router.get('/api/leaderboard/history', async (ctx) => {
+  // Past Daily Champions — top-3 winners for each of the most recent
+  // settled days. ?limit=N caps the number of past dates returned
+  // (default 14, max 60). Settles yesterday first so the freshly-
+  // resolved podium appears as soon as anyone visits the page.
+  if (!profileStorage.listDailyLeaderboardHistory) {
+    ctx.body = { days: [] };
+    return;
+  }
+  if (profileStorage.settleDailyLeaderboard) {
+    try { await profileStorage.settleDailyLeaderboard(yesterdayDailyLeaderboardDateKey()); }
+    catch (err) { console.error('[leaderboard] settle on history fetch failed:', err); }
+  }
+  const limitParam = Number(ctx.query.limit);
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 14;
+  const rewards = await profileStorage.listDailyLeaderboardHistory(limit);
+  // Group flat rows back into per-date podiums for the client.
+  const byDate = new Map<string, { dateKey: string; winners: Array<{
+    rank: number; userId: string; name: string;
+    wins: number; losses: number; draws: number; matches: number;
+    claimed: boolean;
+  }> }>();
+  for (const r of rewards) {
+    let entry = byDate.get(r.dateKey);
+    if (!entry) {
+      entry = { dateKey: r.dateKey, winners: [] };
+      byDate.set(r.dateKey, entry);
+    }
+    entry.winners.push({
+      rank: r.rank,
+      userId: r.userId,
+      name: r.name,
+      wins: r.wins,
+      losses: r.losses,
+      draws: r.draws,
+      matches: r.matches,
+      claimed: r.claimedAt !== null,
+    });
+  }
+  ctx.body = { days: [...byDate.values()] };
+});
+
 /**
  * Lobby trollbox — public chat shown on the matchmaking page. Plain HTTP
  * polling (every few seconds from the client) so we don't need to spin

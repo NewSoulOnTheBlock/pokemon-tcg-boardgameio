@@ -22,6 +22,10 @@ export interface ProfileStorage {
    *  across ALL past date keys. Used to render the "Claim trainer
    *  pack" CTA on the leaderboard tab. */
   listUnclaimedDailyRewards?(userId: string): Promise<DailyLeaderboardReward[]>;
+  /** Returns all settled (rank 1/2/3) rows for the last `limit` date
+   *  keys, newest first. Used to render the "Past Daily Champions"
+   *  hall of fame. */
+  listDailyLeaderboardHistory?(limit: number): Promise<DailyLeaderboardReward[]>;
   /** Idempotently grant the trainer-pack to the named winner. Atomically
    *  flips claimed_at + records the pack purchase + bumps ownedCards. */
   claimDailyLeaderboardReward?(userId: string, dateKey: string, rank: number, cardIds: string[]): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean }>;
@@ -526,6 +530,23 @@ export class PostgresProfileStorage implements ProfileStorage {
     const { rows } = await this.pool.query(
       `SELECT * FROM ${DAILY_REWARDS_TABLE} WHERE user_id = $1 AND claimed_at IS NULL ORDER BY date_key DESC, rank ASC`,
       [userId],
+    );
+    return rows.map(this.rowToDailyReward);
+  }
+
+  async listDailyLeaderboardHistory(limit: number): Promise<DailyLeaderboardReward[]> {
+    // Pulls top-3 rows for the most recent `limit` date_keys. We use
+    // a subquery rather than LIMIT directly so we always get full
+    // podiums (3 rows per date) instead of cutting one off.
+    const safeLimit = Math.max(1, Math.min(60, Math.floor(limit)));
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${DAILY_REWARDS_TABLE}
+         WHERE date_key IN (
+           SELECT DISTINCT date_key FROM ${DAILY_REWARDS_TABLE}
+           ORDER BY date_key DESC LIMIT $1
+         )
+         ORDER BY date_key DESC, rank ASC`,
+      [safeLimit],
     );
     return rows.map(this.rowToDailyReward);
   }
@@ -1188,6 +1209,22 @@ export class MemoryProfileStorage implements ProfileStorage {
       }
     }
     return out.sort((a, b) => b.dateKey.localeCompare(a.dateKey) || a.rank - b.rank);
+  }
+
+  async listDailyLeaderboardHistory(limit: number): Promise<DailyLeaderboardReward[]> {
+    const safeLimit = Math.max(1, Math.min(60, Math.floor(limit)));
+    const dateKeys = [...this.dailyRewards.keys()]
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, safeLimit);
+    const out: DailyLeaderboardReward[] = [];
+    for (const dateKey of dateKeys) {
+      const rewards = this.dailyRewards.get(dateKey);
+      if (!rewards) continue;
+      for (const reward of [...rewards].sort((a, b) => a.rank - b.rank)) {
+        out.push({ ...reward });
+      }
+    }
+    return out;
   }
 
   async claimDailyLeaderboardReward(

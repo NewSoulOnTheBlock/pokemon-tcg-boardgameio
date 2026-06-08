@@ -151,6 +151,29 @@ export async function claimLeaderboardReward(
   );
 }
 
+export interface DailyLeaderboardChampion {
+  rank: number;
+  userId: string;
+  name: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  matches: number;
+  claimed: boolean;
+}
+
+export interface DailyLeaderboardHistoryDay {
+  dateKey: string;
+  winners: DailyLeaderboardChampion[];
+}
+
+export async function fetchLeaderboardHistory(limit = 14): Promise<DailyLeaderboardHistoryDay[]> {
+  const result = await request<{ days: DailyLeaderboardHistoryDay[] }>(
+    `/api/leaderboard/history?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return result.days;
+}
+
 export interface ClaimedPrize {
   alreadyClaimed: boolean;
   card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } } | null;
