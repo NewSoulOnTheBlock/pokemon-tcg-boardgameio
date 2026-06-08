@@ -24,6 +24,7 @@ import {
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
+import { PoweredByCollectorCrypt } from './components/PoweredByCollectorCrypt';
 import { PackOpeningCeremony } from './rewards/PackOpeningCeremony';
 import {
   CARD_LIBRARY,
@@ -2604,12 +2605,21 @@ export default function App() {
   const isInMatch = (page === 'match' && Boolean(matchConfig)) || page === 'bot';
   const musicSrc = isInMatch ? '/battle-music.mp3' : '/menu-music.mp3';
   const musicLabel = isInMatch ? 'battle music' : 'menu music';
-  const music = <BackgroundMusicPlayer src={musicSrc} label={musicLabel} paused={false} />;
+  // Global chrome rendered alongside every page: background music
+  // player + the floating "Powered by Collector Crypt" badge in the
+  // bottom-right corner. Hidden during active matches so the playmat
+  // isn't overlapped.
+  const globalChrome = (
+    <>
+      <BackgroundMusicPlayer src={musicSrc} label={musicLabel} paused={false} />
+      {!isInMatch && <PoweredByCollectorCrypt variant="floating" />}
+    </>
+  );
 
   if (page === 'signin' || !profile.name || !profile.wallet || isReservedName(profile.name)) {
     return (
       <>
-        {music}
+        {globalChrome}
         <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />
       </>
     );
@@ -2618,7 +2628,7 @@ export default function App() {
   if (page === 'match' && matchConfig) {
     return (
       <>
-        {music}
+        {globalChrome}
         <MatchClient
           config={matchConfig}
           onExit={() => { setMatchConfig(null); setPage('home'); }}
@@ -2632,7 +2642,7 @@ export default function App() {
   if (page === 'bot') {
     return (
       <>
-        {music}
+        {globalChrome}
         <GymChallengePage profile={profile} onProfileChange={updateProfile} onExit={() => setPage('home')} />
       </>
     );
@@ -2640,7 +2650,7 @@ export default function App() {
 
   return (
     <>
-      {music}
+      {globalChrome}
       <Shell page={page} profile={profile} onNavigate={setPage} onLogout={signOut}>
         {page === 'profile' && <ProfilePage profile={profile} onProfileChange={updateProfile} />}
         {page === 'matchmaking' && (

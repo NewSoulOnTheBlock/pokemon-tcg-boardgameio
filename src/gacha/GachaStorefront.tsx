@@ -29,6 +29,7 @@ import {
   type GachaPullRecord,
 } from './vaultStore';
 import { isPokemonMachine, resolveGachaAssetUrl } from './filters';
+import { PoweredByCollectorCrypt } from '../components/PoweredByCollectorCrypt';
 
 export type GachaTabId = 'shop' | 'vault';
 const TABS: Array<{ id: GachaTabId; label: string; icon: string }> = [
@@ -112,9 +113,9 @@ function GachaHero() {
         <h1>Mystery Pokémon Packs</h1>
         <p>
           Real graded Pokémon cards delivered as NFTs straight to your Solana wallet.
-          Powered by <a href="https://gacha.collectorcrypt.com" target="_blank" rel="noreferrer">Collector Crypt</a>.
           Sell anything back for USDC within 72 hours.
         </p>
+        <PoweredByCollectorCrypt variant="hero" />
       </div>
       <div className={`gacha-hero-status gacha-hero-status-${isLive ? 'live' : 'off'}`}>
         <span className="gacha-hero-status-dot" aria-hidden="true" />

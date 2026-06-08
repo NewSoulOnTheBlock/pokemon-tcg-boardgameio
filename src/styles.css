@@ -6491,3 +6491,113 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 .champions-row-page .panel h2 {
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
 }
+
+/* ===== Powered by Collector Crypt branding ========================== */
+.powered-by-cc {
+  align-items: center;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  text-decoration: none;
+}
+.powered-by-cc-eyebrow {
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.32em;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.45);
+  text-transform: uppercase;
+  z-index: 1;
+}
+.powered-by-cc-logo {
+  display: block;
+  filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.55))
+          drop-shadow(0 0 18px rgba(56, 189, 248, 0.35))
+          drop-shadow(0 4px 14px rgba(0, 0, 0, 0.5));
+  height: auto;
+  object-fit: contain;
+  position: relative;
+  transition: filter 220ms ease, transform 220ms ease;
+  z-index: 1;
+}
+.powered-by-cc-glow {
+  background: radial-gradient(circle at center,
+    rgba(56, 189, 248, 0.55) 0%,
+    rgba(168, 85, 247, 0.32) 35%,
+    rgba(15, 23, 42, 0) 70%);
+  border-radius: 50%;
+  filter: blur(18px);
+  inset: -30% -10%;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+.powered-by-cc:hover .powered-by-cc-logo,
+.powered-by-cc:focus-visible .powered-by-cc-logo {
+  filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.85))
+          drop-shadow(0 0 24px rgba(168, 85, 247, 0.55))
+          drop-shadow(0 4px 14px rgba(0, 0, 0, 0.5));
+  transform: scale(1.05);
+}
+
+/* Hero variant — used inside the Gacha storefront eyebrow block. */
+.powered-by-cc-hero {
+  margin-top: 22px;
+}
+.powered-by-cc-hero .powered-by-cc-eyebrow {
+  font-size: 0.95rem;
+  letter-spacing: 0.4em;
+}
+.powered-by-cc-hero .powered-by-cc-logo {
+  height: 110px;
+  max-width: 100%;
+  width: auto;
+}
+.powered-by-cc-hero .powered-by-cc-glow {
+  filter: blur(28px);
+  inset: -45% -25%;
+}
+
+/* Floating variant — bottom-right corner of every non-match page. */
+.powered-by-cc-floating {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.78), rgba(2, 6, 12, 0.88));
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 14px;
+  bottom: 18px;
+  box-shadow:
+    0 0 24px rgba(56, 189, 248, 0.35),
+    0 12px 32px rgba(0, 0, 0, 0.5);
+  gap: 4px;
+  padding: 10px 14px;
+  pointer-events: auto;
+  position: fixed;
+  right: 18px;
+  z-index: 50;
+}
+.powered-by-cc-floating .powered-by-cc-eyebrow {
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+}
+.powered-by-cc-floating .powered-by-cc-logo {
+  height: 56px;
+  max-width: 200px;
+}
+.powered-by-cc-floating .powered-by-cc-glow {
+  filter: blur(14px);
+  inset: -20% -15%;
+}
+@media (max-width: 720px) {
+  .powered-by-cc-floating {
+    bottom: 10px;
+    padding: 8px 10px;
+    right: 10px;
+  }
+  .powered-by-cc-floating .powered-by-cc-logo {
+    height: 42px;
+    max-width: 150px;
+  }
+  .powered-by-cc-floating .powered-by-cc-eyebrow {
+    font-size: 0.56rem;
+  }
+}
