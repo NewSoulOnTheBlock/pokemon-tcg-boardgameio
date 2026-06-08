@@ -197,6 +197,16 @@ const SECTIONS: DocsSection[] = [
           The home page has a <strong>Daily Free Pack</strong> widget. Click it every 22 hours
           to claim a free pack with the same composition as a burned pack. No wallet needed.
         </p>
+        <h3>Collector Crypt mystery packs</h3>
+        <p>
+          The <strong>🎰 Booster Shop</strong> page sells real graded Pokemon cards as Solana
+          NFTs via <a href="https://gacha.collectorcrypt.com" target="_blank" rel="noreferrer">Collector Crypt</a>.
+          Pay USDC for a pack (Elite Pack $50, Legendary Pack $250 + others), sign one Solana tx, and
+          the gacha rolls + transfers a random NFT to your wallet weighted by per-machine odds.
+          Buyback any non-turbo pull for ~85% of insured value within <strong>72 hours</strong>
+          (button shows on the My Pulls tab while the window is open). Turbo mode auto-sells
+          any Common pull at open time so you skip the manual buyback round-trip.
+        </p>
       </>
     ),
   },

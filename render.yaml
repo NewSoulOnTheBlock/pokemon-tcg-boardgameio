@@ -36,6 +36,16 @@ services:
         sync: false
       - key: BGIO_STORAGE_DIR
         value: /tmp/bgio-storage
+      # Collector Crypt Gacha Machine API (gacha.collectorcrypt.com).
+      # GACHA_API_KEY is the partner key issued by Collector Crypt; the
+      # server-only proxy (/api/gacha/*) forwards calls with the
+      # x-api-key header so the key never reaches the browser.
+      # GACHA_BASE_URL is optional — defaults to mainnet; set to
+      # https://dev-gacha.collectorcrypt.com to point at devnet.
+      - key: GACHA_API_KEY
+        sync: false
+      - key: GACHA_BASE_URL
+        value: https://gacha.collectorcrypt.com
       # Optional: override the Solana RPC the client uses for token
       # account reads, $POKETCG balance fetches, and burn-tx building.
       # Helius/Alchemy recommended for higher rate limits.

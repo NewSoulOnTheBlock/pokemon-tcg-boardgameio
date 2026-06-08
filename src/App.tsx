@@ -112,6 +112,7 @@ import {
 import { DailyPackWidget } from './rewards/DailyPackWidget';
 import { BurnPackPanel } from './rewards/BurnPackPanel';
 import { DocsPage } from './docs/DocsPage';
+import { GachaStorefront } from './gacha/GachaStorefront';
 import {
   xpForCampaignWin,
   xpForMatchResult,
@@ -127,7 +128,7 @@ import {
 } from './telegram';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'imports' | 'bot' | 'match' | 'docs';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match' | 'docs';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
 const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
@@ -556,7 +557,7 @@ function Shell({
           <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
         </button>
         <nav>
-          {(['home', 'profile', 'matchmaking', 'bot', 'imports'] as Page[]).map((target) => (
+          {(['home', 'profile', 'matchmaking', 'bot', 'boosters', 'imports'] as Page[]).map((target) => (
             <button
               className={page === target ? 'nav-active' : ''}
               key={target}
@@ -763,6 +764,10 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
           <button className="home-menu-button" onClick={() => onNavigate('profile')}>
             <strong>Profile + Deckbuilder</strong>
             <span>Manage your profile and custom deck library.</span>
+          </button>
+          <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
+            <strong>🎰 Booster Shop</strong>
+            <span>Mystery pack NFTs from Collector Crypt. $50 / $250 packs. Sell back for USDC within 72 hours.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import NFTs</strong>
@@ -2430,6 +2435,7 @@ export default function App() {
           />
         )}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
+        {page === 'boosters' && <GachaStorefront profile={profile} />}
         {page === 'docs' && <DocsPage />}
         {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>

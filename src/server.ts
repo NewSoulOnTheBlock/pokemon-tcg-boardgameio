@@ -19,6 +19,7 @@ import { rollDailyPack } from './server/packRoller';
 import { POKETCG_DECIMALS, PoketcgBurnError, findPoketcgTier, verifyPoketcgBurn } from './server/tokenBurn';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
+import { createGachaService, GachaError, type GachaService } from './server/gachaClient';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -50,6 +51,7 @@ const cardStorage: CardStorage = databaseUrl
 const lobbyChat: LobbyChatStore = databaseUrl
   ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
   : new MemoryLobbyChatStore();
+const gacha: GachaService = createGachaService();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
@@ -254,6 +256,111 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
     },
   };
 });
+
+// ---------------------------------------------------------------------------
+// Collector Crypt Gacha Machine proxy.
+//
+// Browser hits /api/gacha/*; we forward to gacha.collectorcrypt.com with the
+// server-side x-api-key. The key is never sent to the browser. Errors are
+// surfaced with the upstream status code + JSON body so the UI can show
+// useful messages (e.g. machine empty, machine off, retry shortly).
+// ---------------------------------------------------------------------------
+
+function sendGachaError(ctx: Context, err: unknown): void {
+  if (err instanceof GachaError) {
+    ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
+    ctx.body = { error: err.message, ...(err.body && typeof err.body === 'object' ? err.body as object : {}) };
+    return;
+  }
+  ctx.status = 502;
+  ctx.body = { error: err instanceof Error ? err.message : String(err) };
+}
+
+server.router.get('/api/gacha/status', async (ctx) => {
+  if (!gacha.enabled) { ctx.status = 503; ctx.body = { enabled: false, error: 'GACHA_API_KEY not configured' }; return; }
+  try { ctx.body = { enabled: true, ...(await gacha.status()) }; }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.get('/api/gacha/machines', async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  try { ctx.body = await gacha.machines(); }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.post('/api/gacha/buy', jsonBody, async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const body = ctx.request.body as { playerAddress?: string; packType?: string; turbo?: boolean; altPlayerAddress?: string } | undefined;
+  if (!body?.playerAddress) { ctx.throw(400, 'playerAddress is required'); return; }
+  try {
+    ctx.body = await gacha.generatePack({
+      playerAddress: body.playerAddress,
+      packType: body.packType,
+      turbo: body.turbo,
+      altPlayerAddress: body.altPlayerAddress,
+    });
+  } catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.post('/api/gacha/submit', jsonBody, async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const body = ctx.request.body as { signedTransaction?: string } | undefined;
+  if (!body?.signedTransaction) { ctx.throw(400, 'signedTransaction is required'); return; }
+  try { ctx.body = await gacha.submitTransaction(body.signedTransaction); }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.post('/api/gacha/open', jsonBody, async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const body = ctx.request.body as { memo?: string } | undefined;
+  if (!body?.memo) { ctx.throw(400, 'memo is required'); return; }
+  try { ctx.body = await gacha.openPack(body.memo); }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.post('/api/gacha/buyback', jsonBody, async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const body = ctx.request.body as { playerAddress?: string; nftAddress?: string; altRecipient?: string } | undefined;
+  if (!body?.playerAddress || !body?.nftAddress) { ctx.throw(400, 'playerAddress + nftAddress are required'); return; }
+  try {
+    ctx.body = await gacha.buyback({
+      playerAddress: body.playerAddress,
+      nftAddress: body.nftAddress,
+      altRecipient: body.altRecipient,
+    });
+  } catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.get('/api/gacha/buyback/available', async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const wallet = String(ctx.query.wallet ?? '').trim();
+  const nft = String(ctx.query.nft ?? '').trim();
+  if (!wallet || !nft) { ctx.throw(400, 'wallet + nft query params are required'); return; }
+  try { ctx.body = await gacha.buybackAvailable(wallet, nft); }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.get('/api/gacha/pack-status', async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const memo = String(ctx.query.memo ?? '').trim();
+  if (!memo) { ctx.throw(400, 'memo query param is required'); return; }
+  try { ctx.body = await gacha.packStatus(memo); }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
+server.router.get('/api/gacha/winners', async (ctx) => {
+  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
+  const opts: Record<string, unknown> = {};
+  for (const k of ['timestamp', 'slug', 'packType'] as const) {
+    const v = ctx.query[k];
+    if (typeof v === 'string' && v) opts[k] = v;
+  }
+  if (typeof ctx.query.epic === 'string') opts.epic = ctx.query.epic === 'true';
+  if (typeof ctx.query.count === 'string') opts.count = Math.min(200, Math.max(1, Number(ctx.query.count) || 10));
+  try { ctx.body = await gacha.getAllWinners(opts as Parameters<GachaService['getAllWinners']>[0]); }
+  catch (err) { sendGachaError(ctx, err); }
+});
+
 server.router.post('/api/login', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState } | undefined;
   const profile = body?.profile;
