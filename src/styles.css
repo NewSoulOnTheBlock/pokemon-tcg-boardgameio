@@ -2240,14 +2240,34 @@ button:disabled {
 
 .mat-zone-droppable {
   border-radius: 8px;
-  outline: 2px dashed rgba(251, 191, 36, 0.75);
+  outline: 2px dashed rgba(251, 191, 36, 0.45);
   outline-offset: 3px;
-  transition: outline-color var(--t-fast);
+  transition: outline-color var(--t-fast), background-color 180ms ease, transform 180ms ease;
 }
 
 .mat-zone-droppable:hover,
 .mat-zone-droppable:focus-within {
   outline-color: var(--status-success);
+}
+
+/* When a card is being dragged from the hand, every valid drop zone
+   pulses with a green dashed outline + faint glow so the player can
+   instantly see where the card can land. The hovered zone scales up
+   slightly + brightens. Powered by the data-drag-active attribute
+   on the .battle-arena root. */
+[data-drag-active="true"] .mat-zone-droppable {
+  animation: mat-zone-pulse 1.2s ease-in-out infinite;
+  background: rgba(34, 197, 94, 0.06);
+  outline: 2px dashed rgba(34, 197, 94, 0.85);
+}
+[data-drag-active="true"] .mat-zone-droppable:hover {
+  background: rgba(34, 197, 94, 0.18);
+  outline-color: rgba(34, 197, 94, 1);
+  transform: scale(1.04);
+}
+@keyframes mat-zone-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+  50%      { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.25); }
 }
 
 .mat-card {
@@ -2451,8 +2471,28 @@ button:disabled {
   overflow: visible;
   padding: 10px;
   position: relative;
-  transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+  /* Cards fan out subtly — each one tilts based on its --hand-card-index
+     so the hand reads as a real spread of cards instead of a flat grid. */
+  transform: rotate(calc((var(--hand-card-index, 0) - 3) * 1.2deg)) translateY(0);
+  /* Smooth, springy transitions for hover/drag/deal animations. */
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              border-color var(--t-fast),
+              box-shadow 220ms ease,
+              opacity 180ms ease;
   width: auto;
+  /* Cards deal in when first mounted (entering the hand). */
+  animation: hand-card-deal 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes hand-card-deal {
+  from {
+    opacity: 0;
+    transform: translateY(30px) rotate(8deg) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(calc((var(--hand-card-index, 0) - 3) * 1.2deg)) translateY(0);
+  }
 }
 
 .hand-card-draggable {
@@ -2477,11 +2517,12 @@ button:disabled {
   padding: 10px 14px;
 }
 
+/* Hover — straighten the rotation, lift higher, slightly scale up. */
 .hand-card:hover,
 .hand-card:focus-within {
   border-color: var(--accent-gold);
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--accent-gold);
-  transform: translateY(-3px);
+  box-shadow: 0 28px 48px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--accent-gold);
+  transform: rotate(0deg) translateY(-12px) scale(1.06);
   z-index: 40;
 }
 
@@ -2493,6 +2534,17 @@ button:disabled {
 .hand-card-selected {
   border-color: var(--accent-gold);
   box-shadow: 0 0 0 2px var(--accent-gold), var(--shadow-glow-gold);
+}
+
+/* Dragging source — dim + rotate to indicate it's "lifted off the table". */
+.hand-card-dragging {
+  cursor: grabbing;
+  opacity: 0.38;
+  transform: rotate(0deg) translateY(-4px) scale(0.94);
+}
+.hand-card-dragging:hover {
+  /* Suppress hover lift on the source card while dragging. */
+  transform: rotate(0deg) translateY(-4px) scale(0.94);
 }
 
 .card-art-frame {

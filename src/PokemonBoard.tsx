@@ -118,21 +118,27 @@ function HandCard({
   children,
   draggable = false,
   index,
+  isDragging = false,
   onDragStart,
+  onDragEnd,
   selected = false,
 }: {
   card: Card;
   children?: React.ReactNode;
   draggable?: boolean;
   index: number;
+  isDragging?: boolean;
   onDragStart?: (event: React.DragEvent<HTMLElement>) => void;
+  onDragEnd?: (event: React.DragEvent<HTMLElement>) => void;
   selected?: boolean;
 }) {
   return (
     <article
-      className={`hand-card hand-card-${card.kind}${draggable ? ' hand-card-draggable' : ''}${selected ? ' hand-card-selected' : ''}`}
+      className={`hand-card hand-card-${card.kind}${draggable ? ' hand-card-draggable' : ''}${selected ? ' hand-card-selected' : ''}${isDragging ? ' hand-card-dragging' : ''}`}
       draggable={draggable}
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      style={{ '--hand-card-index': index } as CSSProperties}
       tabIndex={0}
     >
       <CardArt card={card} />
@@ -347,6 +353,10 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
   // pops up centered for 5s. Critical for coin-flip / search effects
   // whose result is only visible in the side log otherwise.
   const [actionToast, setActionToast] = useState<string | null>(null);
+  // Index of the hand-card currently being dragged. Drives the
+  // dimmed/rotated visual on the source card and the pulse highlight
+  // on every valid drop zone via the data-drag-active attribute.
+  const [draggingHandIndex, setDraggingHandIndex] = useState<number | null>(null);
   const lastLogLenRef = useRef<number>(G.log.length);
   useEffect(() => {
     if (G.log.length > lastLogLenRef.current) {
@@ -454,7 +464,10 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
     const payload = JSON.stringify({ cardId: card.id, handIndex });
     event.dataTransfer.setData(HAND_CARD_DRAG_TYPE, payload);
     event.dataTransfer.setData('text/plain', payload);
+    setDraggingHandIndex(handIndex);
   };
+
+  const endHandDrag = () => setDraggingHandIndex(null);
 
   const draggedHandIndex = (event: React.DragEvent<HTMLElement>): number | null => {
     const payload = event.dataTransfer.getData(HAND_CARD_DRAG_TYPE) || event.dataTransfer.getData('text/plain');
@@ -585,8 +598,10 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
                   card={card}
                   draggable={isOpeningBasic}
                   index={index}
+                  isDragging={draggingHandIndex === index}
                   key={`${card.id}-${index}`}
                   onDragStart={(event) => startHandDrag(event, index, card)}
+                  onDragEnd={endHandDrag}
                   selected={openingActiveIndex === index || openingBenchIndexes.includes(index)}
                 >
                   {isOpeningBasic ? (
@@ -627,8 +642,10 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
                 card={card}
                 draggable={isCurrent}
                 index={index}
+                isDragging={draggingHandIndex === index}
                 key={`${card.id}-${index}`}
                 onDragStart={(event) => startHandDrag(event, index, card)}
+                onDragEnd={endHandDrag}
               >
                 {isCurrent && (
                   <>
@@ -747,7 +764,7 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
   const firstTurnAttackBlocked = ctx.currentPlayer === G.firstPlayer && G.turnsTaken[actingPlayer] === 1;
 
   return (
-    <main className={battleArenaClass}>
+    <main className={battleArenaClass} data-drag-active={draggingHandIndex !== null ? 'true' : 'false'}>
       {actionToast && (
         <div className="action-result-toast" role="status" aria-live="polite">
           <span className="action-result-toast-icon" aria-hidden="true">⚡</span>
