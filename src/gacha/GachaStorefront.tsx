@@ -28,6 +28,7 @@ import {
   recordGachaPull,
   type GachaPullRecord,
 } from './vaultStore';
+import { isPokemonMachine } from './filters';
 
 export type GachaTabId = 'shop' | 'vault';
 const TABS: Array<{ id: GachaTabId; label: string; icon: string }> = [
@@ -107,10 +108,10 @@ function GachaHero() {
   return (
     <section className="panel gacha-hero">
       <div className="gacha-hero-body">
-        <p className="eyebrow">Booster Shop</p>
-        <h1>Mystery Pack NFTs</h1>
+        <p className="eyebrow">Booster Shop · Pokémon only</p>
+        <h1>Mystery Pokémon Packs</h1>
         <p>
-          Real graded Pokemon cards delivered as NFTs straight to your Solana wallet.
+          Real graded Pokémon cards delivered as NFTs straight to your Solana wallet.
           Powered by <a href="https://gacha.collectorcrypt.com" target="_blank" rel="noreferrer">Collector Crypt</a>.
           Sell anything back for USDC within 72 hours.
         </p>
@@ -140,7 +141,17 @@ function GachaShopTab({ profile }: { profile: ProfileState }) {
     let cancelled = false;
     setLoading(true);
     fetchGachaMachines()
-      .then(({ machines }) => { if (!cancelled) setMachines(machines.filter((m) => m.public !== false)); })
+      .then(({ machines }) => {
+        if (cancelled) return;
+        // Storefront is Pokémon-only — drop One Piece / sports /
+        // comic / anime machines from the upstream catalog before
+        // showing the grid.
+        const pokemonOnly = machines.filter((m) => m.public !== false && isPokemonMachine(m));
+        // Cheapest pack first so the grid reads as a natural ladder
+        // (Starter $25 -> Elite $50 -> Legendary $250 -> Grail $1000…).
+        pokemonOnly.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+        setMachines(pokemonOnly);
+      })
       .catch((err: Error) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
