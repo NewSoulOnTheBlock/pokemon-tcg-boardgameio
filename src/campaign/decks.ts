@@ -26,6 +26,22 @@ const CAMPAIGN_TRAINERS: ReadonlyArray<CardCount> = [
   ['bw10-85', 2],   // Rare Candy
 ];
 
+/** Harder 22-card trainer package used by Elite Four + Champion. Drops
+ *  Potion (defensive), adds Boss's Orders ×2 (forced gust) and an
+ *  extra Great Ball + Rare Candy + Energy Retrieval for tempo. The
+ *  bot loves Boss's Orders because it lets MCTS line up KOs on
+ *  any benched threat — the difference between gym and E4 difficulty
+ *  is largely this trainer engine. */
+const CAMPAIGN_TRAINERS_HARD: ReadonlyArray<CardCount> = [
+  ['sv4pt5-87', 4], // Professor's Research
+  ['base2-64', 4],  // Poké Ball
+  ['bw2-93', 4],    // Great Ball
+  ['sv1-194', 3],   // Switch
+  ['me1-114', 2],   // Boss's Orders
+  ['base1-81', 3],  // Energy Retrieval
+  ['bw10-85', 2],   // Rare Candy
+];
+
 const ENERGY_BY_TYPE = {
   Grass: 'sve-1',
   Fire: 'sve-2',
@@ -41,6 +57,12 @@ const ENERGY_BY_TYPE = {
 
 function build(pokemon: ReadonlyArray<CardCount>, energy: ReadonlyArray<CardCount>): string[] {
   return [...expand(pokemon), ...expand(CAMPAIGN_TRAINERS), ...expand(energy)].slice(0, 60);
+}
+
+/** Same as `build` but uses the hardened CAMPAIGN_TRAINERS_HARD trainer
+ *  engine (Boss's Orders + extra search). Use for Elite Four + Champion. */
+function buildHard(pokemon: ReadonlyArray<CardCount>, energy: ReadonlyArray<CardCount>): string[] {
+  return [...expand(pokemon), ...expand(CAMPAIGN_TRAINERS_HARD), ...expand(energy)].slice(0, 60);
 }
 
 // ---------- Gym Leaders ----------
@@ -176,7 +198,7 @@ const GIOVANNI_DECK = build(
 
 // ---------- Elite Four ----------
 
-const LORELEI_DECK = build(
+const LORELEI_DECK = buildHard(
   [
     // Lorelei: Ice. Shellder/Cloyster + Slowpoke/Slowbro + Dewgong +
     // Jynx + Lapras + Articuno.
@@ -192,7 +214,7 @@ const LORELEI_DECK = build(
   [['sve-3', 20]],
 );
 
-const BRUNO_DECK = build(
+const BRUNO_DECK = buildHard(
   [
     // Bruno: Fighting. Machop/Machoke/Machamp + Onix + Hitmonlee/Hitmonchan
     // + Geodude/Graveler.
@@ -208,7 +230,7 @@ const BRUNO_DECK = build(
   [['sve-6', 20]],
 );
 
-const AGATHA_DECK = build(
+const AGATHA_DECK = buildHard(
   [
     // Agatha: Ghost (Psychic in our model). Gastly/Haunter/Gengar +
     // Zubat/Golbat + Drowzee/Hypno + Arbok flavour.
@@ -224,7 +246,7 @@ const AGATHA_DECK = build(
   [['sve-5', 20]],
 );
 
-const LANCE_DECK = build(
+const LANCE_DECK = buildHard(
   [
     // Lance: Dragon Master. Dratini/Dragonair/Dragonite + Magikarp/Gyarados
     // + Charizard + Aerodactyl. Mixed Fire+Water energy to power the
@@ -244,7 +266,7 @@ const LANCE_DECK = build(
 
 // ---------- Champion ----------
 
-const BLUE_DECK = build(
+const BLUE_DECK = buildHard(
   [
     // Champion Blue: Mixed signature roster — Pidgeot, Alakazam, Rhydon,
     // Gyarados, Exeggutor, Arcanine, Ninetales, Charizard. Colorless +

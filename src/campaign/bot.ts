@@ -18,48 +18,120 @@ import type { CampaignOpponent } from './data';
 
 /** Heuristics that bias MCTS playouts toward winning lines instead
  *  of random survival. Each objective is checked against simulated
- *  end states — true ones get their weight added to the branch score. */
+ *  end states — true ones get their weight added to the branch score.
+ *
+ *  These weights have been substantially sharpened (Jun 2026) so the
+ *  bot plays a real prize race instead of trading attacks at random:
+ *  prize-margin scaling, big-damage threshold, own-survival reward,
+ *  bench-depth heuristic, and an opponent-attack denial signal.
+ *  Combined with the bumped MCTS budgets below this makes gym + E4
+ *  matches meaningfully harder. */
 function objectivesFor(playerID: string) {
   return (G: PokemonTCGState) => {
-    const opponentId = playerID === '0' ? '1' : '0';
+    const me = playerID as '0' | '1';
+    const oppId = playerID === '0' ? '1' : '0';
+    const opp = oppId as '0' | '1';
     return {
-      // Big win signal: drove opponent's prize count down or wiped them out.
+      // Dominant signal — the only thing that closes a game.
       wonMatch: {
-        weight: 100,
-        checker: () => G.winner === (playerID as '0' | '1'),
+        weight: 200,
+        checker: () => G.winner === me,
       },
-      // Mid signal: damage on opponent's active.
-      damagingOpponent: {
-        weight: 0.05,
-        checker: () => Boolean(G.players[opponentId as '0' | '1']?.active?.damage),
-      },
-      // Mid signal: opponent's active is knocked out (forced promotion).
-      knockedOutActive: {
+      // Per-prize lead: scales with how many MORE prizes we've taken
+      // than the opponent. Each prize ahead is worth ~20 weight so a
+      // 3-prize lead is 60 — comparable to a single KO signal. This
+      // pushes the bot to keep taking prizes after the first KO.
+      prizeMargin: {
         weight: 20,
-        checker: () => !G.players[opponentId as '0' | '1']?.active,
-      },
-      // Small signal: opponent has fewer prizes than us.
-      prizeLead: {
-        weight: 5,
         checker: () => {
-          const self = G.players[playerID as '0' | '1'];
-          const opp = G.players[opponentId as '0' | '1'];
-          if (!self || !opp) return false;
-          return (self.prizeCards?.length ?? 6) < (opp.prizeCards?.length ?? 6);
+          const myLeft = G.players[me]?.prizeCards?.length ?? 6;
+          const oppLeft = G.players[opp]?.prizeCards?.length ?? 6;
+          return oppLeft > myLeft;
+        },
+      },
+      // Crushing prize lead — extra reward for snowballing to 1-2
+      // prizes left so the bot doesn't drag games out.
+      closingOut: {
+        weight: 60,
+        checker: () => (G.players[me]?.prizeCards?.length ?? 6) <= 2,
+      },
+      // Opponent active is knocked out — forced promotion is huge tempo.
+      knockedOutOpponentActive: {
+        weight: 35,
+        checker: () => !G.players[opp]?.active,
+      },
+      // Big damage on opponent's active — bot prefers lines that
+      // SET UP a KO next turn, not just chip damage.
+      bigDamageOnOpp: {
+        weight: 8,
+        checker: () => {
+          const a = G.players[opp]?.active;
+          if (!a) return false;
+          const dmg = a.damage;
+          const hp = a.card?.hp ?? 60;
+          return dmg >= hp * 0.6;
+        },
+      },
+      // Any damage on opponent's active — light tempo signal so the
+      // bot prefers attacking turns over pass-turns.
+      anyDamageOnOpp: {
+        weight: 2,
+        checker: () => (G.players[opp]?.active?.damage ?? 0) > 0,
+      },
+      // Survival reward — bot's active is alive at the playout horizon.
+      // Discourages suicide attacks that hand prizes back.
+      ownActiveAlive: {
+        weight: 15,
+        checker: () => Boolean(G.players[me]?.active),
+      },
+      // Bench depth — having ≥3 benched Pokemon means we can absorb
+      // a KO without giving up our last threat. Boards with no bench
+      // collapse instantly.
+      hasBenchDepth: {
+        weight: 6,
+        checker: () => (G.players[me]?.bench?.length ?? 0) >= 3,
+      },
+      // Energy on the field — proxy for "this board can actually
+      // attack". Two or more loaded Pokemon is much harder to
+      // disrupt than a single attacker.
+      hasMultipleAttackers: {
+        weight: 8,
+        checker: () => {
+          const me0 = G.players[me];
+          if (!me0) return false;
+          const activeEn = me0.active?.attachedEnergy?.length ?? 0;
+          const benchLoaded = (me0.bench ?? [])
+            .filter((p) => (p?.attachedEnergy?.length ?? 0) >= 1).length;
+          return (activeEn >= 2 ? 1 : 0) + benchLoaded >= 2;
+        },
+      },
+      // Deny the opponent — if they have no active, no bench, or no
+      // energy on either, they can't fight back. Worth chasing.
+      opponentDeclawed: {
+        weight: 12,
+        checker: () => {
+          const o = G.players[opp];
+          if (!o) return false;
+          const activeEn = o.active?.attachedEnergy?.length ?? 0;
+          const benchEn = (o.bench ?? []).reduce((s, p) => s + (p?.attachedEnergy?.length ?? 0), 0);
+          return activeEn + benchEn === 0;
         },
       },
     };
   };
 }
 
+/** Per-tier MCTS budgets. These were substantially raised in Jun 2026
+ *  to make the campaign genuinely difficult — early settings (150/30,
+ *  400/40, 800/50) were almost beatable on autopilot. New defaults
+ *  put gym leaders at ~2-4s/turn, E4 at ~6-10s, champion at ~12-20s
+ *  on a modern laptop. The horizon-shaped objectives above amplify
+ *  the budget — even gym leaders now read your board state and plan
+ *  KO setups instead of swinging at random. */
 const DIFFICULTY_BY_TIER: Record<CampaignOpponent['tier'], { iterations: number; playoutDepth: number }> = {
-  // Gym leaders: still beatable for a new player. ~150 MCTS rollouts
-  // with 30-depth playouts ≈ < 1s thinking time on modern hardware.
-  gym: { iterations: 150, playoutDepth: 30 },
-  // Elite Four: meaningfully harder. ~400 rollouts, 40 depth.
-  'elite-four': { iterations: 400, playoutDepth: 40 },
-  // Champion: the wall. ~800 rollouts, 50 depth (≈ 2-4s/turn).
-  champion: { iterations: 800, playoutDepth: 50 },
+  gym:          { iterations:  600, playoutDepth:  60 },
+  'elite-four': { iterations: 1500, playoutDepth:  90 },
+  champion:     { iterations: 3000, playoutDepth: 130 },
 };
 
 /** Build an MCTSBot class pre-bound to the opponent's difficulty
