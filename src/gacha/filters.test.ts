@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPokemonMachine } from './filters';
+import { isPokemonMachine, resolveGachaAssetUrl } from './filters';
 
 describe('isPokemonMachine', () => {
   it('keeps machines whose name contains "Pokemon"', () => {
@@ -53,5 +53,38 @@ describe('isPokemonMachine', () => {
     expect(isPokemonMachine({ code: '', name: '' })).toBe(false);
     expect(isPokemonMachine({ code: 'unknown_50' })).toBe(false);
     expect(isPokemonMachine({ name: 'Unknown Pack' })).toBe(false);
+  });
+});
+
+describe('resolveGachaAssetUrl', () => {
+  it('returns undefined for falsy/empty inputs', () => {
+    expect(resolveGachaAssetUrl(undefined)).toBeUndefined();
+    expect(resolveGachaAssetUrl(null)).toBeUndefined();
+    expect(resolveGachaAssetUrl('')).toBeUndefined();
+    expect(resolveGachaAssetUrl('   ')).toBeUndefined();
+  });
+
+  it('prefixes /-rooted paths with the gacha host', () => {
+    // This is the live failing case — `/pokemon_50.png` straight from
+    // the upstream /api/machines response that was 404ing against
+    // our own origin.
+    expect(resolveGachaAssetUrl('/pokemon_50.png')).toBe('https://gacha.collectorcrypt.com/pokemon_50.png');
+    expect(resolveGachaAssetUrl('/img/charizard.png')).toBe('https://gacha.collectorcrypt.com/img/charizard.png');
+  });
+
+  it('leaves absolute https/http/ipfs/data URLs alone', () => {
+    expect(resolveGachaAssetUrl('https://cdn.example.com/foo.png')).toBe('https://cdn.example.com/foo.png');
+    expect(resolveGachaAssetUrl('http://foo/bar.png')).toBe('http://foo/bar.png');
+    expect(resolveGachaAssetUrl('ipfs://Qm123/asset.png')).toBe('ipfs://Qm123/asset.png');
+    expect(resolveGachaAssetUrl('data:image/png;base64,iVBOR...')).toBe('data:image/png;base64,iVBOR...');
+    expect(resolveGachaAssetUrl('blob:https://app/abc')).toBe('blob:https://app/abc');
+  });
+
+  it('promotes protocol-relative URLs to https', () => {
+    expect(resolveGachaAssetUrl('//cdn.example.com/x.png')).toBe('https://cdn.example.com/x.png');
+  });
+
+  it('treats bare filenames as gacha-host paths', () => {
+    expect(resolveGachaAssetUrl('pokemon_50.png')).toBe('https://gacha.collectorcrypt.com/pokemon_50.png');
   });
 });

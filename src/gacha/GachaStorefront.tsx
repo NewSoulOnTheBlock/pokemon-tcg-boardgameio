@@ -28,7 +28,7 @@ import {
   recordGachaPull,
   type GachaPullRecord,
 } from './vaultStore';
-import { isPokemonMachine } from './filters';
+import { isPokemonMachine, resolveGachaAssetUrl } from './filters';
 
 export type GachaTabId = 'shop' | 'vault';
 const TABS: Array<{ id: GachaTabId; label: string; icon: string }> = [
@@ -183,11 +183,12 @@ function GachaMachineCard({ machine, onOpen }: { machine: GachaMachine; onOpen: 
   const totalStock = (Object.values(machine.stock ?? {}) as number[]).reduce((a, b) => a + (b ?? 0), 0);
   const soldOut = totalStock === 0;
   const buyback = machine.instantBuyback ?? 0;
+  const artUrl = resolveGachaAssetUrl(machine.thumbnailUrl) ?? resolveGachaAssetUrl(machine.image);
   return (
     <article className={`gacha-card${soldOut ? ' gacha-card-soldout' : ''}`}>
       <div className="gacha-card-art">
-        {machine.thumbnailUrl || machine.image ? (
-          <img src={machine.thumbnailUrl ?? machine.image} alt={machine.name} loading="lazy" />
+        {artUrl ? (
+          <img src={artUrl} alt={machine.name} loading="lazy" />
         ) : (
           <div className="gacha-card-art-placeholder">{machine.shortName ?? machine.name}</div>
         )}
@@ -355,7 +356,8 @@ function GachaReveal({ result, machine, onClose }: { result: GachaOpenPackSucces
       {(result.nftWon?.content?.metadata?.image || result.nftWon?.content?.links?.image) ? (
         <img
           className="gacha-reveal-image"
-          src={result.nftWon.content.metadata.image ?? result.nftWon.content.links?.image}
+          src={resolveGachaAssetUrl(result.nftWon.content.metadata.image ?? result.nftWon.content.links?.image)
+            ?? result.nftWon.content.metadata.image ?? result.nftWon.content.links?.image}
           alt={result.nftWon.content.metadata.name}
         />
       ) : (
@@ -473,7 +475,7 @@ function GachaVaultCard({
     <article className="gacha-vault-card" style={{ borderColor: rarityColor(pull.rarity) }}>
       <div className="gacha-vault-rarity" style={{ color: rarityColor(pull.rarity) }}>{pull.rarity}</div>
       {pull.nftImage ? (
-        <img src={pull.nftImage} alt={pull.nftName} loading="lazy" />
+        <img src={resolveGachaAssetUrl(pull.nftImage) ?? pull.nftImage} alt={pull.nftName} loading="lazy" />
       ) : (
         <div className="gacha-vault-img-empty">{pull.rarity}</div>
       )}
