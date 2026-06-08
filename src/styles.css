@@ -6026,12 +6026,32 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 }
 
 /* ===== Champions Row ======================================================== */
-.champions-row-page { padding: 24px 24px 80px; }
+.champions-row-page {
+  background:
+    linear-gradient(180deg, rgba(2, 6, 12, 0.78) 0%, rgba(2, 6, 12, 0.88) 40%, rgba(2, 6, 12, 0.95) 100%),
+    url('/champions-row-background.jpg') center top / cover no-repeat fixed,
+    radial-gradient(ellipse at center top, rgba(168, 85, 247, 0.15), transparent 60%);
+  background-color: #02060c;
+  min-height: 100vh;
+  padding: 24px 24px 80px;
+  position: relative;
+}
+.champions-row-page::before {
+  background: linear-gradient(180deg, transparent 0%, transparent 50%, rgba(2, 6, 12, 0.65) 100%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+.champions-row-page > * { position: relative; z-index: 1; }
 .champions-hero {
   align-items: flex-start;
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.18), rgba(168, 85, 247, 0.18));
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(168, 85, 247, 0.22)), rgba(2, 6, 12, 0.5);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(245, 158, 11, 0.4);
   border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   display: flex;
   gap: 32px;
   justify-content: space-between;
@@ -6175,3 +6195,13 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 .champions-basics-row:last-child { border-bottom: 0; }
 .champions-basics-row dt { color: var(--ink-secondary); margin: 0; }
 .champions-basics-row dd { color: var(--ink-primary); font-weight: 600; margin: 0; text-align: right; }
+
+/* Champions Row — translucent panels so the background art shows through */
+.champions-row-page .panel {
+  backdrop-filter: blur(8px);
+  background: rgba(2, 6, 12, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.champions-row-page .panel h2 {
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
