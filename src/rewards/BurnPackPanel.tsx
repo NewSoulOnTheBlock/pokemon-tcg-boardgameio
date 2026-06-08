@@ -8,16 +8,17 @@ import { CARD_LIBRARY } from '../game/cards';
 import type { ProfileState, StoredProfile } from '../shared/profile';
 import { redeemBurnPack } from '../api/rewards';
 import {
-  POKETCG_PACK_PRICE_TOKENS,
+  POKETCG_PACK_TIERS,
   burnPoketcgForPacks,
   fetchPoketcgBalance,
+  findPoketcgTier,
 } from './burnTokens';
 
-const PACK_OPTIONS = [1, 3, 5, 10] as const;
+const PACK_OPTIONS = POKETCG_PACK_TIERS;
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
   return Math.round(n).toString();
 }
 
@@ -58,7 +59,7 @@ export function BurnPackPanel({
 
   useEffect(() => { void refreshBalance(); }, [refreshBalance]);
 
-  const totalCost = POKETCG_PACK_PRICE_TOKENS * packCount;
+  const totalCost = findPoketcgTier(packCount)?.costTokens ?? 0;
   const insufficient = balance !== null && balance < totalCost;
   const canBuy = !!profile.userId && !!wallet?.address && wallet.chain === 'solana';
 
@@ -107,8 +108,9 @@ export function BurnPackPanel({
           <p className="eyebrow">Booster Shop · $POKETCG burn</p>
           <h2>Buy Playable Packs</h2>
           <p className="section-subtitle">
-            Each pack: 5 commons + 3 uncommons + 1 rare-or-better. Costs{' '}
-            <strong>{formatTokens(POKETCG_PACK_PRICE_TOKENS)} $POKETCG</strong>, permanently burned.
+            Each pack: 5 commons + 3 uncommons + 1 rare-or-better. Cheapest tier:{' '}
+            <strong>{formatTokens(POKETCG_PACK_TIERS[0]!.costTokens)} $POKETCG</strong>{' '}
+            for 1 pack — bulk tiers below are discounted. Tokens are permanently burned.
           </p>
         </div>
         <div className="burn-pack-balance">
@@ -119,17 +121,25 @@ export function BurnPackPanel({
       </div>
 
       <div className="burn-pack-options">
-        {PACK_OPTIONS.map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={`burn-pack-option${packCount === n ? ' burn-pack-option-active' : ''}`}
-            onClick={() => setPackCount(n)}
-          >
-            <strong>{n} pack{n === 1 ? '' : 's'}</strong>
-            <span>{formatTokens(POKETCG_PACK_PRICE_TOKENS * n)} $POKETCG</span>
-          </button>
-        ))}
+        {PACK_OPTIONS.map((tier) => {
+          const perPack = tier.costTokens / tier.packs;
+          const cheapestPerPack = POKETCG_PACK_TIERS[0]!.costTokens / POKETCG_PACK_TIERS[0]!.packs;
+          const discountPct = Math.round((1 - perPack / cheapestPerPack) * 100);
+          return (
+            <button
+              key={tier.packs}
+              type="button"
+              className={`burn-pack-option${packCount === tier.packs ? ' burn-pack-option-active' : ''}`}
+              onClick={() => setPackCount(tier.packs)}
+            >
+              <strong>{tier.packs} pack{tier.packs === 1 ? '' : 's'}</strong>
+              <span>{formatTokens(tier.costTokens)} $POKETCG</span>
+              {discountPct > 0 && (
+                <span className="burn-pack-option-discount">SAVE {discountPct}%</span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div className="burn-pack-actions">

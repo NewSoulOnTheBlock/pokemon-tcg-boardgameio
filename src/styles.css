@@ -5679,11 +5679,8 @@ button:disabled {
 .burn-pack-options {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin: 16px 0;
-}
-@media (min-width: 600px) {
-  .burn-pack-options { grid-template-columns: repeat(4, 1fr); }
 }
 .burn-pack-option {
   align-items: center;
@@ -5696,7 +5693,18 @@ button:disabled {
   flex-direction: column;
   gap: 4px;
   padding: 14px 10px;
+  position: relative;
   transition: all 0.15s ease;
+}
+.burn-pack-option-discount {
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  border-radius: 4px;
+  color: #052e16;
+  font-size: 0.65rem !important;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  margin-top: 2px;
 }
 .burn-pack-option:hover { border-color: rgba(239, 68, 68, 0.4); }
 .burn-pack-option strong { font-size: 1rem; }

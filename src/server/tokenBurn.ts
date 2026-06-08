@@ -15,8 +15,24 @@ import { Connection, PublicKey } from '@solana/web3.js';
 export const POKETCG_TOKEN_MINT = 'N9Curnf2ZQWBZWrjBkzP6xBe6n5WRhBhouRfiSqpump';
 // pump.fun tokens are 6-decimal mints, same as USDC/USDT.
 export const POKETCG_DECIMALS = 6;
-// 250,000 tokens per pack, in raw token units.
-export const POKETCG_PACK_PRICE_RAW = 250_000 * 10 ** POKETCG_DECIMALS;
+
+// Pack-tier pricing. Tiers are NOT linear — buying multiple packs at
+// once is discounted to encourage larger burns. The client picks one
+// of these tiers; the server validates the burn amount against the
+// declared tier so a forged "I burned 100k for 7 packs" request fails.
+export interface PoketcgPackTier {
+  packs: number;
+  costTokens: number;
+}
+export const POKETCG_PACK_TIERS: readonly PoketcgPackTier[] = [
+  { packs: 1, costTokens: 100_000 },
+  { packs: 3, costTokens: 250_000 },
+  { packs: 7, costTokens: 500_000 },
+] as const;
+
+export function findPoketcgTier(packs: number): PoketcgPackTier | undefined {
+  return POKETCG_PACK_TIERS.find((t) => t.packs === packs);
+}
 
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com';
 

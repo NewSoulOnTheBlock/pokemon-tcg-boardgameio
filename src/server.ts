@@ -16,7 +16,7 @@ import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage, DailyPackCooldownError, type ProfileStorage } from './server/profileStorage';
 import { rollPrizeCard } from './server/prizes';
 import { rollDailyPack } from './server/packRoller';
-import { POKETCG_PACK_PRICE_RAW, PoketcgBurnError, verifyPoketcgBurn } from './server/tokenBurn';
+import { POKETCG_DECIMALS, PoketcgBurnError, findPoketcgTier, verifyPoketcgBurn } from './server/tokenBurn';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
 import { createPhygitalsBuyer, PhygitalsBuyerError, type PhygitalsBuyerService } from './server/phygitalsBuyer';
@@ -578,7 +578,12 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
   } | undefined;
   const signature = body?.signature?.trim();
   const buyerWallet = body?.buyerWallet?.trim();
-  const packs = Math.max(1, Math.min(10, Number.isFinite(body?.packs) ? Math.floor(body!.packs!) : 1));
+  const requestedPacks = Number.isFinite(body?.packs) ? Math.floor(body!.packs!) : 1;
+  const tier = findPoketcgTier(requestedPacks);
+  if (!tier) {
+    ctx.throw(400, `packs must be one of: ${[1, 3, 7].join(', ')} (got ${requestedPacks})`);
+    return;
+  }
   if (!signature) {
     ctx.throw(400, 'signature is required');
     return;
@@ -591,7 +596,7 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
     await verifyPoketcgBurn({
       signature,
       buyerWallet,
-      minRawAmount: POKETCG_PACK_PRICE_RAW * packs,
+      minRawAmount: tier.costTokens * 10 ** POKETCG_DECIMALS,
     });
   } catch (err) {
     if (err instanceof PoketcgBurnError) {
@@ -602,13 +607,13 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
     throw err;
   }
   const cardIds: string[] = [];
-  for (let i = 0; i < packs; i += 1) cardIds.push(...rollDailyPack());
+  for (let i = 0; i < tier.packs; i += 1) cardIds.push(...rollDailyPack());
   const { profile, purchase, alreadyRedeemed } = await profileStorage.redeemBurnPack(
     ctx.params.userId,
     signature,
     cardIds,
   );
-  ctx.body = { profile, purchase, alreadyRedeemed, packs };
+  ctx.body = { profile, purchase, alreadyRedeemed, packs: tier.packs };
 });
 
 server.router.get('/api/leaderboard', async (ctx) => {

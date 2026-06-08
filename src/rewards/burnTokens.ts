@@ -8,8 +8,24 @@
 import { POKETCG_TOKEN_MINT } from '../game/types';
 
 const POKETCG_DECIMALS = 6;
-export const POKETCG_PACK_PRICE_TOKENS = 250_000;
-export const POKETCG_PACK_PRICE_RAW = POKETCG_PACK_PRICE_TOKENS * 10 ** POKETCG_DECIMALS;
+
+// Pack-tier pricing — must match POKETCG_PACK_TIERS in
+// src/server/tokenBurn.ts. The server validates the burn amount
+// against the declared tier, so a client that fakes a different
+// price/pack ratio will fail server-side verification.
+export interface PoketcgPackTier {
+  packs: number;
+  costTokens: number;
+}
+export const POKETCG_PACK_TIERS: readonly PoketcgPackTier[] = [
+  { packs: 1, costTokens: 100_000 },
+  { packs: 3, costTokens: 250_000 },
+  { packs: 7, costTokens: 500_000 },
+] as const;
+
+export function findPoketcgTier(packs: number): PoketcgPackTier | undefined {
+  return POKETCG_PACK_TIERS.find((t) => t.packs === packs);
+}
 
 const SOLANA_RPC_URL = (
   (typeof process !== 'undefined' && process.env?.SOLANA_RPC_URL?.trim()) ||
@@ -18,14 +34,16 @@ const SOLANA_RPC_URL = (
 );
 
 /** Build a tx with a single SPL-token `burnChecked` instruction that
- *  destroys `packs * 250,000` $POKETCG from the buyer's ATA, sign it
- *  with the connected wallet, and submit it. Returns the signature. */
+ *  destroys the tier's `costTokens` of $POKETCG from the buyer's ATA,
+ *  sign it with the connected wallet, and submit it. Returns the
+ *  signature. */
 export async function burnPoketcgForPacks(args: {
   buyerWallet: string;
   packs: number;
 }): Promise<string> {
-  if (!Number.isInteger(args.packs) || args.packs <= 0 || args.packs > 10) {
-    throw new Error(`packs must be an integer 1..10, got ${args.packs}`);
+  const tier = findPoketcgTier(args.packs);
+  if (!tier) {
+    throw new Error(`packs must be one of: ${POKETCG_PACK_TIERS.map((t) => t.packs).join(', ')}`);
   }
   const [{ PublicKey, Connection, Transaction }, Token] = await Promise.all([
     import('@solana/web3.js'),
@@ -41,7 +59,7 @@ export async function burnPoketcgForPacks(args: {
     throw new Error('No $POKETCG token account found on this wallet. Buy some $POKETCG first.');
   }
 
-  const amount = BigInt(POKETCG_PACK_PRICE_RAW) * BigInt(args.packs);
+  const amount = BigInt(tier.costTokens) * BigInt(10 ** POKETCG_DECIMALS);
   // burnChecked is preferred over burn — the cluster validates the
   // declared decimals against the mint, catching client-side mistakes.
   const burnIx = Token.createBurnCheckedInstruction(
