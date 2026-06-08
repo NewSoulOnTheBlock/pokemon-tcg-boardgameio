@@ -8,6 +8,7 @@ import { PlayerHUD } from './components/PlayerHUD';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
 import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
+import { canPayEnergyCost } from './game/rules';
 
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
   onMatchComplete?: (payload: { reason?: string; winner?: PlayerID; winnerWallet?: string }) => void | Promise<void>;
@@ -674,11 +675,24 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
       {isCurrent && (
         <div className="action-group">
           <h3>Attack / retreat</h3>
-          {player.active?.card.attacks.map((attack, index) => (
-            <button key={attack.name} onClick={() => moves.attack(index)}>
-              Attack: {attack.name}
-            </button>
-          ))}
+          {player.active?.card.attacks.map((attack, index) => {
+            const canAttack = !!player.active && canPayEnergyCost(player.active.attachedEnergy, attack.cost);
+            const costLabel = attack.cost.length > 0 ? attack.cost.join('+') : 'Free';
+            return (
+              <button
+                key={attack.name}
+                onClick={() => {
+                  moves.attack(index);
+                  setBoardHint(`${player.active!.card.name} used ${attack.name}.`);
+                }}
+                disabled={!canAttack}
+                title={canAttack ? `Cost: ${costLabel}` : `Need ${costLabel} energy attached. Currently: ${player.active?.attachedEnergy.length ?? 0}`}
+              >
+                Attack: {attack.name} <span className="attack-cost-pill">{costLabel}</span>
+                {!canAttack && <span className="attack-locked"> · 🔒 need {costLabel}</span>}
+              </button>
+            );
+          })}
           {player.bench.map((pokemon, index) => (
             <button key={pokemon.instanceId} onClick={() => moves.retreat(index)}>
               Retreat to Bench {index + 1}

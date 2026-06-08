@@ -487,31 +487,35 @@ export function resolveAttackEffect(
       // family — i.e. another copy of the same Basic. Closest behaviour
       // to "Call for Family" / "Sprout" / similar Base-set effects
       // without parsing the specific name out of the attack text.
-      if (player.bench.length < 5) {
-        const targetName = attacker.card.name;
-        const deckIndex = player.deck.findIndex((c) =>
-          c.kind === 'pokemon' && c.stage === 'Basic' && c.name === targetName,
-        );
-        if (deckIndex !== -1) {
-          const [pulled] = player.deck.splice(deckIndex, 1);
-          if (pulled.kind === 'pokemon' && pulled.stage === 'Basic') {
-            // Inline the creation since createPokemonInPlay isn't in scope
-            // here without a turn ref; reuse the attacker's enteredTurn so
-            // it acts like a fresh play.
-            player.bench.push({
-              instanceId: `pokemon-${G.nextInstanceId}`,
-              card: pulled,
-              evolution: [pulled],
-              attachedEnergy: [],
-              damage: 0,
-              conditions: [],
-              enteredTurn: attacker.enteredTurn,
-            });
-            G.nextInstanceId += 1;
-            if (random.Shuffle) player.deck = random.Shuffle(player.deck);
-            appendLog(G, `${attack.name}: pulled ${pulled.name} onto the Bench.`);
-          }
-        }
+      const targetName = attacker.card.name;
+      if (player.bench.length >= 5) {
+        appendLog(G, `${attack.name}: bench is full, no ${targetName} pulled.`);
+        break;
+      }
+      const deckIndex = player.deck.findIndex((c) =>
+        c.kind === 'pokemon' && c.stage === 'Basic' && c.name === targetName,
+      );
+      if (deckIndex === -1) {
+        appendLog(G, `${attack.name}: no ${targetName} found in deck.`);
+        break;
+      }
+      const [pulled] = player.deck.splice(deckIndex, 1);
+      if (pulled.kind === 'pokemon' && pulled.stage === 'Basic') {
+        // Inline the creation since createPokemonInPlay isn't in scope
+        // here without a turn ref; reuse the attacker's enteredTurn so
+        // it acts like a fresh play.
+        player.bench.push({
+          instanceId: `pokemon-${G.nextInstanceId}`,
+          card: pulled,
+          evolution: [pulled],
+          attachedEnergy: [],
+          damage: 0,
+          conditions: [],
+          enteredTurn: attacker.enteredTurn,
+        });
+        G.nextInstanceId += 1;
+        if (random.Shuffle) player.deck = random.Shuffle(player.deck);
+        appendLog(G, `${attack.name}: pulled ${pulled.name} onto the Bench.`);
       }
       break;
     }

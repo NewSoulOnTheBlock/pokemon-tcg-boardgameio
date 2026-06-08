@@ -5941,3 +5941,19 @@ button:disabled {
   text-transform: uppercase;
 }
 .docs-table td { color: var(--ink-primary); font-size: 0.9rem; }
+
+/* Attack-cost pill + locked indicator */
+.attack-cost-pill {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 0.72rem;
+  margin-left: 6px;
+  padding: 1px 6px;
+}
+.attack-locked {
+  color: #f87171;
+  font-size: 0.78rem;
+  margin-left: 4px;
+}
+button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
