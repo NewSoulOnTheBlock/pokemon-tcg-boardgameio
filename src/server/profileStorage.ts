@@ -10,6 +10,21 @@ export interface ProfileStorage {
   recordPack(userId: string, purchase: PackPurchase, profile: ProfileState): Promise<StoredProfile>;
   recordMatch(userId: string, record: MatchRecord): Promise<StoredProfile>;
   listLeaderboard(): Promise<MatchLeaderboardEntry[]>;
+  /** Daily-window leaderboard. Filters completed matches by `started_at >=
+   *  dateKey midnight UTC AND started_at < next midnight UTC`. dateKey is
+   *  YYYY-MM-DD; defaults to today (UTC). */
+  listDailyLeaderboard?(dateKey: string): Promise<MatchLeaderboardEntry[]>;
+  /** Settle yesterday's daily-leaderboard rewards exactly once. Returns
+   *  the persisted top-3 (rank 1/2/3 winners). Idempotent per dateKey:
+   *  subsequent calls return the same rows. */
+  settleDailyLeaderboard?(dateKey: string): Promise<DailyLeaderboardReward[]>;
+  /** Look up any unclaimed daily-leaderboard rewards for this user
+   *  across ALL past date keys. Used to render the "Claim trainer
+   *  pack" CTA on the leaderboard tab. */
+  listUnclaimedDailyRewards?(userId: string): Promise<DailyLeaderboardReward[]>;
+  /** Idempotently grant the trainer-pack to the named winner. Atomically
+   *  flips claimed_at + records the pack purchase + bumps ownedCards. */
+  claimDailyLeaderboardReward?(userId: string, dateKey: string, rank: number, cardIds: string[]): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean }>;
   findProfileByWallet?(walletAddress: string): Promise<StoredProfile | undefined>;
   findProfileByUserId?(userId: string): Promise<StoredProfile | undefined>;
   reservePrizeClaim?(userId: string, matchID: string, playerID: string): Promise<{
@@ -48,6 +63,19 @@ export interface ProfileStorage {
   claimChampionsRowDraw?(userId: string, dateKey: string): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean } | { notWinner: true }>;
 }
 
+export interface DailyLeaderboardReward {
+  dateKey: string;
+  rank: number;
+  userId: string;
+  name: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  matches: number;
+  cardIds: string[] | null;
+  claimedAt: string | null;
+}
+
 export interface ChampionsRowDraw {
   dateKey: string;
   winnerUserId: string | null;
@@ -63,6 +91,7 @@ const PROFILES_TABLE = 'app_profiles';
 const PACKS_TABLE = 'app_pack_purchases';
 const MATCHES_TABLE = 'app_match_records';
 const CHAMPIONS_DRAWS_TABLE = 'app_champions_row_draws';
+const DAILY_REWARDS_TABLE = 'app_daily_leaderboard_rewards';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -291,6 +320,24 @@ export class PostgresProfileStorage implements ProfileStorage {
         claimed_at TIMESTAMPTZ
       )
     `);
+    // Daily-leaderboard trainer-pack rewards. (date_key, rank) PK
+    // makes settleDailyLeaderboard idempotent.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS ${DAILY_REWARDS_TABLE} (
+        date_key TEXT NOT NULL,
+        rank INTEGER NOT NULL CHECK (rank IN (1, 2, 3)),
+        user_id TEXT NOT NULL REFERENCES ${PROFILES_TABLE}(user_id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        wins INTEGER NOT NULL,
+        losses INTEGER NOT NULL,
+        draws INTEGER NOT NULL,
+        matches INTEGER NOT NULL,
+        card_ids JSONB,
+        settled_at TIMESTAMPTZ NOT NULL,
+        claimed_at TIMESTAMPTZ,
+        PRIMARY KEY (date_key, rank)
+      )
+    `);
   }
 
   async login(profile: ProfileState): Promise<StoredProfile> {
@@ -417,6 +464,152 @@ export class PostgresProfileStorage implements ProfileStorage {
       LIMIT 50
     `);
     return rows;
+  }
+
+  async listDailyLeaderboard(dateKey: string): Promise<MatchLeaderboardEntry[]> {
+    // Same shape as listLeaderboard but filtered to a single UTC day.
+    // started_at is the per-match timestamp, so a match started before
+    // midnight UTC and finished after does NOT count for the next day.
+    const { rows } = await this.pool.query<MatchLeaderboardEntry>(`
+      SELECT
+        p.user_id AS "userId",
+        p.name,
+        COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw'))::int AS matches,
+        COUNT(*) FILTER (WHERE m.result = 'win')::int AS wins,
+        COUNT(*) FILTER (WHERE m.result = 'loss')::int AS losses,
+        COUNT(*) FILTER (WHERE m.result = 'draw')::int AS draws
+      FROM ${PROFILES_TABLE} p
+      INNER JOIN ${MATCHES_TABLE} m ON m.user_id = p.user_id
+      WHERE m.started_at >= ($1::date AT TIME ZONE 'UTC')
+        AND m.started_at <  ($1::date + INTERVAL '1 day') AT TIME ZONE 'UTC'
+      GROUP BY p.user_id, p.name
+      HAVING COUNT(*) FILTER (WHERE m.result IN ('win', 'loss', 'draw')) > 0
+      ORDER BY wins DESC, losses ASC, draws DESC, matches DESC, p.name ASC
+      LIMIT 50
+    `, [dateKey]);
+    return rows;
+  }
+
+  async settleDailyLeaderboard(dateKey: string): Promise<DailyLeaderboardReward[]> {
+    // Idempotent: if rows already exist for this dateKey, return them as-is.
+    const existing = await this.pool.query(
+      `SELECT * FROM ${DAILY_REWARDS_TABLE} WHERE date_key = $1 ORDER BY rank ASC`,
+      [dateKey],
+    );
+    if (existing.rows.length > 0) {
+      return existing.rows.map(this.rowToDailyReward);
+    }
+    // Roll the top 3 from yesterday's leaderboard. settled_at is now;
+    // claimed_at stays null until the winner clicks Claim.
+    const top = await this.listDailyLeaderboard(dateKey);
+    const winners = top.slice(0, 3);
+    if (winners.length === 0) return [];
+    const settledAt = nowIso();
+    for (let i = 0; i < winners.length; i += 1) {
+      const w = winners[i]!;
+      await this.pool.query(
+        `INSERT INTO ${DAILY_REWARDS_TABLE}
+           (date_key, rank, user_id, name, wins, losses, draws, matches, settled_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (date_key, rank) DO NOTHING`,
+        [dateKey, i + 1, w.userId, w.name, w.wins, w.losses, w.draws, w.matches, settledAt],
+      );
+    }
+    const reread = await this.pool.query(
+      `SELECT * FROM ${DAILY_REWARDS_TABLE} WHERE date_key = $1 ORDER BY rank ASC`,
+      [dateKey],
+    );
+    return reread.rows.map(this.rowToDailyReward);
+  }
+
+  async listUnclaimedDailyRewards(userId: string): Promise<DailyLeaderboardReward[]> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${DAILY_REWARDS_TABLE} WHERE user_id = $1 AND claimed_at IS NULL ORDER BY date_key DESC, rank ASC`,
+      [userId],
+    );
+    return rows.map(this.rowToDailyReward);
+  }
+
+  async claimDailyLeaderboardReward(
+    userId: string,
+    dateKey: string,
+    rank: number,
+    cardIds: string[],
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean }> {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      throw new Error('claimDailyLeaderboardReward requires cardIds');
+    }
+    const signature = `daily-leaderboard:${dateKey}:rank-${rank}`;
+    // Replay short-circuit on existing pack purchase.
+    const existingPack = await this.pool.query<{ opened_at: string; card_ids: string[] }>(
+      `SELECT opened_at, card_ids FROM ${PACKS_TABLE} WHERE user_id = $1 AND signature = $2`,
+      [userId, signature],
+    );
+    if (existingPack.rows.length > 0) {
+      const profile = await this.findByUserId(userId);
+      if (!profile) throw new Error(`Profile vanished: ${userId}`);
+      const r = existingPack.rows[0]!;
+      return { profile, purchase: { signature, openedAt: r.opened_at, cardIds: r.card_ids }, alreadyClaimed: true };
+    }
+    // Lock + verify the reward row matches the claimer.
+    const rewardRow = await this.pool.query(
+      `SELECT * FROM ${DAILY_REWARDS_TABLE} WHERE date_key = $1 AND rank = $2 FOR UPDATE`,
+      [dateKey, rank],
+    );
+    if (rewardRow.rows.length === 0) throw new Error('No reward row for that (dateKey, rank)');
+    if (rewardRow.rows[0].user_id !== userId) throw new Error("That reward isn't yours.");
+    const now = nowIso();
+    const profileRow = await this.pool.query<{ owned_cards: Record<string, number> }>(
+      `SELECT owned_cards FROM ${PROFILES_TABLE} WHERE user_id = $1 FOR UPDATE`,
+      [userId],
+    );
+    if (profileRow.rows.length === 0) throw new Error(`Profile not found: ${userId}`);
+    const ownedCards: Record<string, number> = { ...(profileRow.rows[0]!.owned_cards ?? {}) };
+    for (const id of cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    await this.pool.query(
+      `UPDATE ${PROFILES_TABLE}
+       SET owned_cards = $2::jsonb, packs_opened = packs_opened + 1, updated_at = $3
+       WHERE user_id = $1`,
+      [userId, JSON.stringify(ownedCards), now],
+    );
+    await this.pool.query(
+      `INSERT INTO ${PACKS_TABLE} (user_id, signature, opened_at, card_ids)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (user_id, signature) DO NOTHING`,
+      [userId, signature, now, JSON.stringify(cardIds)],
+    );
+    await this.pool.query(
+      `UPDATE ${DAILY_REWARDS_TABLE}
+       SET claimed_at = $3, card_ids = $4::jsonb
+       WHERE date_key = $1 AND rank = $2`,
+      [dateKey, rank, now, JSON.stringify(cardIds)],
+    );
+    const profile = await this.findByUserId(userId);
+    if (!profile) throw new Error(`Profile vanished: ${userId}`);
+    return {
+      profile,
+      purchase: { signature, openedAt: now, cardIds: [...cardIds] },
+      alreadyClaimed: false,
+    };
+  }
+
+  private rowToDailyReward(row: {
+    date_key: string; rank: number; user_id: string; name: string;
+    wins: number; losses: number; draws: number; matches: number;
+    card_ids: string[] | null; claimed_at: string | null;
+  }): DailyLeaderboardReward {
+    return {
+      dateKey: row.date_key,
+      rank: Number(row.rank),
+      userId: row.user_id,
+      name: row.name,
+      wins: Number(row.wins),
+      losses: Number(row.losses),
+      draws: Number(row.draws),
+      matches: Number(row.matches),
+      cardIds: row.card_ids,
+      claimedAt: row.claimed_at,
+    };
   }
 
   private async findByLoginKey(loginKey: string): Promise<StoredProfile | undefined> {
@@ -856,6 +1049,7 @@ export class PostgresProfileStorage implements ProfileStorage {
 export class MemoryProfileStorage implements ProfileStorage {
   private readonly profiles = new Map<string, StoredProfile>();
   private readonly loginKeys = new Map<string, string>();
+  private readonly dailyRewards = new Map<string, DailyLeaderboardReward[]>();
 
   async connect(): Promise<void> {
     return;
@@ -933,6 +1127,107 @@ export class MemoryProfileStorage implements ProfileStorage {
       .filter((entry) => entry.matches > 0)
       .sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || b.matches - a.matches || a.name.localeCompare(b.name))
       .slice(0, 50);
+  }
+
+  async listDailyLeaderboard(dateKey: string): Promise<MatchLeaderboardEntry[]> {
+    const startMs = Date.parse(`${dateKey}T00:00:00.000Z`);
+    if (Number.isNaN(startMs)) return [];
+    const endMs = startMs + 24 * 60 * 60 * 1000;
+    return [...this.profiles.values()]
+      .map((profile) => {
+        const completed = profile.matchRecords.filter((record) => {
+          if (record.result === 'in_progress') return false;
+          const startedMs = Date.parse(record.startedAt ?? '');
+          return Number.isFinite(startedMs) && startedMs >= startMs && startedMs < endMs;
+        });
+        return {
+          userId: profile.userId,
+          name: profile.name,
+          matches: completed.length,
+          wins: completed.filter((record) => record.result === 'win').length,
+          losses: completed.filter((record) => record.result === 'loss').length,
+          draws: completed.filter((record) => record.result === 'draw').length,
+        };
+      })
+      .filter((entry) => entry.matches > 0)
+      .sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.draws - a.draws || b.matches - a.matches || a.name.localeCompare(b.name))
+      .slice(0, 50);
+  }
+
+  async settleDailyLeaderboard(dateKey: string): Promise<DailyLeaderboardReward[]> {
+    const cached = this.dailyRewards.get(dateKey);
+    if (cached) return cached;
+    const top = await this.listDailyLeaderboard(dateKey);
+    const winners = top.slice(0, 3);
+    if (winners.length === 0) {
+      this.dailyRewards.set(dateKey, []);
+      return [];
+    }
+    const settledAt = nowIso();
+    const rewards = winners.map((entry, idx) => ({
+      dateKey,
+      rank: idx + 1,
+      userId: entry.userId,
+      name: entry.name,
+      wins: entry.wins,
+      losses: entry.losses,
+      draws: entry.draws,
+      matches: entry.matches,
+      cardIds: null,
+      claimedAt: null,
+    } satisfies DailyLeaderboardReward));
+    this.dailyRewards.set(dateKey, rewards);
+    return rewards.map((r) => ({ ...r }));
+  }
+
+  async listUnclaimedDailyRewards(userId: string): Promise<DailyLeaderboardReward[]> {
+    const out: DailyLeaderboardReward[] = [];
+    for (const rewards of this.dailyRewards.values()) {
+      for (const reward of rewards) {
+        if (reward.userId === userId && reward.claimedAt === null) out.push({ ...reward });
+      }
+    }
+    return out.sort((a, b) => b.dateKey.localeCompare(a.dateKey) || a.rank - b.rank);
+  }
+
+  async claimDailyLeaderboardReward(
+    userId: string,
+    dateKey: string,
+    rank: number,
+    cardIds: string[],
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean }> {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      throw new Error('claimDailyLeaderboardReward requires cardIds');
+    }
+    const list = this.dailyRewards.get(dateKey);
+    if (!list) throw new Error('No reward row for that (dateKey, rank)');
+    const reward = list.find((r) => r.rank === rank);
+    if (!reward) throw new Error('No reward row for that (dateKey, rank)');
+    if (reward.userId !== userId) throw new Error("That reward isn't yours.");
+    const profile = this.profiles.get(userId);
+    if (!profile) throw new Error(`Profile not found: ${userId}`);
+    const signature = `daily-leaderboard:${dateKey}:rank-${rank}`;
+    if (reward.claimedAt && reward.cardIds) {
+      // Replay: hand back the same purchase shape.
+      return {
+        profile,
+        purchase: { signature, openedAt: reward.claimedAt, cardIds: [...reward.cardIds] },
+        alreadyClaimed: true,
+      };
+    }
+    const ownedCards = { ...profile.ownedCards };
+    for (const id of cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    const now = nowIso();
+    const updated = await this.saveStoredProfile({
+      ...profile,
+      ownedCards,
+      packsOpened: profile.packsOpened + 1,
+      packPurchases: [...profile.packPurchases, { signature, openedAt: now, cardIds: [...cardIds] }],
+      updatedAt: now,
+    });
+    reward.claimedAt = now;
+    reward.cardIds = [...cardIds];
+    return { profile: updated, purchase: { signature, openedAt: now, cardIds: [...cardIds] }, alreadyClaimed: false };
   }
 
   async claimDailyPack(

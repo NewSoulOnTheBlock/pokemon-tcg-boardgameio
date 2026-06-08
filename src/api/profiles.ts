@@ -77,8 +77,78 @@ export async function persistMatchRecord(
   });
 }
 
-export async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
-  return request<MatchLeaderboardEntry[]>('/api/leaderboard');
+export interface DailyLeaderboardYesterdayWinner {
+  rank: number;
+  userId: string;
+  name: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  matches: number;
+  claimed: boolean;
+}
+
+export interface DailyLeaderboardResponse {
+  dateKey: string;
+  resetAt: string;
+  entries: MatchLeaderboardEntry[];
+  yesterday: {
+    dateKey: string;
+    winners: DailyLeaderboardYesterdayWinner[];
+  };
+}
+
+export interface DailyLeaderboardReward {
+  dateKey: string;
+  rank: number;
+  userId: string;
+  name: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  matches: number;
+  cardIds: string[] | null;
+  claimedAt: string | null;
+}
+
+export interface DailyLeaderboardClaimResponse {
+  dateKey: string;
+  rank: number;
+  profile: ProfileState;
+  purchase: PackPurchase;
+  alreadyClaimed: boolean;
+}
+
+export async function fetchLeaderboard(dateKey?: string): Promise<DailyLeaderboardResponse> {
+  const qs = dateKey ? `?dateKey=${encodeURIComponent(dateKey)}` : '';
+  return request<DailyLeaderboardResponse>(`/api/leaderboard${qs}`);
+}
+
+export async function fetchLeaderboardEntries(dateKey?: string): Promise<MatchLeaderboardEntry[]> {
+  // Convenience wrapper for callers that only need the rows.
+  const result = await fetchLeaderboard(dateKey);
+  return result.entries;
+}
+
+export async function fetchUnclaimedLeaderboardRewards(userId: string): Promise<DailyLeaderboardReward[]> {
+  const result = await request<{ rewards: DailyLeaderboardReward[] }>(
+    `/api/leaderboard/rewards/${encodeURIComponent(userId)}`,
+  );
+  return result.rewards;
+}
+
+export async function claimLeaderboardReward(
+  userId: string,
+  dateKey: string,
+  rank: number,
+): Promise<DailyLeaderboardClaimResponse> {
+  return request<DailyLeaderboardClaimResponse>(
+    `/api/leaderboard/rewards/${encodeURIComponent(userId)}/claim`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ dateKey, rank }),
+    },
+  );
 }
 
 export interface ClaimedPrize {

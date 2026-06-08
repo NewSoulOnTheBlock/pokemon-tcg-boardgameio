@@ -607,8 +607,126 @@ function nextChampionsRowDrawAt(): string {
   return next.toISOString();
 }
 
+function dailyLeaderboardDateKey(now: Date = new Date()): string {
+  // UTC YYYY-MM-DD. Same shape as Champions Row's date key but kept
+  // separate so leaderboard windows can be rotated independently if
+  // we ever want a non-UTC reset.
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+}
+
+function yesterdayDailyLeaderboardDateKey(now: Date = new Date()): string {
+  const yesterday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+  return dailyLeaderboardDateKey(yesterday);
+}
+
+function nextDailyLeaderboardResetAt(): string {
+  // Same as Champions Row — next UTC midnight. Keep both helpers so
+  // the two systems stay independent.
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return next.toISOString();
+}
+
 server.router.get('/api/leaderboard', async (ctx) => {
-  ctx.body = await profileStorage.listLeaderboard();
+  // Daily-reset leaderboard. The query param `dateKey=YYYY-MM-DD`
+  // optionally lets the client pull a past day; default is today (UTC).
+  // We also lazily settle YESTERDAY's top-3 rewards on first request
+  // so the prize state is always up-to-date without needing a cron.
+  const todayKey = dailyLeaderboardDateKey();
+  const queryKey = typeof ctx.query.dateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ctx.query.dateKey)
+    ? ctx.query.dateKey
+    : todayKey;
+
+  // Settle yesterday's pool (idempotent). Safe to call every request —
+  // INSERT … ON CONFLICT DO NOTHING is the gate.
+  const yesterdayKey = yesterdayDailyLeaderboardDateKey();
+  let yesterdayRewards: Awaited<ReturnType<NonNullable<ProfileStorage['settleDailyLeaderboard']>>> = [];
+  if (profileStorage.settleDailyLeaderboard) {
+    try { yesterdayRewards = await profileStorage.settleDailyLeaderboard(yesterdayKey); }
+    catch (err) { console.error('[leaderboard] failed to settle yesterday rewards:', err); }
+  }
+
+  // Daily window first, fall back to cumulative if backend doesn't
+  // support the daily query (legacy memory storage in old tests).
+  const entries = profileStorage.listDailyLeaderboard
+    ? await profileStorage.listDailyLeaderboard(queryKey)
+    : await profileStorage.listLeaderboard();
+
+  ctx.body = {
+    dateKey: queryKey,
+    resetAt: nextDailyLeaderboardResetAt(),
+    entries,
+    yesterday: {
+      dateKey: yesterdayKey,
+      winners: yesterdayRewards.map((r) => ({
+        rank: r.rank,
+        userId: r.userId,
+        name: r.name,
+        wins: r.wins,
+        losses: r.losses,
+        draws: r.draws,
+        matches: r.matches,
+        claimed: r.claimedAt !== null,
+      })),
+    },
+  };
+});
+
+server.router.get('/api/leaderboard/rewards/:userId', async (ctx) => {
+  // Lists this user's currently-unclaimed daily-leaderboard rewards.
+  // Used to render the "Claim trainer pack" banner on the leaderboard
+  // tab. Returns [] if the storage backend doesn't support rewards.
+  if (!profileStorage.listUnclaimedDailyRewards) {
+    ctx.body = { rewards: [] };
+    return;
+  }
+  // Make sure yesterday's pool is settled before reading.
+  if (profileStorage.settleDailyLeaderboard) {
+    try { await profileStorage.settleDailyLeaderboard(yesterdayDailyLeaderboardDateKey()); }
+    catch (err) { console.error('[leaderboard] settle on rewards fetch failed:', err); }
+  }
+  const rewards = await profileStorage.listUnclaimedDailyRewards(ctx.params.userId);
+  ctx.body = { rewards };
+});
+
+server.router.post('/api/leaderboard/rewards/:userId/claim', koaBody(), async (ctx) => {
+  // Claim a specific (dateKey, rank) trainer-pack reward. Server
+  // rolls the pack contents, atomically marks the row claimed +
+  // adds cards to the user's collection, returns the rolled cardIds.
+  if (!profileStorage.claimDailyLeaderboardReward || !profileStorage.settleDailyLeaderboard) {
+    ctx.throw(501, 'daily-leaderboard rewards not supported by this storage backend');
+    return;
+  }
+  const body = ctx.request.body as { dateKey?: unknown; rank?: unknown } | undefined;
+  const dateKey = typeof body?.dateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.dateKey)
+    ? body.dateKey : null;
+  const rank = Number(body?.rank);
+  if (!dateKey || !Number.isInteger(rank) || rank < 1 || rank > 3) {
+    ctx.status = 400;
+    ctx.body = { error: 'dateKey (YYYY-MM-DD) and rank (1|2|3) required' };
+    return;
+  }
+  await profileStorage.settleDailyLeaderboard(dateKey);
+  const rolledIds = rollDailyPack();
+  try {
+    const result = await profileStorage.claimDailyLeaderboardReward(
+      ctx.params.userId, dateKey, rank, rolledIds,
+    );
+    ctx.body = {
+      dateKey,
+      rank,
+      profile: result.profile,
+      purchase: result.purchase,
+      alreadyClaimed: result.alreadyClaimed,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("isn't yours")) { ctx.status = 403; ctx.body = { error: msg }; return; }
+    if (msg.includes('No reward row')) { ctx.status = 404; ctx.body = { error: msg }; return; }
+    console.error('[leaderboard] claim failed:', err);
+    ctx.status = 500;
+    ctx.body = { error: msg };
+  }
 });
 
 /**

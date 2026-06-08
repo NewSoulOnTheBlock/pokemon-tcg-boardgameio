@@ -3572,6 +3572,93 @@ button:disabled {
 .leaderboard-row-top-2 { background: linear-gradient(90deg, rgba(203, 213, 225, 0.12), transparent); }
 .leaderboard-row-top-3 { background: linear-gradient(90deg, rgba(217, 119, 6, 0.12), transparent); }
 
+/* ===== Daily leaderboard countdown + prize banner =================== */
+.daily-leaderboard-countdown {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+.daily-leaderboard-countdown .eyebrow {
+  color: var(--ink-secondary, #94a3b8);
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  margin: 0;
+  text-transform: uppercase;
+}
+.daily-leaderboard-countdown strong {
+  color: #f7c548;
+  font-family: 'JetBrains Mono', 'Menlo', monospace;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 12px rgba(247, 197, 72, 0.55);
+}
+.daily-leaderboard-prize-callout {
+  align-items: center;
+  background: linear-gradient(90deg, rgba(247, 197, 72, 0.12), rgba(247, 197, 72, 0.03));
+  border: 1px solid rgba(247, 197, 72, 0.32);
+  border-radius: 10px;
+  color: #fde68a;
+  display: flex;
+  font-size: 0.92rem;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 12px 14px;
+}
+.daily-leaderboard-prize-callout span[aria-hidden] {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.daily-leaderboard-prize-callout p {
+  color: #fde68a;
+  margin: 0;
+}
+.daily-leaderboard-prize-callout strong {
+  color: #fff7cc;
+}
+.daily-leaderboard-claim-banner {
+  background: linear-gradient(135deg, rgba(247, 197, 72, 0.18), rgba(217, 119, 6, 0.08));
+  border: 1px solid rgba(247, 197, 72, 0.55);
+  border-radius: 12px;
+  box-shadow: 0 0 24px rgba(247, 197, 72, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+}
+.daily-leaderboard-claim-row {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+.daily-leaderboard-claim-text {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+.daily-leaderboard-claim-text strong {
+  color: #fff7cc;
+  display: block;
+  font-size: 1.02rem;
+}
+.daily-leaderboard-claim-text p {
+  color: var(--ink-secondary, #cbd5f5);
+  font-size: 0.85rem;
+  margin: 2px 0 0;
+}
+.daily-leaderboard-medal {
+  filter: drop-shadow(0 0 8px rgba(247, 197, 72, 0.6));
+  font-size: 1.9rem;
+  line-height: 1;
+}
+.leaderboard-no-prize {
+  color: var(--ink-muted, #475569);
+}
+
 /* ===================================================================== */
 /* ===== Battle screen / arena layout (full-screen playmat upgrade) === */
 /* ===================================================================== */

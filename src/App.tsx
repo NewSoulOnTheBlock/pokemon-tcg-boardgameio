@@ -6,19 +6,23 @@ import { Client } from 'boardgame.io/react';
 import { Local, SocketIO } from 'boardgame.io/multiplayer';
 import { RandomBot } from 'boardgame.io/ai';
 import {
+  claimLeaderboardReward,
   claimMatchPrize,
   fetchLeaderboard,
+  fetchUnclaimedLeaderboardRewards,
   loginProfile,
   persistMatchRecord,
   persistPackPurchase,
   persistProfile,
   scanWalletForImports,
   type ClaimedPrize,
+  type DailyLeaderboardReward,
   type ImportCandidate,
 } from './api/profiles';
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
+import { PackOpeningCeremony } from './rewards/PackOpeningCeremony';
 import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
@@ -58,7 +62,6 @@ import {
   MATCH_TYPE_OPTIONS,
   QUEUE_AUTO_CREATE_AFTER_MS,
   QUEUE_POLL_INTERVAL_MS,
-  rankFromLeaderboard,
   summariseRecentForm,
 } from './matchmaking/helpers';
 import { TrollBox } from './matchmaking/TrollBox';
@@ -942,7 +945,9 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
   useEffect(() => {
     if (activeTab !== 'leaderboard') return;
     let cancelled = false;
-    fetchLeaderboard().then((rows) => { if (!cancelled) setLeaderboard(rows); }).catch(() => undefined);
+    fetchLeaderboard()
+      .then((response) => { if (!cancelled) setLeaderboard(response.entries); })
+      .catch(() => undefined);
     return () => { cancelled = true; };
   }, [activeTab]);
 
@@ -1250,6 +1255,11 @@ function MatchmakingPage({
   const [isPrivate, setIsPrivate] = useState(false);
   const [matches, setMatches] = useState<LobbyAPI.Match[]>([]);
   const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
+  const [leaderboardMeta, setLeaderboardMeta] = useState<{ dateKey: string; resetAt: string } | null>(null);
+  const [unclaimedRewards, setUnclaimedRewards] = useState<DailyLeaderboardReward[]>([]);
+  const [claimingRewardKey, setClaimingRewardKey] = useState<string | null>(null);
+  const [rewardRevealCards, setRewardRevealCards] = useState<string[] | null>(null);
+  const [resetCountdown, setResetCountdown] = useState<string>('');
   const [busy, setBusy] = useState<'create' | 'refresh' | string | null>(null);
   const [error, setError] = useState('');
   // Quick Play queue state. While `queue` is non-null we poll for an
@@ -1285,7 +1295,7 @@ function MatchmakingPage({
     setError('');
     setBusy('refresh');
     try {
-      const [{ matches: listedMatches }, leaderboardRows] = await Promise.all([
+      const [{ matches: listedMatches }, leaderboardResponse] = await Promise.all([
         lobby.listMatches(GAME_NAME, { isGameover: false }),
         fetchLeaderboard(),
       ]);
@@ -1297,7 +1307,8 @@ function MatchmakingPage({
         return Boolean(openSeat(match));
       });
       setMatches(openMatches);
-      setLeaderboard(leaderboardRows);
+      setLeaderboard(leaderboardResponse.entries);
+      setLeaderboardMeta({ dateKey: leaderboardResponse.dateKey, resetAt: leaderboardResponse.resetAt });
     } catch (err) {
       setError(`Could not reach multiplayer server at ${MULTIPLAYER_SERVER}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -1308,6 +1319,70 @@ function MatchmakingPage({
   useEffect(() => {
     void refreshMatches();
   }, []);
+
+  // Pull any unclaimed daily-leaderboard trainer-pack rewards for this
+  // user. Triggered on mount + whenever the leaderboard meta changes
+  // (so settling yesterday's pool surfaces a new reward).
+  const refreshRewards = useCallback(async () => {
+    if (!profile.userId) return;
+    try {
+      const rewards = await fetchUnclaimedLeaderboardRewards(profile.userId);
+      setUnclaimedRewards(rewards);
+    } catch {
+      // Backend may not support rewards — that's fine, treat as empty.
+      setUnclaimedRewards([]);
+    }
+  }, [profile.userId]);
+
+  useEffect(() => { void refreshRewards(); }, [refreshRewards, leaderboardMeta?.dateKey]);
+
+  // Live countdown to the next UTC midnight (when the daily leaderboard
+  // resets + the top-3 trainer packs are awarded). Tick once per second.
+  useEffect(() => {
+    if (!leaderboardMeta?.resetAt) {
+      setResetCountdown('');
+      return;
+    }
+    const target = Date.parse(leaderboardMeta.resetAt);
+    if (!Number.isFinite(target)) {
+      setResetCountdown('');
+      return;
+    }
+    const update = () => {
+      const ms = target - Date.now();
+      if (ms <= 0) {
+        setResetCountdown('Settling…');
+        // Settlement just happened — refresh in 2s to pick up new winners.
+        window.setTimeout(() => { void refreshMatches(); void refreshRewards(); }, 2000);
+        return;
+      }
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      const s = Math.floor((ms % 60000) / 1000);
+      setResetCountdown(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`);
+    };
+    update();
+    const interval = window.setInterval(update, 1000);
+    return () => window.clearInterval(interval);
+  }, [leaderboardMeta?.resetAt, refreshRewards]);
+
+  async function claimReward(reward: DailyLeaderboardReward) {
+    if (!profile.userId) return;
+    const key = `${reward.dateKey}:${reward.rank}`;
+    if (claimingRewardKey) return;
+    setClaimingRewardKey(key);
+    setError('');
+    try {
+      const result = await claimLeaderboardReward(profile.userId, reward.dateKey, reward.rank);
+      onProfileChange(result.profile);
+      setRewardRevealCards(result.purchase.cardIds);
+      await refreshRewards();
+    } catch (err) {
+      setError(`Could not claim reward: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setClaimingRewardKey(null);
+    }
+  }
 
   // Quick Play loop. While `queue` is active: every QUEUE_POLL_INTERVAL_MS,
   // list matches and auto-accept the first open Casual one. If we haven't
@@ -1703,12 +1778,55 @@ function MatchmakingPage({
           <section className="panel leaderboard-panel">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Hall of fame</p>
-                <h2>🏆 Leaderboard</h2>
+                <p className="eyebrow">Daily standings · resets at UTC midnight</p>
+                <h2>🏆 Daily Leaderboard</h2>
               </div>
+              {resetCountdown && (
+                <div className="daily-leaderboard-countdown">
+                  <span className="eyebrow">Resets in</span>
+                  <strong>{resetCountdown}</strong>
+                </div>
+              )}
             </div>
+
+            <div className="daily-leaderboard-prize-callout">
+              <span aria-hidden="true">🎁</span>
+              <p>
+                <strong>Top 3 today</strong> each win a <strong>Trainer Pack</strong> to rip
+                at UTC midnight. Win matches today to climb the board.
+              </p>
+            </div>
+
+            {unclaimedRewards.length > 0 && (
+              <div className="daily-leaderboard-claim-banner">
+                {unclaimedRewards.map((reward) => {
+                  const key = `${reward.dateKey}:${reward.rank}`;
+                  const medal = reward.rank === 1 ? '🥇' : reward.rank === 2 ? '🥈' : '🥉';
+                  return (
+                    <div className="daily-leaderboard-claim-row" key={key}>
+                      <div className="daily-leaderboard-claim-text">
+                        <span className="daily-leaderboard-medal">{medal}</span>
+                        <div>
+                          <strong>You placed #{reward.rank} on {reward.dateKey}!</strong>
+                          <p>{reward.wins}W · {reward.losses}L · {reward.draws}D — claim your trainer pack.</p>
+                        </div>
+                      </div>
+                      <button
+                        className="primary-cta"
+                        type="button"
+                        disabled={claimingRewardKey !== null}
+                        onClick={() => void claimReward(reward)}
+                      >
+                        {claimingRewardKey === key ? 'Opening…' : '🎁 Claim Pack'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {leaderboard.length === 0 ? (
-              <p className="empty-state">No ranked records yet. Be the first.</p>
+              <p className="empty-state">No matches played today yet. Be the first to set the pace.</p>
             ) : (
               <table className="leaderboard-table leaderboard-table-ranked">
                 <thead>
@@ -1718,13 +1836,13 @@ function MatchmakingPage({
                     <th>Wins</th>
                     <th>Losses</th>
                     <th>Win %</th>
-                    <th>Badge</th>
+                    <th>Reward</th>
                   </tr>
                 </thead>
                 <tbody>
                   {leaderboard.map((entry, index) => {
                     const wr = entry.matches > 0 ? Math.round((entry.wins / entry.matches) * 100) : 0;
-                    const rank = rankFromLeaderboard(entry.wins);
+                    const inPrizePool = index < 3;
                     return (
                       <tr key={entry.userId} className={index < 3 ? `leaderboard-row-top-${index + 1}` : ''}>
                         <td className="leaderboard-rank-cell">
@@ -1735,7 +1853,9 @@ function MatchmakingPage({
                         <td>{entry.losses}</td>
                         <td>{wr}%</td>
                         <td>
-                          <span className="rank-badge" style={{ color: rank.color }}>{rank.icon} {rank.name}</span>
+                          {inPrizePool
+                            ? <span className="rank-badge" style={{ color: '#f7c548', borderColor: '#f7c548' }}>🎁 Trainer Pack</span>
+                            : <span className="leaderboard-no-prize">—</span>}
                         </td>
                       </tr>
                     );
@@ -1807,6 +1927,14 @@ function MatchmakingPage({
           <TrollBox profile={profile} />
         </div>
       </div>
+      {rewardRevealCards && (
+        <PackOpeningCeremony
+          cardIds={rewardRevealCards}
+          title="Trainer Pack"
+          eyebrow="Daily Leaderboard Reward"
+          onClose={() => setRewardRevealCards(null)}
+        />
+      )}
     </main>
   );
 }
