@@ -117,6 +117,7 @@ import {
 } from './quests/components';
 import { DailyPackWidget } from './rewards/DailyPackWidget';
 import { BurnPackPanel } from './rewards/BurnPackPanel';
+import { DocsPage } from './docs/DocsPage';
 import {
   xpForCampaignWin,
   xpForMatchResult,
@@ -132,7 +133,7 @@ import {
 } from './telegram';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match' | 'docs';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
 const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
@@ -796,6 +797,10 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import phygitals / Collector Crypt</strong>
             <span>Scan your Solana wallet and pull NFT-backed Pokemon cards into the game.</span>
+          </button>
+          <button className="home-menu-button" onClick={() => onNavigate('docs')}>
+            <strong>📖 Docs</strong>
+            <span>How to play, deckbuilding rules, the economy, trainer card reference, FAQ.</span>
           </button>
           <a
             className="home-menu-button home-news-button"
@@ -2508,6 +2513,7 @@ export default function App() {
         )}
         {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
+        {page === 'docs' && <DocsPage />}
         {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>
       {/* Boosters page already shows the big "Powered by Phygitals" footer,
