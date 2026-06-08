@@ -26,6 +26,23 @@ export interface BurnPackResult {
   packs: number;
 }
 
+export interface ChampionsRowStatus {
+  dateKey: string;
+  drawnAt: string;
+  eligibility: { totalEligible: number; campaignComplete: number; withPoketcg: number };
+  youAreEligible: boolean;
+  youWon: boolean;
+  youClaimed: boolean;
+  winnerWallet: string | null;
+  nextDrawAt: string;
+}
+
+export interface ChampionsRowClaimResult {
+  profile: StoredProfile;
+  purchase: PackPurchase;
+  alreadyClaimed: boolean;
+}
+
 export class RewardCooldownError extends Error {
   nextClaimAt: string | null;
   constructor(message: string, nextClaimAt: string | null) {
@@ -86,4 +103,25 @@ export async function redeemBurnPack(args: {
     throw new Error(body.error ?? `burn-pack redeem failed (${res.status})`);
   }
   return res.json() as Promise<BurnPackResult>;
+}
+
+export async function fetchChampionsRowStatus(profile: ProfileState): Promise<ChampionsRowStatus> {
+  if (!profile.userId) throw new Error('Sign in again to check Champions Row.');
+  const res = await fetch(apiUrl(`/api/champions-row/status/${profile.userId}`));
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(text || `champions-row status failed (${res.status})`);
+  }
+  return res.json() as Promise<ChampionsRowStatus>;
+}
+
+export async function claimChampionsRow(profile: ProfileState): Promise<ChampionsRowClaimResult> {
+  if (!profile.userId) throw new Error('Sign in again to claim Champions Row.');
+  const res = await fetch(apiUrl(`/api/champions-row/claim/${profile.userId}`), { method: 'POST' });
+  if (!res.ok) {
+    let body: { error?: string } = {};
+    try { body = await res.json(); } catch { /* ignore */ }
+    throw new Error(body.error ?? `champions-row claim failed (${res.status})`);
+  }
+  return res.json() as Promise<ChampionsRowClaimResult>;
 }

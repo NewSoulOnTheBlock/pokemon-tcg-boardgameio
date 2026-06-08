@@ -113,6 +113,7 @@ import { DailyPackWidget } from './rewards/DailyPackWidget';
 import { BurnPackPanel } from './rewards/BurnPackPanel';
 import { DocsPage } from './docs/DocsPage';
 import { GachaStorefront } from './gacha/GachaStorefront';
+import { ChampionsRowPage } from './champions/ChampionsRowPage';
 import {
   xpForCampaignWin,
   xpForMatchResult,
@@ -128,7 +129,7 @@ import {
 } from './telegram';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match' | 'docs';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match' | 'docs' | 'champions';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
 const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
@@ -557,7 +558,7 @@ function Shell({
           <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
         </button>
         <nav>
-          {(['home', 'profile', 'matchmaking', 'bot', 'boosters', 'imports'] as Page[]).map((target) => (
+          {(['home', 'profile', 'matchmaking', 'bot', 'boosters', 'champions', 'imports'] as Page[]).map((target) => (
             <button
               className={page === target ? 'nav-active' : ''}
               key={target}
@@ -768,6 +769,10 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
           <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
             <strong>🎰 Booster Shop</strong>
             <span>Mystery pack NFTs from Collector Crypt. $50 / $250 packs. Sell back for USDC within 72 hours.</span>
+          </button>
+          <button className="home-menu-button" onClick={() => onNavigate('champions')}>
+            <strong>👑 Champions Row</strong>
+            <span>Daily lottery for trainers who have cleared the campaign AND hold $POKETCG. One major pack per winner per day.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import NFTs</strong>
@@ -1903,6 +1908,23 @@ function GymChallengePage({ profile, onProfileChange, onExit }: { profile: Profi
     if (next === progress) return;
     setProgress(next);
     saveCampaignProgress(walletAddress, next);
+    // Push the campaign snapshot up to the server so Champions Row
+    // eligibility checks have authoritative data without re-reading
+    // localStorage. Server treats this as client-truth (the campaign
+    // already lives client-side anyway).
+    if (profile.userId) {
+      const synced: ProfileState = {
+        ...profile,
+        campaignProgress: {
+          earnedBadges: next.earnedBadges,
+          defeatedOpponents: next.defeatedOpponents,
+          championDefeated: next.championDefeated,
+        },
+      };
+      void persistProfile(synced).then(onProfileChange).catch((err) => {
+        console.warn('[gym] failed to sync campaign progress to server:', err);
+      });
+    }
     if (!wasAlreadyDefeated) {
       setVictoryAward(opponent);
       // First-time campaign wins grant XP per tier.
@@ -2436,6 +2458,7 @@ export default function App() {
         )}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'boosters' && <GachaStorefront profile={profile} />}
+        {page === 'champions' && <ChampionsRowPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'docs' && <DocsPage />}
         {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>

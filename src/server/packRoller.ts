@@ -108,3 +108,53 @@ export function rollDailyPack(): string[] {
   }
   return out;
 }
+
+// Weighted top-end picker for the Champions Row major pack. Pushes
+// roughly all the weight into the flashiest rarity tiers; users who
+// win the daily draw should be guaranteed a *real* chase pull, not
+// "yet another Rare Holo".
+const MAJOR_RARE_WEIGHTS: Array<{ rarities: string[]; weight: number }> = [
+  { rarities: ['Hyper Rare', 'Rare Rainbow'], weight: 40 },
+  { rarities: ['Special Illustration Rare'], weight: 30 },
+  { rarities: ['Ultra Rare', 'Rare Ultra'], weight: 20 },
+  { rarities: ['Illustration Rare'], weight: 10 },
+];
+
+function pickMajorRare(): string {
+  const buckets = buildBuckets();
+  // Bucket-by-rarity scan against MAJOR_RARE_WEIGHTS using the same
+  // rarity strings as RARE_TIER_WEIGHTS.
+  const usable: Array<{ ids: string[]; weight: number }> = [];
+  for (const tier of MAJOR_RARE_WEIGHTS) {
+    const ids = buckets.rareByTier
+      .flatMap((bucket, i) => (tier.rarities.some((r) => RARE_TIER_WEIGHTS[i]?.rarities.includes(r)) ? bucket : []));
+    if (ids.length > 0) usable.push({ ids, weight: tier.weight });
+  }
+  if (usable.length === 0) {
+    // Fall back to whatever rare slot the daily pack would pick.
+    const slot = pickRareTier(buckets);
+    return slot.length > 0 ? pickOne(slot) : pickOne(buckets.uncommon);
+  }
+  const totalWeight = usable.reduce((sum, t) => sum + t.weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const tier of usable) {
+    roll -= tier.weight;
+    if (roll <= 0) return pickOne(tier.ids);
+  }
+  return pickOne(usable[usable.length - 1]!.ids);
+}
+
+/** Roll the Champions Row major pack: 3 Commons + 3 Uncommons + 4
+ *  chase-rare pulls (Hyper / Special Illustration / Ultra weighted).
+ *  Returns 10 cardIds total. */
+export function rollChampionsMajorPack(): string[] {
+  const buckets = buildBuckets();
+  if (buckets.common.length === 0 || buckets.uncommon.length === 0) {
+    throw new Error('Champions pack roller: library lacks commons or uncommons');
+  }
+  const out: string[] = [];
+  for (let i = 0; i < 3; i += 1) out.push(pickOne(buckets.common));
+  for (let i = 0; i < 3; i += 1) out.push(pickOne(buckets.uncommon));
+  for (let i = 0; i < 4; i += 1) out.push(pickMajorRare());
+  return out;
+}

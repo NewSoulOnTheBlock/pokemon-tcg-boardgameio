@@ -20,6 +20,7 @@ import { POKETCG_DECIMALS, PoketcgBurnError, findPoketcgTier, verifyPoketcgBurn 
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
 import { createGachaService, GachaError, type GachaService } from './server/gachaClient';
+import { championsRowDateKey, describeChampionsRowEligibility, rollChampionsRow } from './server/championsRow';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -538,6 +539,73 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
   );
   ctx.body = { profile, purchase, alreadyRedeemed, packs: tier.packs };
 });
+
+// ---------------------------------------------------------------------------
+// Champions Row daily lottery.
+//
+// Eligibility (server-validated):
+//   1. Profile has earnedBadges.length >= 8 AND championDefeated === true
+//      (synced from per-wallet localStorage via /api/profiles/:userId PUT).
+//   2. Wallet has > 0 $POKETCG balance (live RPC check).
+//
+// GET /api/champions-row/status/:userId
+//   Returns today's draw + per-user view (eligible, isWinner, claimed).
+//   Idempotently rolls today's draw on first call of the day.
+//
+// POST /api/champions-row/claim/:userId
+//   Winner-only. Credits the rolled pack to ownedCards exactly once.
+// ---------------------------------------------------------------------------
+
+server.router.get('/api/champions-row/status/:userId', async (ctx) => {
+  if (!profileStorage.ensureChampionsRowDraw || !profileStorage.listCampaignCompleteProfiles || !profileStorage.findProfileByUserId) {
+    ctx.throw(501, 'champions-row not supported by this storage backend');
+    return;
+  }
+  const dateKey = championsRowDateKey();
+  const [draw, profile, eligibility] = await Promise.all([
+    rollChampionsRow(profileStorage, dateKey),
+    profileStorage.findProfileByUserId(ctx.params.userId),
+    describeChampionsRowEligibility(profileStorage),
+  ]);
+  const cp = profile?.campaignProgress;
+  const campaignComplete = Boolean(
+    cp && cp.championDefeated && Array.isArray(cp.earnedBadges) && cp.earnedBadges.length >= 8,
+  );
+  ctx.body = {
+    dateKey,
+    drawnAt: draw.drawnAt,
+    eligibility: { totalEligible: draw.eligibleCount, campaignComplete: eligibility.campaignComplete, withPoketcg: eligibility.withPoketcg },
+    youAreEligible: campaignComplete && Boolean(profile?.wallet?.address),
+    youWon: profile ? draw.winnerUserId === profile.userId : false,
+    youClaimed: Boolean(draw.claimedAt && profile && draw.winnerUserId === profile.userId),
+    winnerWallet: draw.winnerWallet,
+    nextDrawAt: nextChampionsRowDrawAt(),
+  };
+});
+
+server.router.post('/api/champions-row/claim/:userId', async (ctx) => {
+  if (!profileStorage.claimChampionsRowDraw || !profileStorage.ensureChampionsRowDraw) {
+    ctx.throw(501, 'champions-row not supported by this storage backend');
+    return;
+  }
+  const dateKey = championsRowDateKey();
+  // Make sure today's draw exists before claim.
+  await rollChampionsRow(profileStorage, dateKey);
+  const result = await profileStorage.claimChampionsRowDraw(ctx.params.userId, dateKey);
+  if ('notWinner' in result) {
+    ctx.status = 403;
+    ctx.body = { error: "You're not today's Champions Row winner." };
+    return;
+  }
+  ctx.body = result;
+});
+
+function nextChampionsRowDrawAt(): string {
+  // Next UTC midnight.
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return next.toISOString();
+}
 
 server.router.get('/api/leaderboard', async (ctx) => {
   ctx.body = await profileStorage.listLeaderboard();

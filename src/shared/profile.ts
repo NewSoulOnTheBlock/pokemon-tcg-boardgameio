@@ -49,6 +49,12 @@ export interface ImportedNftRecord {
   confidence: 'app-mint' | 'attribute-match' | 'fuzzy-match';
 }
 
+export interface CampaignProgressSync {
+  earnedBadges: string[];
+  defeatedOpponents: string[];
+  championDefeated: boolean;
+}
+
 export interface ProfileState {
   userId?: string;
   name: string;
@@ -65,6 +71,10 @@ export interface ProfileState {
    *  (the daily-pack endpoint sets this atomically with a cooldown
    *  check). Cleared client-side writes via mergeProfiles. */
   lastDailyPackAt?: string;
+  /** Synced from per-wallet localStorage so the server can validate
+   *  Champions Row eligibility (8 gym badges + all Elite Four +
+   *  Champion defeated). Client pushes on each persist. */
+  campaignProgress?: CampaignProgressSync;
 }
 
 export interface StoredProfile extends ProfileState {

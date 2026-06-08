@@ -6024,3 +6024,154 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 .pack-opening-summary-grid:has(.pack-opening-summary-card:hover) {
   overflow: visible;
 }
+
+/* ===== Champions Row ======================================================== */
+.champions-row-page { padding: 24px 24px 80px; }
+.champions-hero {
+  align-items: flex-start;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.18), rgba(168, 85, 247, 0.18));
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  display: flex;
+  gap: 32px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 28px 28px;
+}
+.champions-hero h1 { font-size: 2rem; margin: 6px 0 12px; }
+.champions-hero > div:first-child p { color: var(--ink-secondary); margin: 0; max-width: 60ch; }
+.champions-hero-countdown {
+  align-items: flex-end;
+  background: rgba(2, 6, 12, 0.75);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 22px;
+}
+.champions-hero-countdown .eyebrow { margin: 0; }
+.champions-hero-countdown strong {
+  color: #fbbf24;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 1.6rem;
+  text-shadow: 0 0 18px rgba(251, 191, 36, 0.4);
+}
+.champions-hero-countdown span { color: var(--ink-secondary); font-size: 0.78rem; }
+
+.champions-eligibility { margin-bottom: 16px; }
+.champions-eligibility-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  margin: 12px 0;
+}
+.champions-chip {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+}
+.champions-chip span { color: var(--ink-secondary); font-size: 0.78rem; }
+.champions-chip strong { color: var(--ink-primary); font-size: 1.1rem; }
+.champions-chip-ready {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(34, 197, 94, 0.06));
+  border-color: rgba(34, 197, 94, 0.5);
+}
+.champions-chip-ready strong { color: #4ade80; }
+.champions-eligibility-summary {
+  color: var(--ink-secondary);
+  font-size: 0.92rem;
+  margin: 8px 0 0;
+}
+
+.champions-today { margin-bottom: 16px; }
+.champions-today-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+.champions-today-banner {
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  border-radius: 8px;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+  gap: 4px;
+  padding: 12px 18px;
+  text-align: right;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.champions-today-banner span { font-size: 0.85rem; font-weight: 400; opacity: 0.95; }
+.champions-today-actions { margin-top: 14px; }
+.champions-claim {
+  background: linear-gradient(135deg, #f59e0b, #fbbf24) !important;
+  box-shadow: 0 12px 36px rgba(245, 158, 11, 0.5);
+  font-size: 1.1rem !important;
+  padding: 14px 28px !important;
+}
+.champions-already-claimed { color: #4ade80; font-weight: 600; margin: 0; }
+.champions-winner-bystander { color: var(--ink-secondary); margin: 0; }
+.champions-winner-bystander code {
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 0.9em;
+  padding: 2px 6px;
+}
+
+.champions-steps { margin-bottom: 16px; }
+.champions-steps-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.champions-step {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+}
+.champions-step-num {
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  border-radius: 6px;
+  color: white;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-weight: 700;
+  height: 32px;
+  line-height: 32px;
+  text-align: center;
+  width: 38px;
+}
+.champions-step strong { display: block; font-size: 0.96rem; margin-bottom: 4px; }
+.champions-step p { color: var(--ink-secondary); font-size: 0.84rem; line-height: 1.5; margin: 0; }
+
+.champions-basics dl { margin: 14px 0 0; }
+.champions-basics-grid {
+  display: grid;
+  gap: 0;
+  grid-template-columns: 1fr;
+}
+.champions-basics-row {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  font-size: 0.92rem;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px 0;
+}
+.champions-basics-row:last-child { border-bottom: 0; }
+.champions-basics-row dt { color: var(--ink-secondary); margin: 0; }
+.champions-basics-row dd { color: var(--ink-primary); font-weight: 600; margin: 0; text-align: right; }

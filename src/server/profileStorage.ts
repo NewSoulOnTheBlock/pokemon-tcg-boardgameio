@@ -26,11 +26,43 @@ export interface ProfileStorage {
    *  another set of cards. Caller is responsible for verifying the
    *  burn on-chain BEFORE calling this method. */
   redeemBurnPack?(userId: string, signature: string, cardIds: string[]): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyRedeemed: boolean }>;
+  // ----- Champions Row daily lottery ---------------------------------------
+  /** Return every stored profile that has the campaign-complete badge set
+   *  (8 gym badges + 4 elite four + champion defeated). The server still
+   *  re-checks live $POKETCG balance per profile before drawing. */
+  listCampaignCompleteProfiles?(): Promise<StoredProfile[]>;
+  /** Atomically read or roll today's Champions Row draw. Returns the
+   *  existing draw if one already exists for today's date_key, otherwise
+   *  inserts a fresh row using the resolver to produce (winner, cardIds)
+   *  exactly once. Two concurrent calls on the same day return the same
+   *  draw — the ON CONFLICT path no-ops and the second caller reads back
+   *  the first inserted row. */
+  ensureChampionsRowDraw?(
+    dateKey: string,
+    resolve: () => Promise<{ winnerUserId: string | null; winnerWallet: string | null; cardIds: string[]; eligibleCount: number; seed: string }>,
+  ): Promise<ChampionsRowDraw>;
+  /** Idempotently credit the winner with the rolled pack. Inserts a
+   *  pack-purchase row keyed on the synthetic signature so a refresh
+   *  doesn't double-grant. No-op (but returns the existing record) if
+   *  already claimed. */
+  claimChampionsRowDraw?(userId: string, dateKey: string): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean } | { notWinner: true }>;
+}
+
+export interface ChampionsRowDraw {
+  dateKey: string;
+  winnerUserId: string | null;
+  winnerWallet: string | null;
+  cardIds: string[];
+  eligibleCount: number;
+  seed: string;
+  drawnAt: string;
+  claimedAt: string | null;
 }
 
 const PROFILES_TABLE = 'app_profiles';
 const PACKS_TABLE = 'app_pack_purchases';
 const MATCHES_TABLE = 'app_match_records';
+const CHAMPIONS_DRAWS_TABLE = 'app_champions_row_draws';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -59,6 +91,17 @@ function normalizeProfile(profile: ProfileState): ProfileState {
     matchRecords: Array.isArray(profile.matchRecords) ? profile.matchRecords : [],
     importedNfts: Array.isArray(profile.importedNfts) ? profile.importedNfts : [],
     lastDailyPackAt: typeof profile.lastDailyPackAt === 'string' ? profile.lastDailyPackAt : undefined,
+    campaignProgress: profile.campaignProgress && typeof profile.campaignProgress === 'object'
+      ? {
+        earnedBadges: Array.isArray(profile.campaignProgress.earnedBadges)
+          ? profile.campaignProgress.earnedBadges.filter((b) => typeof b === 'string')
+          : [],
+        defeatedOpponents: Array.isArray(profile.campaignProgress.defeatedOpponents)
+          ? profile.campaignProgress.defeatedOpponents.filter((o) => typeof o === 'string')
+          : [],
+        championDefeated: Boolean(profile.campaignProgress.championDefeated),
+      }
+      : undefined,
   };
 }
 
@@ -97,6 +140,10 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
     // lastDailyPackAt is server-managed — claimDailyPack() updates
     // it atomically with a cooldown check. The client only reads it.
     lastDailyPackAt: existing.lastDailyPackAt,
+    // campaignProgress is client-pushed (the campaign lives in
+    // localStorage; the user can already replay it locally). Use the
+    // incoming snapshot if present, otherwise preserve existing.
+    campaignProgress: normalized.campaignProgress ?? existing.campaignProgress,
     updatedAt: nowIso(),
     lastLoginAt: nowIso(),
   };
@@ -116,6 +163,7 @@ function storedProfileFromRow(row: {
   pack_purchases: PackPurchase[] | null;
   packs_opened: number;
   last_daily_pack_at: string | null;
+  campaign_progress: unknown;
   updated_at: string;
   user_id: string;
   wallet: ProfileState['wallet'];
@@ -134,6 +182,9 @@ function storedProfileFromRow(row: {
     matchRecords: row.match_records ?? [],
     importedNfts: row.imported_nfts ?? [],
     lastDailyPackAt: row.last_daily_pack_at ?? undefined,
+    campaignProgress: row.campaign_progress && typeof row.campaign_progress === 'object'
+      ? row.campaign_progress as ProfileState['campaignProgress']
+      : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastLoginAt: row.last_login_at,
@@ -189,6 +240,7 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS deck_library JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS imported_nfts JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS last_daily_pack_at TIMESTAMPTZ`);
+    await this.pool.query(`ALTER TABLE ${PROFILES_TABLE} ADD COLUMN IF NOT EXISTS campaign_progress JSONB`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${PACKS_TABLE} (
         id BIGSERIAL PRIMARY KEY,
@@ -223,6 +275,22 @@ export class PostgresProfileStorage implements ProfileStorage {
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_card_id TEXT`);
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_mint_address TEXT`);
     await this.pool.query(`ALTER TABLE ${MATCHES_TABLE} ADD COLUMN IF NOT EXISTS prize_mint_signature TEXT`);
+
+    // Champions Row daily-lottery draws. One row per (date_key) — the
+    // PRIMARY KEY makes ensureChampionsRowDraw idempotent via
+    // ON CONFLICT DO NOTHING.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS ${CHAMPIONS_DRAWS_TABLE} (
+        date_key TEXT PRIMARY KEY,
+        winner_user_id TEXT REFERENCES ${PROFILES_TABLE}(user_id) ON DELETE SET NULL,
+        winner_wallet TEXT,
+        card_ids JSONB NOT NULL,
+        eligible_count INTEGER NOT NULL,
+        seed TEXT NOT NULL,
+        drawn_at TIMESTAMPTZ NOT NULL,
+        claimed_at TIMESTAMPTZ
+      )
+    `);
   }
 
   async login(profile: ProfileState): Promise<StoredProfile> {
@@ -546,14 +614,144 @@ export class PostgresProfileStorage implements ProfileStorage {
     };
   }
 
+  async listCampaignCompleteProfiles(): Promise<StoredProfile[]> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${PROFILES_TABLE}
+       WHERE campaign_progress IS NOT NULL
+         AND (campaign_progress->>'championDefeated')::boolean = TRUE
+         AND jsonb_array_length(COALESCE(campaign_progress->'earnedBadges', '[]'::jsonb)) >= 8`,
+    );
+    return rows.map(storedProfileFromRow);
+  }
+
+  async ensureChampionsRowDraw(
+    dateKey: string,
+    resolve: () => Promise<{ winnerUserId: string | null; winnerWallet: string | null; cardIds: string[]; eligibleCount: number; seed: string }>,
+  ): Promise<ChampionsRowDraw> {
+    // Fast path: today's draw already exists.
+    const existing = await this.pool.query(
+      `SELECT * FROM ${CHAMPIONS_DRAWS_TABLE} WHERE date_key = $1`,
+      [dateKey],
+    );
+    if (existing.rows.length > 0) return this.rowToDraw(existing.rows[0]);
+
+    // Roll the draw. resolve() should produce a deterministic-ish but
+    // unguessable winner pick. We then INSERT ON CONFLICT DO NOTHING so
+    // a concurrent call doesn't overwrite us, and read back whatever
+    // ended up landing.
+    const rolled = await resolve();
+    const drawnAt = nowIso();
+    await this.pool.query(
+      `INSERT INTO ${CHAMPIONS_DRAWS_TABLE}
+         (date_key, winner_user_id, winner_wallet, card_ids, eligible_count, seed, drawn_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+       ON CONFLICT (date_key) DO NOTHING`,
+      [dateKey, rolled.winnerUserId, rolled.winnerWallet, JSON.stringify(rolled.cardIds), rolled.eligibleCount, rolled.seed, drawnAt],
+    );
+    const reread = await this.pool.query(
+      `SELECT * FROM ${CHAMPIONS_DRAWS_TABLE} WHERE date_key = $1`,
+      [dateKey],
+    );
+    if (reread.rows.length === 0) {
+      throw new Error(`Champions Row draw vanished for ${dateKey}`);
+    }
+    return this.rowToDraw(reread.rows[0]);
+  }
+
+  async claimChampionsRowDraw(
+    userId: string,
+    dateKey: string,
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean } | { notWinner: true }> {
+    const draw = await this.pool.query(
+      `SELECT * FROM ${CHAMPIONS_DRAWS_TABLE} WHERE date_key = $1`,
+      [dateKey],
+    );
+    if (draw.rows.length === 0) {
+      throw new Error(`No Champions Row draw for ${dateKey}`);
+    }
+    const row = this.rowToDraw(draw.rows[0]);
+    if (row.winnerUserId !== userId) {
+      return { notWinner: true };
+    }
+    const signature = `champions-row:${dateKey}`;
+    const existingPack = await this.pool.query<{ opened_at: string; card_ids: string[] }>(
+      `SELECT opened_at, card_ids FROM ${PACKS_TABLE} WHERE user_id = $1 AND signature = $2`,
+      [userId, signature],
+    );
+    if (existingPack.rows.length > 0) {
+      const profile = await this.findByUserId(userId);
+      if (!profile) throw new Error(`Profile vanished: ${userId}`);
+      const r = existingPack.rows[0]!;
+      return {
+        profile,
+        purchase: { signature, openedAt: r.opened_at, cardIds: r.card_ids },
+        alreadyClaimed: true,
+      };
+    }
+    const now = nowIso();
+    // Atomic owned-cards merge.
+    const profileRow = await this.pool.query<{ owned_cards: Record<string, number> }>(
+      `SELECT owned_cards FROM ${PROFILES_TABLE} WHERE user_id = $1 FOR UPDATE`,
+      [userId],
+    );
+    if (profileRow.rows.length === 0) throw new Error(`Profile not found: ${userId}`);
+    const ownedCards: Record<string, number> = { ...(profileRow.rows[0]!.owned_cards ?? {}) };
+    for (const id of row.cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    await this.pool.query(
+      `UPDATE ${PROFILES_TABLE}
+       SET owned_cards = $2::jsonb, packs_opened = packs_opened + 1, updated_at = $3
+       WHERE user_id = $1`,
+      [userId, JSON.stringify(ownedCards), now],
+    );
+    await this.pool.query(
+      `INSERT INTO ${PACKS_TABLE} (user_id, signature, opened_at, card_ids)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (user_id, signature) DO NOTHING`,
+      [userId, signature, now, JSON.stringify(row.cardIds)],
+    );
+    await this.pool.query(
+      `UPDATE ${CHAMPIONS_DRAWS_TABLE} SET claimed_at = $2 WHERE date_key = $1`,
+      [dateKey, now],
+    );
+    const profile = await this.findByUserId(userId);
+    if (!profile) throw new Error(`Profile vanished: ${userId}`);
+    return {
+      profile,
+      purchase: { signature, openedAt: now, cardIds: [...row.cardIds] },
+      alreadyClaimed: false,
+    };
+  }
+
+  private rowToDraw(row: {
+    date_key: string;
+    winner_user_id: string | null;
+    winner_wallet: string | null;
+    card_ids: string[];
+    eligible_count: number;
+    seed: string;
+    drawn_at: string;
+    claimed_at: string | null;
+  }): ChampionsRowDraw {
+    return {
+      dateKey: row.date_key,
+      winnerUserId: row.winner_user_id,
+      winnerWallet: row.winner_wallet,
+      cardIds: row.card_ids ?? [],
+      eligibleCount: Number(row.eligible_count ?? 0),
+      seed: row.seed,
+      drawnAt: row.drawn_at,
+      claimedAt: row.claimed_at ?? null,
+    };
+  }
+
   private async saveStoredProfile(profile: StoredProfile): Promise<StoredProfile> {
     const normalized = normalizeProfile(profile);
     await this.pool.query(
       `
         INSERT INTO ${PROFILES_TABLE}
-          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, imported_nfts, owned_cards, packs_opened, last_daily_pack_at, created_at, updated_at, last_login_at)
+          (user_id, login_key, name, wallet, active_deck_name, custom_deck, deck_library, imported_nfts, owned_cards, packs_opened, last_daily_pack_at, campaign_progress, created_at, updated_at, last_login_at)
         VALUES
-          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14)
+          ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12::jsonb, $13, $14, $15)
         ON CONFLICT (user_id)
         DO UPDATE SET
           name = EXCLUDED.name,
@@ -564,6 +762,7 @@ export class PostgresProfileStorage implements ProfileStorage {
           imported_nfts = EXCLUDED.imported_nfts,
           owned_cards = EXCLUDED.owned_cards,
           packs_opened = EXCLUDED.packs_opened,
+          campaign_progress = EXCLUDED.campaign_progress,
           updated_at = EXCLUDED.updated_at,
           last_login_at = EXCLUDED.last_login_at
       `,
@@ -579,6 +778,7 @@ export class PostgresProfileStorage implements ProfileStorage {
         JSON.stringify(normalized.ownedCards),
         normalized.packsOpened,
         profile.lastDailyPackAt ?? null,
+        normalized.campaignProgress ? JSON.stringify(normalized.campaignProgress) : null,
         profile.createdAt,
         profile.updatedAt,
         profile.lastLoginAt,
@@ -795,6 +995,71 @@ export class MemoryProfileStorage implements ProfileStorage {
     };
     this.profiles.set(userId, updated);
     return { profile: updated, purchase, alreadyRedeemed: false };
+  }
+
+  // Champions Row in-memory implementations.
+  private readonly championsRowDraws = new Map<string, ChampionsRowDraw>();
+
+  async listCampaignCompleteProfiles(): Promise<StoredProfile[]> {
+    const out: StoredProfile[] = [];
+    for (const profile of this.profiles.values()) {
+      const cp = profile.campaignProgress;
+      if (!cp || !cp.championDefeated) continue;
+      if (!Array.isArray(cp.earnedBadges) || cp.earnedBadges.length < 8) continue;
+      out.push(profile);
+    }
+    return out;
+  }
+
+  async ensureChampionsRowDraw(
+    dateKey: string,
+    resolve: () => Promise<{ winnerUserId: string | null; winnerWallet: string | null; cardIds: string[]; eligibleCount: number; seed: string }>,
+  ): Promise<ChampionsRowDraw> {
+    const existing = this.championsRowDraws.get(dateKey);
+    if (existing) return existing;
+    const rolled = await resolve();
+    const draw: ChampionsRowDraw = {
+      dateKey,
+      winnerUserId: rolled.winnerUserId,
+      winnerWallet: rolled.winnerWallet,
+      cardIds: [...rolled.cardIds],
+      eligibleCount: rolled.eligibleCount,
+      seed: rolled.seed,
+      drawnAt: nowIso(),
+      claimedAt: null,
+    };
+    this.championsRowDraws.set(dateKey, draw);
+    return draw;
+  }
+
+  async claimChampionsRowDraw(
+    userId: string,
+    dateKey: string,
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyClaimed: boolean } | { notWinner: true }> {
+    const draw = this.championsRowDraws.get(dateKey);
+    if (!draw) throw new Error(`No Champions Row draw for ${dateKey}`);
+    if (draw.winnerUserId !== userId) return { notWinner: true };
+    const existing = this.profiles.get(userId);
+    if (!existing) throw new Error(`Profile not found: ${userId}`);
+    const signature = `champions-row:${dateKey}`;
+    const replay = existing.packPurchases.find((p) => p.signature === signature);
+    if (replay) {
+      return { profile: existing, purchase: replay, alreadyClaimed: true };
+    }
+    const now = nowIso();
+    const ownedCards: Record<string, number> = { ...existing.ownedCards };
+    for (const id of draw.cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    const purchase: PackPurchase = { signature, openedAt: now, cardIds: [...draw.cardIds] };
+    const updated: StoredProfile = {
+      ...existing,
+      ownedCards,
+      packsOpened: existing.packsOpened + 1,
+      packPurchases: [...existing.packPurchases, purchase],
+      updatedAt: now,
+    };
+    this.profiles.set(userId, updated);
+    this.championsRowDraws.set(dateKey, { ...draw, claimedAt: now });
+    return { profile: updated, purchase, alreadyClaimed: false };
   }
 
   private saveStoredProfile(profile: StoredProfile): StoredProfile {
