@@ -2606,13 +2606,13 @@ export default function App() {
   const musicSrc = isInMatch ? '/battle-music.mp3' : '/menu-music.mp3';
   const musicLabel = isInMatch ? 'battle music' : 'menu music';
   // Global chrome rendered alongside every page: background music
-  // player + the floating "Powered by Collector Crypt" badge in the
-  // bottom-right corner. Hidden during active matches so the playmat
-  // isn't overlapped.
+  // player + the "Powered by Collector Crypt" badge in the bottom-
+  // right corner. Match screens get a smaller, lower-glow variant so
+  // it stays visible without overlapping the playmat / hand fan.
   const globalChrome = (
     <>
       <BackgroundMusicPlayer src={musicSrc} label={musicLabel} paused={false} />
-      {!isInMatch && <PoweredByCollectorCrypt variant="floating" />}
+      <PoweredByCollectorCrypt variant={isInMatch ? 'match' : 'floating'} />
     </>
   );
 

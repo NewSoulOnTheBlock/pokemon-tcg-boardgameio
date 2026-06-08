@@ -10,7 +10,13 @@
 // public/ from the user-supplied download-removebg-preview.png).
 
 interface Props {
-  variant?: 'hero' | 'floating';
+  /**
+   * - `hero`: Big, centered badge with a strong glow. For storefront eyebrows.
+   * - `floating`: Fixed bottom-right corner badge for non-match pages.
+   * - `match`: Smaller fixed bottom-right badge sized to coexist with the
+   *            battle UI without covering hands or status panels.
+   */
+  variant?: 'hero' | 'floating' | 'match';
 }
 
 export function PoweredByCollectorCrypt({ variant = 'floating' }: Props) {
@@ -34,9 +40,10 @@ export function PoweredByCollectorCrypt({ variant = 'floating' }: Props) {
       </a>
     );
   }
+  const variantClass = variant === 'match' ? 'powered-by-cc-floating powered-by-cc-match' : 'powered-by-cc-floating';
   return (
     <a
-      className="powered-by-cc powered-by-cc-floating"
+      className={`powered-by-cc ${variantClass}`}
       href="https://collectorcrypt.com"
       target="_blank"
       rel="noreferrer"

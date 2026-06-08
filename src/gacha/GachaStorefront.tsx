@@ -108,22 +108,24 @@ function GachaHero() {
   const isLive = status?.enabled && status?.machineStatus === 'running';
   return (
     <section className="panel gacha-hero">
-      <div className="gacha-hero-body">
-        <p className="eyebrow">Booster Shop · Pokémon only</p>
-        <h1>Mystery Pokémon Packs</h1>
-        <p>
-          Real graded Pokémon cards delivered as NFTs straight to your Solana wallet.
-          Sell anything back for USDC within 72 hours.
-        </p>
-        <PoweredByCollectorCrypt variant="hero" />
+      <div className="gacha-hero-top">
+        <div className="gacha-hero-body">
+          <p className="eyebrow">Booster Shop · Pokémon only</p>
+          <h1>Mystery Pokémon Packs</h1>
+          <p>
+            Real graded Pokémon cards delivered as NFTs straight to your Solana wallet.
+            Sell anything back for USDC within 72 hours.
+          </p>
+        </div>
+        <div className={`gacha-hero-status gacha-hero-status-${isLive ? 'live' : 'off'}`}>
+          <span className="gacha-hero-status-dot" aria-hidden="true" />
+          {!status ? 'Checking machine…'
+            : !status.enabled ? 'Storefront not configured'
+              : status.machineStatus === 'stopped' ? 'Machine stopped'
+                : 'Machine running'}
+        </div>
       </div>
-      <div className={`gacha-hero-status gacha-hero-status-${isLive ? 'live' : 'off'}`}>
-        <span className="gacha-hero-status-dot" aria-hidden="true" />
-        {!status ? 'Checking machine…'
-          : !status.enabled ? 'Storefront not configured'
-            : status.machineStatus === 'stopped' ? 'Machine stopped'
-              : 'Machine running'}
-      </div>
+      <PoweredByCollectorCrypt variant="hero" />
     </section>
   );
 }
