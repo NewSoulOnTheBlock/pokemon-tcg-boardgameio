@@ -19,6 +19,13 @@ export interface DailyPackClaimResult {
   nextClaimAt: string | null;
 }
 
+export interface BurnPackResult {
+  profile: StoredProfile;
+  purchase: PackPurchase;
+  alreadyRedeemed: boolean;
+  packs: number;
+}
+
 export class RewardCooldownError extends Error {
   nextClaimAt: string | null;
   constructor(message: string, nextClaimAt: string | null) {
@@ -51,4 +58,32 @@ export async function claimDailyPack(profile: ProfileState): Promise<DailyPackCl
     throw new Error(text || `daily-pack claim failed (${res.status})`);
   }
   return res.json() as Promise<DailyPackClaimResult>;
+}
+
+/** Submit a $POKETCG burn signature to the server in exchange for
+ *  `packs` rolled card packs. The server verifies the burn was on-chain,
+ *  authored by `buyerWallet`, targets the right mint, and is at least
+ *  packs * 250,000 tokens. Idempotent on `signature`. */
+export async function redeemBurnPack(args: {
+  profile: ProfileState;
+  signature: string;
+  buyerWallet: string;
+  packs: number;
+}): Promise<BurnPackResult> {
+  if (!args.profile.userId) throw new Error('Sign in again to redeem packs.');
+  const res = await fetch(apiUrl(`/api/rewards/burn-pack/${args.profile.userId}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      signature: args.signature,
+      buyerWallet: args.buyerWallet,
+      packs: args.packs,
+    }),
+  });
+  if (!res.ok) {
+    let body: { error?: string } = {};
+    try { body = await res.json(); } catch { /* ignore */ }
+    throw new Error(body.error ?? `burn-pack redeem failed (${res.status})`);
+  }
+  return res.json() as Promise<BurnPackResult>;
 }

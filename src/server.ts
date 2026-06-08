@@ -16,6 +16,7 @@ import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage, DailyPackCooldownError, type ProfileStorage } from './server/profileStorage';
 import { rollPrizeCard } from './server/prizes';
 import { rollDailyPack } from './server/packRoller';
+import { POKETCG_PACK_PRICE_RAW, PoketcgBurnError, verifyPoketcgBurn } from './server/tokenBurn';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
 import { createPhygitalsBuyer, PhygitalsBuyerError, type PhygitalsBuyerService } from './server/phygitalsBuyer';
@@ -546,6 +547,68 @@ server.router.post('/api/rewards/daily-pack/claim/:userId', async (ctx) => {
     }
     throw err;
   }
+});
+
+// ---------------------------------------------------------------------------
+// $POKETCG burn-to-buy-pack
+//
+// User signs an SPL-token burn ix that destroys 250,000 $POKETCG (per pack)
+// from their own associated token account. Submits the resulting signature
+// + claimed buyer wallet to this endpoint. We:
+//   1. Verify the burn is on-chain, finalized, owned by the buyer, targets
+//      $POKETCG, and is at least N * 250,000 tokens (N = packs claimed).
+//   2. Roll N independent packs.
+//   3. Idempotently record + persist via storage.redeemBurnPack().
+// Replays of the same signature get the same cards back (no double-grant).
+// ---------------------------------------------------------------------------
+
+server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
+  if (!profileStorage.redeemBurnPack) {
+    ctx.throw(501, 'redeemBurnPack not supported by this storage backend');
+    return;
+  }
+  if (cardLibrarySize() === 0) {
+    ctx.throw(503, 'Card library not initialized');
+    return;
+  }
+  const body = ctx.request.body as {
+    signature?: string;
+    buyerWallet?: string;
+    packs?: number;
+  } | undefined;
+  const signature = body?.signature?.trim();
+  const buyerWallet = body?.buyerWallet?.trim();
+  const packs = Math.max(1, Math.min(10, Number.isFinite(body?.packs) ? Math.floor(body!.packs!) : 1));
+  if (!signature) {
+    ctx.throw(400, 'signature is required');
+    return;
+  }
+  if (!buyerWallet) {
+    ctx.throw(400, 'buyerWallet is required');
+    return;
+  }
+  try {
+    await verifyPoketcgBurn({
+      signature,
+      buyerWallet,
+      minRawAmount: POKETCG_PACK_PRICE_RAW * packs,
+    });
+  } catch (err) {
+    if (err instanceof PoketcgBurnError) {
+      ctx.status = err.status;
+      ctx.body = { error: err.message };
+      return;
+    }
+    throw err;
+  }
+  const cardIds: string[] = [];
+  for (let i = 0; i < packs; i += 1) cardIds.push(...rollDailyPack());
+  const { profile, purchase, alreadyRedeemed } = await profileStorage.redeemBurnPack(
+    ctx.params.userId,
+    signature,
+    cardIds,
+  );
+  ctx.body = { profile, purchase, alreadyRedeemed, packs };
 });
 
 server.router.get('/api/leaderboard', async (ctx) => {

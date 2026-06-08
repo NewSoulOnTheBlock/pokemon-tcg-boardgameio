@@ -116,6 +116,7 @@ import {
   awardXPAndPersist,
 } from './quests/components';
 import { DailyPackWidget } from './rewards/DailyPackWidget';
+import { BurnPackPanel } from './rewards/BurnPackPanel';
 import {
   xpForCampaignWin,
   xpForMatchResult,
@@ -1156,6 +1157,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
             </div>
             <button className="primary-cta" onClick={save} disabled={!deckName.trim()}>Save deck to library</button>
           </section>
+          <BurnPackPanel profile={profile} onProfileChange={onProfileChange} />
         </div>
       )}
 

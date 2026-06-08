@@ -5641,3 +5641,95 @@ button:disabled {
 .daily-pack-card-uncommon .daily-pack-card-front {
   border-color: rgba(99, 102, 241, 0.45);
 }
+
+/* ===== Burn-pack panel (profile page) ============================ */
+.burn-pack-panel {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(245, 158, 11, 0.10));
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  margin-top: 16px;
+}
+.burn-pack-balance {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.burn-pack-balance-label {
+  color: var(--ink-secondary);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.burn-pack-balance strong {
+  color: var(--ink-primary);
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 1.15rem;
+}
+.burn-pack-refresh {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 2px 8px;
+  margin-top: 4px;
+}
+.burn-pack-refresh:hover { background: rgba(255, 255, 255, 0.05); }
+.burn-pack-options {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);
+  margin: 16px 0;
+}
+@media (min-width: 600px) {
+  .burn-pack-options { grid-template-columns: repeat(4, 1fr); }
+}
+.burn-pack-option {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--ink-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 10px;
+  transition: all 0.15s ease;
+}
+.burn-pack-option:hover { border-color: rgba(239, 68, 68, 0.4); }
+.burn-pack-option strong { font-size: 1rem; }
+.burn-pack-option span {
+  color: var(--ink-secondary);
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 0.78rem;
+}
+.burn-pack-option-active {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(245, 158, 11, 0.15));
+  border-color: rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.25);
+}
+.burn-pack-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.burn-pack-buy {
+  background: linear-gradient(135deg, #ef4444, #f59e0b) !important;
+  font-size: 1rem !important;
+  padding: 14px !important;
+  width: 100%;
+}
+.burn-pack-buy:disabled {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--ink-secondary) !important;
+}
+.burn-pack-disclaimer {
+  color: var(--ink-secondary);
+  font-size: 0.74rem;
+  margin: 0;
+  text-align: center;
+}
+.burn-pack-info { color: #4ade80; margin-top: 12px; }
+.burn-pack-error { margin-top: 12px; }

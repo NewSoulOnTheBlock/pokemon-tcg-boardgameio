@@ -33,6 +33,12 @@ export interface ProfileStorage {
    *  - Adds the rolled cards to `ownedCards` and bumps `packsOpened`.
    *  Returns the new profile + the recorded PackPurchase. */
   claimDailyPack?(userId: string, cardIds: string[], cooldownMs: number): Promise<{ profile: StoredProfile; purchase: PackPurchase }>;
+  /** Idempotently redeem a token-burn signature for a pack. The
+   *  signature acts as the natural unique key so replaying the same
+   *  burn tx returns the existing PackPurchase instead of granting
+   *  another set of cards. Caller is responsible for verifying the
+   *  burn on-chain BEFORE calling this method. */
+  redeemBurnPack?(userId: string, signature: string, cardIds: string[]): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyRedeemed: boolean }>;
 }
 
 const PROFILES_TABLE = 'app_profiles';
@@ -542,6 +548,64 @@ export class PostgresProfileStorage implements ProfileStorage {
     };
   }
 
+  async redeemBurnPack(
+    userId: string,
+    signature: string,
+    cardIds: string[],
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyRedeemed: boolean }> {
+    if (!signature) throw new Error('redeemBurnPack requires a non-empty signature');
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      throw new Error('redeemBurnPack requires at least one cardId');
+    }
+    // Idempotency check first: if this burn signature is already in
+    // app_pack_purchases, return the existing purchase rather than
+    // rolling a fresh pack.
+    const existingPack = await this.pool.query<{ opened_at: string; card_ids: string[] }>(
+      `SELECT opened_at, card_ids FROM ${PACKS_TABLE} WHERE user_id = $1 AND signature = $2`,
+      [userId, signature],
+    );
+    if (existingPack.rows.length > 0) {
+      const profile = await this.findByUserId(userId);
+      if (!profile) throw new Error(`Profile vanished during redeem: ${userId}`);
+      const row = existingPack.rows[0]!;
+      return {
+        profile,
+        purchase: { signature, openedAt: row.opened_at, cardIds: row.card_ids },
+        alreadyRedeemed: true,
+      };
+    }
+    const now = nowIso();
+    // Lock the profile row briefly while we read+merge ownedCards.
+    const profileRow = await this.pool.query<{ owned_cards: Record<string, number> }>(
+      `SELECT owned_cards FROM ${PROFILES_TABLE} WHERE user_id = $1 FOR UPDATE`,
+      [userId],
+    );
+    if (profileRow.rows.length === 0) {
+      throw new Error(`Profile not found: ${userId}`);
+    }
+    const ownedCards: Record<string, number> = { ...(profileRow.rows[0]!.owned_cards ?? {}) };
+    for (const id of cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    await this.pool.query(
+      `UPDATE ${PROFILES_TABLE}
+       SET owned_cards = $2::jsonb, packs_opened = packs_opened + 1, updated_at = $3
+       WHERE user_id = $1`,
+      [userId, JSON.stringify(ownedCards), now],
+    );
+    await this.pool.query(
+      `INSERT INTO ${PACKS_TABLE} (user_id, signature, opened_at, card_ids)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (user_id, signature) DO NOTHING`,
+      [userId, signature, now, JSON.stringify(cardIds)],
+    );
+    const profile = await this.findByUserId(userId);
+    if (!profile) throw new Error(`Profile vanished after redeem: ${userId}`);
+    return {
+      profile,
+      purchase: { signature, openedAt: now, cardIds: [...cardIds] },
+      alreadyRedeemed: false,
+    };
+  }
+
   private async saveStoredProfile(profile: StoredProfile): Promise<StoredProfile> {
     const normalized = normalizeProfile(profile);
     await this.pool.query(
@@ -787,6 +851,36 @@ export class MemoryProfileStorage implements ProfileStorage {
     };
     this.profiles.set(userId, updated);
     return { profile: updated, purchase };
+  }
+
+  async redeemBurnPack(
+    userId: string,
+    signature: string,
+    cardIds: string[],
+  ): Promise<{ profile: StoredProfile; purchase: PackPurchase; alreadyRedeemed: boolean }> {
+    if (!signature) throw new Error('redeemBurnPack requires a non-empty signature');
+    if (!Array.isArray(cardIds) || cardIds.length === 0) {
+      throw new Error('redeemBurnPack requires at least one cardId');
+    }
+    const existing = this.profiles.get(userId);
+    if (!existing) throw new Error(`Profile not found: ${userId}`);
+    const replay = existing.packPurchases.find((p) => p.signature === signature);
+    if (replay) {
+      return { profile: existing, purchase: replay, alreadyRedeemed: true };
+    }
+    const now = nowIso();
+    const ownedCards: Record<string, number> = { ...existing.ownedCards };
+    for (const id of cardIds) ownedCards[id] = (ownedCards[id] ?? 0) + 1;
+    const purchase: PackPurchase = { signature, openedAt: now, cardIds: [...cardIds] };
+    const updated: StoredProfile = {
+      ...existing,
+      ownedCards,
+      packsOpened: existing.packsOpened + 1,
+      packPurchases: [...existing.packPurchases, purchase],
+      updatedAt: now,
+    };
+    this.profiles.set(userId, updated);
+    return { profile: updated, purchase, alreadyRedeemed: false };
   }
 
   private saveStoredProfile(profile: StoredProfile): StoredProfile {
