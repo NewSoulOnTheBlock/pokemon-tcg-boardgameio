@@ -358,6 +358,60 @@ export function resolveAttackEffect(
       appendLog(G, `${attack.name}: flipped ${effect.numCoins} coins, ${heads} heads -> ${total} damage.`);
       break;
     }
+    case 'coinPerSelfEnergyHeadsDamage': {
+      // Count the attacker's attached energy, optionally filtering by
+      // type ("Grass Energy attached to..." vs plain "Energy attached
+      // to..."). Special energy cards that provide a type count too.
+      const counts = effect.energyType
+        ? attacker.attachedEnergy.filter((energy) => {
+          if (energy.kind !== 'energy') return false;
+          const types = energy.providesEnergy ?? [energy.energyType];
+          return types.includes(effect.energyType!);
+        })
+        : attacker.attachedEnergy;
+      const numCoins = counts.length;
+      let heads = 0;
+      for (let i = 0; i < numCoins; i += 1) {
+        if (random.Die(2) === 1) heads += 1;
+      }
+      const bonusDamage = heads * effect.perHead;
+      if (effect.baseDamage === undefined) {
+        // "× heads" form: the attack's printed damage was the per-head
+        // value, applied unconditionally before resolveAttackEffect ran.
+        // That's wrong for both the 0-heads case (overshoot) and any
+        // non-1-head case (under/overshoot). Undo the printed damage,
+        // then re-apply the correct total via applyDamage so weakness/
+        // resistance scale the FULL value rather than just per-head.
+        if (attack.damage !== undefined && attack.damage > 0) {
+          // Best-effort undo: subtract the post-W/R amount that was
+          // most likely added. We can't recompute it exactly without
+          // re-running applyDamage in dry mode, so we use the same
+          // applyDamage helper to figure out what was added.
+          const reapplied = (() => {
+            // Compute what applyDamage would have produced for the
+            // printed damage, mirroring its weakness/resistance logic.
+            let d = attack.damage;
+            if (G.stadium?.card.effect === 'stadiumPlus10') d += 10;
+            if (defender.card.weakness === attacker.card.pokemonType) d *= 2;
+            if (defender.card.resistance === attacker.card.pokemonType) d -= 30;
+            if (defender.tool?.effect === 'toolMinus10') d -= 10;
+            return Math.max(0, d);
+          })();
+          defender.damage = Math.max(0, defender.damage - reapplied);
+        }
+        if (bonusDamage > 0) {
+          applyDamage(G, attacker, defender, bonusDamage);
+        }
+        appendLog(G, `${attack.name}: ${numCoins} energy ${effect.energyType ? `(${effect.energyType}) ` : ''}-> flipped ${heads} heads -> ${bonusDamage} damage.`);
+      } else {
+        // "+ Y for each heads" form: printed = base, just add the bonus.
+        if (bonusDamage > 0) {
+          defender.damage += bonusDamage;
+        }
+        appendLog(G, `${attack.name}: ${numCoins} energy ${effect.energyType ? `(${effect.energyType}) ` : ''}-> flipped ${heads} heads -> +${bonusDamage} bonus.`);
+      }
+      break;
+    }
     case 'coinFlipsAllHeadsOrFail': {
       let allHeads = true;
       for (let i = 0; i < effect.numCoins; i += 1) {

@@ -53,6 +53,13 @@ export type AttackEffect =
   | { type: 'coinFlipDiscardOppEnergy' }
   | { type: 'coinUntilTailsDiscardOppEnergy' }
   | { type: 'coinUntilTailsBaseDamage'; perHead: number }
+  // "Flip a number of coins equal to the number of [Type ]Energy attached
+  // to <attacker>. This attack does X damage (× heads | + Y for each heads)."
+  // Big Eggsplosion, Erika's Exeggcute, Poliwrath's Hydro Punch, Houndoom,
+  // etc. `baseDamage === undefined` ⇒ "× heads" form (the printed damage IS
+  // the per-head value, no base). `baseDamage !== undefined` ⇒ "+ Y for each
+  // heads" form. `energyType` filters which energy on the attacker counts.
+  | { type: 'coinPerSelfEnergyHeadsDamage'; perHead: number; baseDamage?: number; energyType?: PokemonType }
   | { type: 'damagePerOwnDamageCounter'; perCounter: number }
   | { type: 'damagePerOpponentEnergy'; perEnergy: number }
   | { type: 'damagePerOpponentRetreatColorless'; perColorless: number }

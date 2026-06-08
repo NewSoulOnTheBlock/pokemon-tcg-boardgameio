@@ -304,6 +304,40 @@ function inferAttackEffect(attack: SourceAttack): AttackEffect | undefined {
     return { type: 'opponentChoosesSwitch' };
   }
 
+  // ----- Coin-per-self-energy (Big Eggsplosion, Erika's Exeggcute,
+  // Poliwrath's Hydro Punch, Houndoom etc.). Pattern: "Flip a number of
+  // coins equal to the (number|amount) of [Type ]Energy [cards] attached
+  // to <attacker>." followed by either "× heads" or "+ Y for each heads".
+  // Must be checked BEFORE the fixed-count multi-coin parser so the
+  // "equal to the number" phrasing wins over a stray digit somewhere
+  // else in the rules text.
+  const coinPerSelfEnergyMatch = text.match(
+    /flip a number of coins equal to the (?:number|amount) of(?:\s+(grass|fire|water|lightning|psychic|fighting|darkness|metal|dragon|fairy|colorless))?\s+energy(?:\s+cards?)?\s+attached to (?!(?:the defending|your opponent|all of))[a-z' ]+\.\s*this attack does\s+(\d+)\s+damage\s+(?:times the number of heads|plus\s+(\d+)\s+(?:more\s+)?damage\s+for\s+each\s+heads)/,
+  );
+  if (coinPerSelfEnergyMatch) {
+    const energyToken = coinPerSelfEnergyMatch[1];
+    const printedDamage = Number(coinPerSelfEnergyMatch[2]);
+    const bonusPerHeads = coinPerSelfEnergyMatch[3];
+    const energyType = energyToken
+      ? (energyToken[0]!.toUpperCase() + energyToken.slice(1)) as PokemonType
+      : undefined;
+    if (bonusPerHeads !== undefined) {
+      // "+ Y for each heads" — printed damage is the base.
+      return {
+        type: 'coinPerSelfEnergyHeadsDamage',
+        perHead: Number(bonusPerHeads),
+        baseDamage: printedDamage,
+        ...(energyType ? { energyType } : {}),
+      };
+    }
+    // "× heads" — printed damage IS the per-head value, no base.
+    return {
+      type: 'coinPerSelfEnergyHeadsDamage',
+      perHead: printedDamage,
+      ...(energyType ? { energyType } : {}),
+    };
+  }
+
   // ----- Coin-multi-heads damage (Doduo Fury Attack) -------------------
   const multiCoinDamageMatch = text.match(/flip (\d+) coins?\.?\s*this attack does (\d+) damage times the number of heads/);
   if (multiCoinDamageMatch) {
