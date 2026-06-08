@@ -61,10 +61,6 @@ export interface ProfileState {
   packPurchases: PackPurchase[];
   matchRecords: MatchRecord[];
   importedNfts?: ImportedNftRecord[];
-  /** USD-denominated credit balance for the Phygitals storefront.
-   *  Users top up by signing a USDC transfer to the treasury wallet;
-   *  the server credits this field. Spending a pack debits it. */
-  phygitalsCreditsUsd?: number;
   /** ISO timestamp of the last daily-free-pack claim. Server-managed
    *  (the daily-pack endpoint sets this atomically with a cooldown
    *  check). Cleared client-side writes via mergeProfiles. */

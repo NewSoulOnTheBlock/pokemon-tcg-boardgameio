@@ -112,10 +112,10 @@ export const MOCK_ACHIEVEMENTS: Achievement[] = [
     progress: (p) => Math.min(100, (nftOwnedCount(p) / 100) * 100),
   },
   {
-    id: 'phygital-importer',
+    id: 'nft-importer',
     icon: '📥',
-    name: 'Phygital Importer',
-    description: 'Import at least one phygital / Collector Crypt NFT card.',
+    name: 'NFT Importer',
+    description: 'Import at least one Pokemon NFT (Collector Crypt or other) into your collection.',
     unlocked: (p) => (p.importedNfts ?? []).length >= 1,
   },
   {

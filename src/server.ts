@@ -19,7 +19,6 @@ import { rollDailyPack } from './server/packRoller';
 import { POKETCG_DECIMALS, PoketcgBurnError, findPoketcgTier, verifyPoketcgBurn } from './server/tokenBurn';
 import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
-import { createPhygitalsBuyer, PhygitalsBuyerError, type PhygitalsBuyerService } from './server/phygitalsBuyer';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
@@ -51,7 +50,6 @@ const cardStorage: CardStorage = databaseUrl
 const lobbyChat: LobbyChatStore = databaseUrl
   ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
   : new MemoryLobbyChatStore();
-const phygitalsBuyer: PhygitalsBuyerService = createPhygitalsBuyer();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
@@ -256,188 +254,6 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
     },
   };
 });
-
-// All in-app booster routes have been removed. The Boosters page is
-// now Phygitals-only. The buy flow is two-step: user pays USDC into
-// our treasury (user signs), then the server uses the API-key-bound
-// wallet to actually purchase from Phygitals via the route below.
-
-server.router.get('/api/phygitals-buyer/status', (ctx) => {
-  ctx.body = { enabled: phygitalsBuyer.enabled, treasuryPubkey: phygitalsBuyer.treasuryPubkey };
-});
-
-/**
- * Preflight: verify Phygitals is reachable + the pack is in stock
- * BEFORE asking the user to sign a payment. If this fails the user
- * has not paid anything and we can return the error cleanly.
- */
-server.router.post('/api/phygitals-buyer/preflight', jsonBody, async (ctx) => {
-  const body = ctx.request.body as {
-    packId?: string;
-    amount?: number;
-    currency?: 'usdc' | 'usdt';
-  } | undefined;
-  if (!body?.packId || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
-    ctx.throw(400, 'packId and amount are required');
-    return;
-  }
-  try {
-    const result = await phygitalsBuyer.preflight({
-      packId: body.packId,
-      amount: body.amount!,
-      currency: body.currency,
-    });
-    ctx.body = result;
-  } catch (err) {
-    if (err instanceof PhygitalsBuyerError) {
-      ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
-      ctx.type = 'application/json';
-      ctx.body = err.body && typeof err.body === 'object' ? err.body : { error: err.message };
-      return;
-    }
-    throw err;
-  }
-});
-
-/**
- * Top up credits. User signs a USDC transfer to the treasury wallet,
- * sends us the signature. Server verifies the payment landed on-chain
- * and credits the user's profile balance with the verified USD amount.
- * Idempotent per-(userId, signature): repeating the call with the
- * same signature returns the current balance without double-crediting.
- */
-const creditedTopUps = new Set<string>(); // in-memory dedup key: `${userId}:${signature}`
-server.router.post('/api/phygitals-credits/topup', jsonBody, async (ctx) => {
-  const body = ctx.request.body as {
-    userId?: string;
-    buyerWallet?: string;
-    paymentSignature?: string;
-    currency?: 'usdc' | 'usdt';
-  } | undefined;
-  if (!body?.userId || !body.buyerWallet || !body.paymentSignature) {
-    ctx.throw(400, 'userId, buyerWallet, and paymentSignature are required');
-    return;
-  }
-  if (typeof profileStorage.addPhygitalsCredits !== 'function') {
-    ctx.throw(503, 'Profile storage does not support Phygitals credits.');
-    return;
-  }
-  const dedupKey = `${body.userId}:${body.paymentSignature}`;
-  if (creditedTopUps.has(dedupKey)) {
-    ctx.body = { alreadyCredited: true };
-    return;
-  }
-  try {
-    const { amountUsd } = await phygitalsBuyer.verifyTopUp({
-      buyerWallet: body.buyerWallet,
-      paymentSignature: body.paymentSignature,
-      currency: body.currency,
-    });
-    if (amountUsd <= 0) {
-      ctx.throw(400, 'No USDC transfer to treasury found in that signature.');
-      return;
-    }
-    creditedTopUps.add(dedupKey);
-    const newBalance = await profileStorage.addPhygitalsCredits(body.userId, amountUsd);
-    ctx.body = { creditedUsd: amountUsd, balanceUsd: newBalance };
-  } catch (err) {
-    if (err instanceof PhygitalsBuyerError) {
-      ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
-      ctx.type = 'application/json';
-      const errBody = err.body && typeof err.body === 'object' ? err.body : {};
-      ctx.body = { error: err.message, ...errBody };
-      return;
-    }
-    throw err;
-  }
-});
-
-/**
- * Buy a pack using stored credits. Server:
- *   1. Computes pack cost from /api/vm/available
- *   2. Atomically deducts credits from the user's balance
- *      (fails if insufficient)
- *   3. Calls Phygitals' buy/crypto with the treasury wallet
- *   4. On Phygitals failure, REFUNDS THE CREDITS to the user
- */
-server.router.post('/api/phygitals-credits/buy', jsonBody, async (ctx) => {
-  const body = ctx.request.body as {
-    userId?: string;
-    packId?: string;
-    amount?: number;
-    currency?: 'usdc' | 'usdt';
-  } | undefined;
-  if (!body?.userId || !body.packId || !Number.isFinite(body.amount) || (body.amount ?? 0) < 1) {
-    ctx.throw(400, 'userId, packId, and amount are required');
-    return;
-  }
-  if (typeof profileStorage.spendPhygitalsCredits !== 'function' || typeof profileStorage.addPhygitalsCredits !== 'function') {
-    ctx.throw(503, 'Profile storage does not support Phygitals credits.');
-    return;
-  }
-  let priceUsd = 0;
-  try {
-    const preflight = await phygitalsBuyer.preflight({
-      packId: body.packId,
-      amount: body.amount!,
-      currency: body.currency,
-    });
-    priceUsd = preflight.expectedAmount / 1e6;
-
-    // Deduct credits BEFORE calling Phygitals — atomic conditional
-    // update fails with 'Insufficient Phygitals credits' if the user
-    // doesn't have enough.
-    let newBalance: number;
-    try {
-      newBalance = await profileStorage.spendPhygitalsCredits(body.userId, priceUsd);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      ctx.status = 402;
-      ctx.body = { error: msg, priceUsd };
-      return;
-    }
-
-    // Credits are gone. Any Phygitals failure must re-credit them.
-    try {
-      const result = await phygitalsBuyer.buyWithBalance({
-        packId: body.packId,
-        amount: body.amount!,
-        currency: body.currency,
-      });
-      ctx.body = { ...result, balanceUsd: newBalance };
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      console.error(`[phygitals-credits] buy failed, refunding ${priceUsd} credits to ${body.userId}: ${reason}`);
-      const refundedBalance = await profileStorage.addPhygitalsCredits!(body.userId, priceUsd);
-      if (err instanceof PhygitalsBuyerError) {
-        ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
-        ctx.type = 'application/json';
-        ctx.body = {
-          error: `${err.message} — your $${priceUsd.toFixed(2)} in credits has been refunded.`,
-          refundedUsd: priceUsd,
-          balanceUsd: refundedBalance,
-        };
-        return;
-      }
-      ctx.status = 502;
-      ctx.body = {
-        error: `Phygitals buy failed (${reason}) — your $${priceUsd.toFixed(2)} in credits has been refunded.`,
-        refundedUsd: priceUsd,
-        balanceUsd: refundedBalance,
-      };
-    }
-  } catch (err) {
-    if (err instanceof PhygitalsBuyerError) {
-      ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
-      ctx.type = 'application/json';
-      const errBody = err.body && typeof err.body === 'object' ? err.body : {};
-      ctx.body = { error: err.message, ...errBody };
-      return;
-    }
-    throw err;
-  }
-});
-
 server.router.post('/api/login', jsonBody, async (ctx) => {
   const body = ctx.request.body as { profile?: ProfileState } | undefined;
   const profile = body?.profile;
@@ -667,11 +483,6 @@ server.router.post('/api/lobby/chat', jsonBody, async (ctx) => {
   }
 });
 
-// Phygitals storefront now calls api.phygitals.com directly from the
-// browser — see src/api/phygitals.ts. Their Cloudflare WAF blocks
-// Render's outbound IPs, so server-side proxying isn't viable. The
-// VITE_PHYGITALS_API_KEY env var holds the (read+sell scoped) key.
-
 /**
  * Free prize card for the winner of a multiplayer match. Idempotent per
  * (winner profile, match, player slot) — the prize_claimed flag on
@@ -764,7 +575,7 @@ server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
 });
 
 /**
- * Scan a Solana wallet for phygital / Collector Crypt Pokemon NFTs and
+ * Scan a Solana wallet for Pokemon NFTs (Collector Crypt gacha pulls,
  * propose matches against the local card library. The client uses the
  * returned candidates to populate the Import page.
  */

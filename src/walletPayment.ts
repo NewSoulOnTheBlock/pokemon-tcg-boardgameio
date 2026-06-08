@@ -70,8 +70,8 @@ export async function signAndSendBase64Transaction({
  * Sign a live VersionedTransaction with the connected wallet but do
  * NOT submit it. Caller passes the VersionedTransaction INSTANCE (not
  * a serialized blob) so we avoid base64 round-tripping that can shift
- * tx bytes and trip partner-side fingerprint checks (e.g. Phygitals).
- * Returns the signed-tx byte array for transport to the partner.
+ * tx bytes and trip partner-side fingerprint checks. Returns the
+ * signed-tx byte array for transport to the partner.
  */
 export async function signVersionedTransaction({
   payerAddress,
@@ -106,7 +106,7 @@ export async function signVersionedTransaction({
     const signedBytes = signed.serialize();
     const hash = await crypto.subtle.digest('SHA-1', signedBytes.buffer.slice(signedBytes.byteOffset, signedBytes.byteOffset + signedBytes.byteLength) as ArrayBuffer);
     const hex = Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('');
-    console.log('[phygitals] signed-tx SHA-1:', hex, 'len:', signedBytes.length);
+    console.log('[wallet] signed-tx SHA-1:', hex, 'len:', signedBytes.length);
     return Array.from(signedBytes);
   } catch {
     return Array.from(signed.serialize());
@@ -116,7 +116,7 @@ export async function signVersionedTransaction({
 /**
  * @deprecated Use signVersionedTransaction() with a live instance
  * instead. The base64 round-trip caused fingerprint mismatches with
- * partner backends that re-derive tx bytes (e.g. Phygitals).
+ * partner backends that re-derive tx bytes.
  */
 export async function signVersionedTransactionBase64({
   payerAddress,
@@ -149,8 +149,8 @@ export async function signVersionedTransactionBase64({
 
 /**
  * Sign multiple base64-encoded VersionedTransactions in series. Used
- * for Phygitals' take-claw-bid sellback flow where init returns an
- * array of unsigned txs. Returns the array of signed-tx byte arrays.
+ * for any flow that returns an array of unsigned txs (e.g. a sellback
+ * + transfer pair). Returns the array of signed-tx byte arrays.
  */
 export async function signManyVersionedTransactions({
   payerAddress,

@@ -81,10 +81,6 @@ export async function fetchLeaderboard(): Promise<MatchLeaderboardEntry[]> {
   return request<MatchLeaderboardEntry[]>('/api/leaderboard');
 }
 
-// Free in-game booster claim was removed. The Boosters page is now
-// Phygitals-only (browse + buy + sellback via the verbatim
-// buy-with-crypto-v6 reference port). See src/api/phygitals.ts.
-
 export interface ClaimedPrize {
   alreadyClaimed: boolean;
   card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } } | null;

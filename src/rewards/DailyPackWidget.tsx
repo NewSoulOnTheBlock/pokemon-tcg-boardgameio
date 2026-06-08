@@ -2,8 +2,7 @@
 //   * a "Claim daily pack" button when the user is off cooldown, OR
 //   * a countdown to next claim when on cooldown.
 // On claim, opens a modal with a reveal animation that flips each
-// rolled card face-up sequentially, mirroring how the Phygitals pull
-// reveal feels.
+// rolled card face-up sequentially.
 
 import { useCallback, useEffect, useState } from 'react';
 import { CARD_LIBRARY } from '../game/cards';

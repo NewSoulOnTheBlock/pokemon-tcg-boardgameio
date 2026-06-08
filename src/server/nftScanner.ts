@@ -1,4 +1,4 @@
-// Scan a Solana wallet for phygital / Collector Crypt Pokemon NFTs and
+// Scan a Solana wallet for Pokemon NFTs (Collector Crypt gacha pulls,
 // propose matches against the local CARD_LIBRARY so the user can import
 // them into their in-game collection.
 //
@@ -9,7 +9,7 @@
 //   1. Recognise NFTs minted by THIS app via metadata URI pointing back at
 //      /api/cards/<id>/metadata. Highest confidence.
 //   2. Match against `setId-number` attributes (Collector Crypt + similar
-//      phygital platforms expose set + card-number traits).
+//      Pokemon NFT issuers expose set + card-number traits).
 //   3. Fuzzy match on Pokemon name + set name (last resort, lower
 //      confidence — UI marks these so user can verify before importing).
 //

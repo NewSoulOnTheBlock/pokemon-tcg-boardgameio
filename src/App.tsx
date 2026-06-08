@@ -19,7 +19,6 @@ import {
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
-import { PhygitalsHero, PhygitalsMyPullsTab, PhygitalsShopTab, recordPhygitalsPulls } from './phygitals/PhygitalsStorefront';
 import {
   CARD_LIBRARY,
   ENERGY_TYPE_META,
@@ -105,11 +104,6 @@ import {
   VictoryRewardModal,
 } from './campaign/components';
 import {
-  BoosterTabs,
-  CollectionTab,
-  type BoosterTabId,
-} from './boosters/components';
-import {
   HomeQuestWidget,
   LevelUpModal,
   QuestCenter,
@@ -133,7 +127,7 @@ import {
 } from './telegram';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match' | 'docs';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'imports' | 'bot' | 'match' | 'docs';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
 const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
@@ -406,26 +400,6 @@ function rareBucket(card: Card): 'rare' | 'ultra' | 'illustration' | 'secret' {
   return 'rare';
 }
 
-/**
- * Small "Powered by Phygitals" badge pinned to the bottom-left corner
- * of every page that isn't the Boosters page (Boosters has the big
- * footer-version of this brand element).
- */
-function PoweredByPhygitalsBadge() {
-  return (
-    <a
-      className="powered-by-phygitals-badge"
-      href="https://phygitals.com"
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label="Powered by Phygitals — opens phygitals.com in a new tab"
-    >
-      <span className="powered-by-phygitals-badge-text">Powered by</span>
-      <img src="/phygitals-logo.png" alt="Phygitals" className="powered-by-phygitals-badge-logo" />
-    </a>
-  );
-}
-
 function randomFromPool(pool: Card[], used: Set<string>): Card {
   const available = pool.filter((card) => !used.has(card.id));
   const source = available.length > 0 ? available : pool;
@@ -582,7 +556,7 @@ function Shell({
           <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
         </button>
         <nav>
-          {(['home', 'profile', 'matchmaking', 'bot', 'boosters', 'imports'] as Page[]).map((target) => (
+          {(['home', 'profile', 'matchmaking', 'bot', 'imports'] as Page[]).map((target) => (
             <button
               className={page === target ? 'nav-active' : ''}
               key={target}
@@ -790,13 +764,9 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
             <strong>Profile + Deckbuilder</strong>
             <span>Manage your profile and custom deck library.</span>
           </button>
-          <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
-            <strong>Phygitals Vault ↗</strong>
-            <span>Real graded cards, real liquidity. Buy, hold, sell back at 85%, or ship worldwide.</span>
-          </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
-            <strong>Import phygitals / Collector Crypt</strong>
-            <span>Scan your Solana wallet and pull NFT-backed Pokemon cards into the game.</span>
+            <strong>Import NFTs</strong>
+            <span>Scan your Solana wallet and pull NFT-backed Pokemon cards into your in-game collection.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('docs')}>
             <strong>📖 Docs</strong>
@@ -1856,56 +1826,6 @@ function DeckSelect({
   );
 }
 
-function BoostersPage({ profile, onProfileChange }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void }) {
-  const [activeTab, setActiveTab] = useState<BoosterTabId>('shop');
-  // Bump this counter whenever a Phygitals purchase/sellback happens so
-  // the My Pulls tab re-reads localStorage on the next render.
-  const [pullsRefreshNonce, setPullsRefreshNonce] = useState(0);
-  const triggerPullsRefresh = useCallback(() => setPullsRefreshNonce((n) => n + 1), []);
-  // After a successful Phygitals buy, persist the pulls into local
-  // storage and jump to the My Pulls tab so the user sees them.
-  const handlePurchased = useCallback((items: Parameters<typeof recordPhygitalsPulls>[1]) => {
-    recordPhygitalsPulls(profile, items);
-    triggerPullsRefresh();
-    setActiveTab('vault');
-  }, [profile, triggerPullsRefresh]);
-  const totalUniqueCardsInLibrary = Object.keys(CARD_LIBRARY).length;
-
-  return (
-    <main className="content-page boosters-page">
-      <PhygitalsHero profile={profile} />
-      <BoosterTabs active={activeTab} onChange={setActiveTab} />
-
-      {activeTab === 'shop' && (
-        <div className="profile-tab-pane">
-          <PhygitalsShopTab profile={profile} onProfileChange={onProfileChange} onPurchased={handlePurchased} />
-        </div>
-      )}
-
-      {activeTab === 'vault' && (
-        <div className="profile-tab-pane">
-          <PhygitalsMyPullsTab
-            profile={profile}
-            refreshNonce={pullsRefreshNonce}
-            onChanged={triggerPullsRefresh}
-          />
-        </div>
-      )}
-
-      {activeTab === 'collection' && (
-        <div className="profile-tab-pane">
-          <CollectionTab profile={profile} totalUniqueCardsInLibrary={totalUniqueCardsInLibrary} />
-        </div>
-      )}
-
-      <footer className="phygitals-powered-by" aria-label="Powered by Phygitals">
-        <span className="phygitals-powered-by-text">Powered by</span>
-        <img src="/phygitals-logo.png" alt="Phygitals" className="phygitals-powered-by-logo" />
-      </footer>
-    </main>
-  );
-}
-
 function GymChallengePage({ profile, onProfileChange, onExit }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void; onExit: () => void }) {
   const deckOptions = useMemo(() => deckOptionsForProfile(profile), [profile]);
   const [deckId, setDeckId] = useState(() => firstValidDeckId(deckOptions));
@@ -2164,11 +2084,12 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
     <main className="content-page imports-page">
       <section className="panel imports-panel">
         <p className="eyebrow">Import</p>
-        <h1>Bring your phygitals on-chain into the game</h1>
+        <h1>Bring your Pokemon NFTs on-chain into the game</h1>
         <p>
-          Scan your connected Solana wallet for Pokemon NFTs (Collector Crypt phygitals, your own
-          booster pulls from this app, and any other NFT with Pokemon-card metadata). Pick which
-          to import and we'll add them to your in-game collection so they show up in the deckbuilder.
+          Scan your connected Solana wallet for Pokemon NFTs (your own booster pulls from this
+          app, Collector Crypt gacha wins, and any other NFT with Pokemon-card metadata). Pick
+          which to import and we'll add them to your in-game collection so they show up in the
+          deckbuilder.
         </p>
         <div className="imports-stats">
           <span>Wallet: <strong>{walletAddress ? shortAddr(walletAddress) : 'not connected'}</strong></span>
@@ -2466,7 +2387,6 @@ export default function App() {
       <>
         {music}
         <SignInPage onSignIn={(next) => { setProfile(next); setPage('home'); }} />
-        <PoweredByPhygitalsBadge />
       </>
     );
   }
@@ -2481,7 +2401,6 @@ export default function App() {
           onProfileChange={updateProfile}
           profile={profile}
         />
-        <PoweredByPhygitalsBadge />
       </>
     );
   }
@@ -2491,7 +2410,6 @@ export default function App() {
       <>
         {music}
         <GymChallengePage profile={profile} onProfileChange={updateProfile} onExit={() => setPage('home')} />
-        <PoweredByPhygitalsBadge />
       </>
     );
   }
@@ -2511,14 +2429,10 @@ export default function App() {
             }}
           />
         )}
-        {page === 'boosters' && <BoostersPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'docs' && <DocsPage />}
         {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}
       </Shell>
-      {/* Boosters page already shows the big "Powered by Phygitals" footer,
-          so we skip the corner badge there to avoid double-branding. */}
-      {page !== 'boosters' && <PoweredByPhygitalsBadge />}
     </>
   );
 }

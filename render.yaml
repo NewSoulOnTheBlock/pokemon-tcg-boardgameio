@@ -36,38 +36,9 @@ services:
         sync: false
       - key: BGIO_STORAGE_DIR
         value: /tmp/bgio-storage
-      # Phygitals Partner API integration. The API key is bound to a
-      # specific Solana wallet, so the API wallet (not the user's
-      # wallet) must sign every /api/vm/buy/crypto tx. We use a
-      # two-step server-buy flow:
-      #
-      #   1. User signs a USDC transfer to PHYGITALS_BUYER_SECRET_KEY's
-      #      pubkey (the "treasury") for pack.mint_price * amount.
-      #   2. Server verifies that on-chain payment, then signs +
-      #      submits the Phygitals buy with the API wallet.
-      #
-      # Browse + sellback flows still call api.phygitals.com directly
-      # from the browser (CORS-proxy Worker), so VITE_PHYGITALS_API_KEY
-      # is still needed too. The VITE_* var is the SAME key as the
-      # server-side one, just exposed to the bundle for the read paths.
-      - key: PHYGITALS_API_KEY
-        sync: false
-      - key: PHYGITALS_BUYER_SECRET_KEY
-        sync: false
-      - key: VITE_PHYGITALS_API_KEY
-        sync: false
-      # Server uses PHYGITALS_BASE_URL; browser uses VITE_PHYGITALS_BASE_URL.
-      # Both default to https://api.phygitals.com. Set VITE_* to the
-      # CORS-proxy Worker URL if you need browser-side calls to bypass
-      # Phygitals' Cloudflare WAF on partner domains.
-      - key: PHYGITALS_BASE_URL
-        value: https://api.phygitals.com
-      - key: VITE_PHYGITALS_BASE_URL
-        value: https://api.phygitals.com
-      # Optional: override the Solana RPC the client uses to read the
-      # token accounts when building the buy tx. Helius/Alchemy
-      # recommended for higher rate limits. Also used server-side by
-      # the phygitals-buyer to verify payments.
+      # Optional: override the Solana RPC the client uses for token
+      # account reads, $POKETCG balance fetches, and burn-tx building.
+      # Helius/Alchemy recommended for higher rate limits.
       - key: VITE_SOLANA_RPC_URL
         sync: false
 

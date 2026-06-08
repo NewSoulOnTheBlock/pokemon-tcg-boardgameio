@@ -32,7 +32,7 @@ const SECTIONS: DocsSection[] = [
         <ul>
           <li><strong>Starter decks</strong> — one per energy type (Grass / Fire / Water / etc.), always playable, never NFT-backed.</li>
           <li><strong>Booster packs</strong> — buy them on the Booster Shop tab with $POKETCG (burned permanently), or claim a free pack every 22 hours.</li>
-          <li><strong>Phygitals</strong> — real graded Pokemon NFTs you can buy with USDC credits, sell back at 85%, or ship worldwide.</li>
+          <li><strong>NFT pulls</strong> — buy gacha packs (via Collector Crypt) that drop real graded Pokemon card NFTs into your wallet.</li>
         </ul>
       </>
     ),
@@ -44,7 +44,7 @@ const SECTIONS: DocsSection[] = [
     content: (
       <>
         <ol>
-          <li><strong>Sign in</strong> with a trainer name (optional) or connect a Solana wallet (required for $POKETCG, wagers, Phygitals).</li>
+          <li><strong>Sign in</strong> with a trainer name (optional) or connect a Solana wallet (required for $POKETCG burns + wagers + NFT pulls).</li>
           <li>From the Home page, click <strong>Profile + Deckbuilder</strong> and either pick a starter deck or build a custom 60-card deck.</li>
           <li>Click <strong>Matchmaking</strong>, then <em>Create match</em>. Share the match link with a friend or wait for someone to accept.</li>
           <li>During setup, drag a Basic Pokemon onto your Active spot and up to 5 more onto your Bench. Click <em>Ready</em>.</li>
@@ -197,13 +197,6 @@ const SECTIONS: DocsSection[] = [
           The home page has a <strong>Daily Free Pack</strong> widget. Click it every 22 hours
           to claim a free pack with the same composition as a burned pack. No wallet needed.
         </p>
-        <h3>Phygitals (real graded NFTs)</h3>
-        <p>
-          The <strong>Boosters → Shop</strong> page sells real-world graded Pokemon cards backed
-          by Phygitals. Top up USDC credits with a single signature, then spend credits to buy packs.
-          Credits are USD-denominated and persistent across sessions. NFTs land in the storefront
-          treasury — track ownership in your <em>My Pulls</em> tab. Refunds happen in credits.
-        </p>
       </>
     ),
   },
@@ -247,8 +240,8 @@ const SECTIONS: DocsSection[] = [
         <ul>
           <li>$POKETCG burn → playable booster packs</li>
           <li>$POKETCG / SOL / USDC wager matches</li>
-          <li>Phygitals credits + pack purchases</li>
-          <li>NFT-backed card imports (Collector Crypt + Phygitals)</li>
+          <li>Collector Crypt gacha pack purchases (real NFT pulls)</li>
+          <li>NFT-backed card imports into your in-game collection</li>
           <li>Persistent profile across devices (login key keyed on your wallet)</li>
         </ul>
         <h3>Getting $POKETCG</h3>
@@ -284,12 +277,6 @@ const SECTIONS: DocsSection[] = [
           It flips one coin per Energy attached. Attach more Energy to scale the damage:
           4 attached Energy = 4 coins, up to 80 damage. Confirm in the gold toast that pops up.
         </p>
-        <h3>My Phygitals pack purchase failed but my credits weren't refunded</h3>
-        <p>
-          They are — the server auto-refunds credits on any Phygitals API failure.
-          Refresh the storefront and check your balance. Credits are server-managed so
-          the refund is atomic with the failed purchase.
-        </p>
         <h3>Why was my $POKETCG burn rejected?</h3>
         <p>
           Most likely insufficient balance. Check your wallet has at least the tier amount
@@ -302,8 +289,8 @@ const SECTIONS: DocsSection[] = [
         </p>
         <h3>How do I import existing Pokemon NFTs?</h3>
         <p>
-          Home page → <em>Import phygitals / Collector Crypt</em>. We scan your wallet for
-          Pokemon NFTs and let you pull matching cards into your in-game collection.
+          Home page → <em>Import NFTs</em>. We scan your wallet for Pokemon NFTs and let you
+          pull matching cards into your in-game collection.
         </p>
       </>
     ),
