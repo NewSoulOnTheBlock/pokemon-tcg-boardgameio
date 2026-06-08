@@ -625,9 +625,20 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
                     )}
                     {card.kind === 'trainer' && (
                       <>
-                        <button onClick={() => moves.playTrainer(index, { zone: 'active' })}>Play</button>
+                        <button
+                          onClick={() => {
+                            moves.playTrainer(index, { zone: 'active' });
+                            setBoardHint(`Played ${card.name}. Check the battle log for the result.`);
+                          }}
+                        >Play</button>
                         {player.bench.map((benchPokemon, benchIndex) => (
-                          <button key={benchPokemon.instanceId} onClick={() => moves.playTrainer(index, { zone: 'bench', benchIndex, switchBenchIndex: benchIndex })}>
+                          <button
+                            key={benchPokemon.instanceId}
+                            onClick={() => {
+                              moves.playTrainer(index, { zone: 'bench', benchIndex, switchBenchIndex: benchIndex });
+                              setBoardHint(`Played ${card.name} on Bench ${benchIndex + 1}.`);
+                            }}
+                          >
                             Play on Bench {benchIndex + 1}
                           </button>
                         ))}

@@ -5741,3 +5741,14 @@ button:disabled {
 }
 .burn-pack-info { color: #4ade80; margin-top: 12px; }
 .burn-pack-error { margin-top: 12px; }
+
+/* Battle log: coin flip + search highlights */
+.battle-log-list .log-line-flip {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.12), transparent);
+  border-left: 3px solid #f59e0b;
+  font-weight: 600;
+}
+.battle-log-list .log-line-search {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.10), transparent);
+  border-left: 3px solid #6366f1;
+}

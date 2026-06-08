@@ -9,6 +9,8 @@ import { useState } from 'react';
 const HIGHLIGHT_RULES: Array<{ test: RegExp; className: string; icon: string }> = [
   { test: /knock(ed)? out|fainted/i, className: 'log-line-knockout', icon: '💥' },
   { test: /prize card/i, className: 'log-line-prize', icon: '🎁' },
+  { test: /flipped (heads|tails)/i, className: 'log-line-flip', icon: '🪙' },
+  { test: /used poké ball|used great ball|searched .+ onto the bench|used .* to evolve/i, className: 'log-line-search', icon: '🔎' },
   { test: /attack|used /i, className: 'log-line-attack', icon: '⚔' },
   { test: /attached|attach /i, className: 'log-line-energy', icon: '⚡' },
   { test: /evolved/i, className: 'log-line-evolve', icon: '✨' },
