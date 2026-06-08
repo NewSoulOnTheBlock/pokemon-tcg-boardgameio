@@ -5626,3 +5626,306 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
   font-weight: 700;
 }
 .gacha-vault-error { color: #f87171; font-size: 0.78rem; margin: 0; }
+
+/* ===== Pack-opening ceremony (in-game playable boosters) ===================== */
+/* Full-bleed dark stage that takes over the screen when a daily-pack or
+   $POKETCG burn-pack is opened. Replaces the old grid-of-tiny-flip-cards
+   with a one-card-at-a-time reveal designed to FEEL like opening a real
+   booster: anticipation, click-to-flip, holographic shine, gold burst
+   for rare-or-better pulls. */
+.pack-opening-stage {
+  align-items: center;
+  background: radial-gradient(ellipse at center, rgba(15, 23, 42, 0.95), rgba(2, 6, 12, 0.99));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  inset: 0;
+  justify-content: flex-start;
+  overflow: hidden;
+  padding: 28px 24px;
+  position: fixed;
+  z-index: 2000;
+}
+.pack-opening-starfield {
+  background:
+    radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,0.7), transparent),
+    radial-gradient(1.5px 1.5px at 40% 70%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(2px 2px at 60% 20%, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1px 1px at 80% 50%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1.5px 1.5px at 15% 80%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(2px 2px at 90% 90%, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1.5px 1.5px at 30% 50%, rgba(255,255,255,0.5), transparent);
+  inset: 0;
+  opacity: 0.5;
+  position: absolute;
+  pointer-events: none;
+}
+.pack-opening-header {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+.pack-opening-header h2 {
+  font-size: 1.6rem;
+  margin: 4px 0 0;
+}
+.pack-opening-skip {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 8px 14px;
+}
+.pack-opening-skip:hover { background: rgba(255, 255, 255, 0.1); color: var(--ink-primary); }
+.pack-opening-counter {
+  color: var(--ink-secondary);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  margin-top: 8px;
+  position: relative;
+  text-transform: uppercase;
+  z-index: 1;
+}
+.pack-opening-counter strong { color: var(--ink-primary); font-size: 1.15rem; margin: 0 2px; }
+.pack-opening-card-stage {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  margin: 12px 0;
+  perspective: 1500px;
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+.pack-opening-card {
+  aspect-ratio: 5 / 7;
+  max-height: 60vh;
+  max-width: min(380px, 90vw);
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 700ms cubic-bezier(0.22, 1.2, 0.36, 1);
+  width: 100%;
+}
+.pack-opening-card-flipped { transform: rotateY(180deg) scale(1.04); }
+.pack-opening-card-back,
+.pack-opening-card-front {
+  backface-visibility: hidden;
+  border-radius: 14px;
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+}
+.pack-opening-card-back {
+  align-items: center;
+  background: linear-gradient(135deg, #1e3a8a 0%, #312e81 40%, #581c87 100%);
+  border: 3px solid rgba(255, 215, 0, 0.4);
+  box-shadow:
+    inset 0 0 60px rgba(255, 215, 0, 0.15),
+    0 18px 40px rgba(0, 0, 0, 0.65);
+  display: flex;
+  justify-content: center;
+  transform: rotateY(0deg);
+}
+.pack-opening-card-back-pattern {
+  align-content: center;
+  display: grid;
+  font-size: 2rem;
+  gap: 28px;
+  grid-template-columns: repeat(2, 1fr);
+  opacity: 0.4;
+}
+.pack-opening-card-back-pattern span { display: block; line-height: 1; }
+.pack-opening-card-front {
+  background: rgba(15, 23, 42, 0.95);
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  transform: rotateY(180deg);
+}
+.pack-opening-card-front img {
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+.pack-opening-card-front-text {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+}
+.pack-opening-card-front-text strong { font-size: 1.2rem; }
+.pack-opening-card-front-text span { color: var(--ink-secondary); }
+
+/* Rarity-tinted borders + glows on the front face once revealed. */
+.pack-opening-card-rare.pack-opening-card-flipped .pack-opening-card-front {
+  border-color: rgba(245, 158, 11, 0.8);
+  box-shadow: 0 0 60px rgba(245, 158, 11, 0.55), 0 18px 40px rgba(0,0,0,0.65);
+}
+.pack-opening-card-uncommon.pack-opening-card-flipped .pack-opening-card-front {
+  border-color: rgba(99, 102, 241, 0.7);
+  box-shadow: 0 0 40px rgba(99, 102, 241, 0.4), 0 18px 40px rgba(0,0,0,0.65);
+}
+
+/* Holographic shine — diagonal animated gradient over uncommon+. */
+.pack-opening-shine {
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.0) 40%,
+    rgba(255, 255, 255, 0.35) 50%,
+    rgba(255, 255, 255, 0) 60%,
+    transparent 70%
+  );
+  background-size: 250% 250%;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  animation: pack-opening-shine-slide 2.4s ease-in-out infinite;
+  mix-blend-mode: overlay;
+}
+@keyframes pack-opening-shine-slide {
+  0%   { background-position: 100% 100%; }
+  100% { background-position: -40% -40%; }
+}
+
+/* Screen flash when a rare reveals — fades fast. */
+.pack-opening-flash {
+  background: radial-gradient(circle at center, rgba(255, 215, 0, 0.6), transparent 60%);
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  animation: pack-opening-flash-fade 600ms ease-out forwards;
+  z-index: 2;
+}
+@keyframes pack-opening-flash-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Particle burst around rare reveal — 12 spans spread radially. */
+.pack-opening-burst {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+.pack-opening-burst span {
+  background: gold;
+  border-radius: 50%;
+  box-shadow: 0 0 12px gold;
+  height: 8px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  transform-origin: center;
+  animation: pack-opening-burst-fly 900ms cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
+  animation-delay: var(--burst-delay, 0ms);
+}
+.pack-opening-burst-silver span { background: silver; box-shadow: 0 0 10px silver; }
+@keyframes pack-opening-burst-fly {
+  0%   { opacity: 1; transform: rotate(var(--burst-angle)) translateY(0) scale(1); }
+  100% { opacity: 0; transform: rotate(var(--burst-angle)) translateY(-180px) scale(0.4); }
+}
+
+.pack-opening-hint {
+  color: var(--ink-secondary);
+  font-size: 0.85rem;
+  margin: 0;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+.pack-opening-queue {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 8px;
+  position: relative;
+  z-index: 1;
+}
+.pack-opening-queue-dot {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  height: 10px;
+  transition: all 200ms ease;
+  width: 10px;
+}
+.pack-opening-queue-dot-active {
+  background: #f59e0b;
+  box-shadow: 0 0 10px #f59e0b;
+  transform: scale(1.4);
+}
+.pack-opening-queue-dot-done {
+  background: rgba(74, 222, 128, 0.6);
+}
+
+/* Summary screen */
+.pack-opening-summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+  position: relative;
+  z-index: 1;
+}
+.pack-opening-summary-pill {
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 6px 14px;
+  text-transform: uppercase;
+}
+.pack-opening-summary-pill-rare     { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+.pack-opening-summary-pill-uncommon { background: rgba(99, 102, 241, 0.18); color: #a5b4fc; }
+.pack-opening-summary-pill-common   { background: rgba(100, 116, 139, 0.18); color: #cbd5e1; }
+.pack-opening-summary-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  margin: 18px 0;
+  max-width: 720px;
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+.pack-opening-summary-card {
+  aspect-ratio: 5 / 7;
+  background: rgba(15, 23, 42, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pack-opening-summary-card img { height: 100%; object-fit: cover; width: 100%; }
+.pack-opening-summary-card-text {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  justify-content: center;
+  padding: 8px;
+  text-align: center;
+}
+.pack-opening-summary-card-text strong { font-size: 0.78rem; }
+.pack-opening-summary-card-text span { color: var(--ink-secondary); font-size: 0.68rem; }
+.pack-opening-summary-card-rare     { border-color: rgba(245, 158, 11, 0.55); box-shadow: 0 0 12px rgba(245, 158, 11, 0.25); }
+.pack-opening-summary-card-uncommon { border-color: rgba(99, 102, 241, 0.45); }
+.pack-opening-summary-actions {
+  position: relative;
+  z-index: 1;
+}

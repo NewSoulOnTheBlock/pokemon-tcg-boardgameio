@@ -4,7 +4,6 @@
 // destroyed, no treasury, no transfer.
 
 import { useCallback, useEffect, useState } from 'react';
-import { CARD_LIBRARY } from '../game/cards';
 import type { ProfileState, StoredProfile } from '../shared/profile';
 import { redeemBurnPack } from '../api/rewards';
 import {
@@ -13,6 +12,7 @@ import {
   fetchPoketcgBalance,
   findPoketcgTier,
 } from './burnTokens';
+import { PackOpeningCeremony } from './PackOpeningCeremony';
 
 const PACK_OPTIONS = POKETCG_PACK_TIERS;
 
@@ -20,13 +20,6 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
   return Math.round(n).toString();
-}
-
-function rarityBucket(rarity?: string): 'rare' | 'uncommon' | 'common' {
-  if (!rarity) return 'common';
-  if (rarity === 'Common') return 'common';
-  if (rarity === 'Uncommon') return 'uncommon';
-  return 'rare';
 }
 
 export function BurnPackPanel({
@@ -174,67 +167,13 @@ export function BurnPackPanel({
       {error && <p className="error burn-pack-error">{error}</p>}
 
       {revealCards && (
-        <BurnPackRevealModal cardIds={revealCards} onClose={() => setRevealCards(null)} />
+        <PackOpeningCeremony
+          cardIds={revealCards}
+          title={`Pack opened — ${revealCards.length} cards`}
+          eyebrow="$POKETCG BURN"
+          onClose={() => setRevealCards(null)}
+        />
       )}
     </section>
-  );
-}
-
-function BurnPackRevealModal({
-  cardIds,
-  onClose,
-}: {
-  cardIds: string[];
-  onClose: () => void;
-}) {
-  const [revealed, setRevealed] = useState(0);
-  useEffect(() => {
-    if (revealed >= cardIds.length) return;
-    const timer = window.setTimeout(() => setRevealed((n) => n + 1), 180);
-    return () => window.clearTimeout(timer);
-  }, [revealed, cardIds.length]);
-
-  const cards = cardIds.map((id) => {
-    try { return CARD_LIBRARY[id]; } catch { return undefined; }
-  });
-
-  return (
-    <div className="wager-modal-backdrop" role="dialog" aria-modal="true" aria-label="Pack opened">
-      <div className="wager-modal daily-pack-reveal">
-        <p className="eyebrow">$POKETCG BURN</p>
-        <h2>Pack opened — {cardIds.length} cards</h2>
-        <p className="wager-modal-sub">Cards added to your collection.</p>
-        <div className="daily-pack-reveal-grid">
-          {cards.map((card, i) => {
-            const tier = card ? rarityBucket(card.rarity) : 'common';
-            const flipped = i < revealed;
-            return (
-              <div
-                key={`${card?.id ?? '?'}-${i}`}
-                className={`daily-pack-card daily-pack-card-${tier}${flipped ? ' daily-pack-card-revealed' : ''}`}
-                title={card ? `${card.name}${card.rarity ? ` — ${card.rarity}` : ''}` : '(unknown)'}
-              >
-                <div className="daily-pack-card-back" aria-hidden="true">⭐</div>
-                <div className="daily-pack-card-front">
-                  {card?.images?.small ? (
-                    <img src={card.images.small} alt={card.name} loading="lazy" />
-                  ) : (
-                    <div className="daily-pack-card-text">
-                      <strong>{card?.name ?? '(unknown)'}</strong>
-                      <span>{card?.rarity ?? 'Common'}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="wager-modal-actions">
-          <button className="primary-cta" onClick={onClose} type="button">
-            {revealed >= cardIds.length ? 'Done' : `Skip (${revealed}/${cardIds.length})`}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

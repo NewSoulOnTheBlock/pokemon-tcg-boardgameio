@@ -5,7 +5,6 @@
 // rolled card face-up sequentially.
 
 import { useCallback, useEffect, useState } from 'react';
-import { CARD_LIBRARY } from '../game/cards';
 import type { ProfileState, StoredProfile } from '../shared/profile';
 import {
   claimDailyPack as apiClaimDailyPack,
@@ -13,6 +12,7 @@ import {
   RewardCooldownError,
   type DailyPackStatus,
 } from '../api/rewards';
+import { PackOpeningCeremony } from './PackOpeningCeremony';
 
 const TICK_INTERVAL_MS = 1000;
 
@@ -22,13 +22,6 @@ function formatCountdown(ms: number): string {
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-}
-
-function rarityBucket(rarity?: string): 'rare' | 'uncommon' | 'common' {
-  if (!rarity) return 'common';
-  if (rarity === 'Common') return 'common';
-  if (rarity === 'Uncommon') return 'uncommon';
-  return 'rare';
 }
 
 export function DailyPackWidget({
@@ -125,85 +118,13 @@ export function DailyPackWidget({
         </button>
       </article>
       {revealCards && (
-        <DailyPackRevealModal
+        <PackOpeningCeremony
           cardIds={revealCards}
+          title="Today's Pull"
+          eyebrow="Daily Free Pack"
           onClose={() => setRevealCards(null)}
         />
       )}
     </>
-  );
-}
-
-function DailyPackRevealModal({
-  cardIds,
-  onClose,
-}: {
-  cardIds: string[];
-  onClose: () => void;
-}) {
-  const [revealed, setRevealed] = useState(0);
-  // Auto-reveal: flip one card every 220ms until they're all face-up.
-  useEffect(() => {
-    if (revealed >= cardIds.length) return;
-    const timer = window.setTimeout(() => setRevealed((n) => n + 1), 220);
-    return () => window.clearTimeout(timer);
-  }, [revealed, cardIds.length]);
-
-  const cards = cardIds.map((id) => {
-    try {
-      return CARD_LIBRARY[id];
-    } catch {
-      return undefined;
-    }
-  });
-
-  return (
-    <div className="wager-modal-backdrop" role="dialog" aria-modal="true" aria-label="Daily pack opened">
-      <div className="wager-modal daily-pack-reveal">
-        <p className="eyebrow">DAILY PACK</p>
-        <h2>Today's Pull</h2>
-        <p className="wager-modal-sub">Cards added to your collection.</p>
-        <div className="daily-pack-reveal-grid">
-          {cards.map((card, i) => {
-            if (!card) {
-              return (
-                <div key={i} className={`daily-pack-card daily-pack-card-common${i < revealed ? ' daily-pack-card-revealed' : ''}`}>
-                  <div className="daily-pack-card-back" aria-hidden="true">?</div>
-                  <div className="daily-pack-card-front">
-                    <strong>(unknown)</strong>
-                  </div>
-                </div>
-              );
-            }
-            const tier = rarityBucket(card.rarity);
-            const flipped = i < revealed;
-            return (
-              <div
-                key={`${card.id}-${i}`}
-                className={`daily-pack-card daily-pack-card-${tier}${flipped ? ' daily-pack-card-revealed' : ''}`}
-                title={`${card.name}${card.rarity ? ` — ${card.rarity}` : ''}`}
-              >
-                <div className="daily-pack-card-back" aria-hidden="true">⭐</div>
-                <div className="daily-pack-card-front">
-                  {card.images?.small ? (
-                    <img src={card.images.small} alt={card.name} loading="lazy" />
-                  ) : (
-                    <div className="daily-pack-card-text">
-                      <strong>{card.name}</strong>
-                      <span>{card.rarity ?? 'Common'}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="wager-modal-actions">
-          <button className="primary-cta" onClick={onClose} type="button">
-            {revealed >= cardIds.length ? 'Done' : `Skip (${revealed}/${cardIds.length})`}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
