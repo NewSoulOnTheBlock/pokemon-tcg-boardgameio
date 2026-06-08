@@ -3,7 +3,11 @@
 // and surfaces typed wrappers for the endpoints we use.
 //
 // Required env vars:
-//   GACHA_API_KEY     partner x-api-key issued by Collector Crypt
+//   GACHA_API_KEY     partner x-api-key issued by Collector Crypt.
+//                     Defaults to the literal string 'API_KEY' which
+//                     the public Collector Crypt API currently accepts
+//                     as a pass-through — set a real key once they
+//                     issue one for production.
 //   GACHA_BASE_URL    optional, defaults to https://gacha.collectorcrypt.com
 //                     (set to https://dev-gacha.collectorcrypt.com on devnet)
 
@@ -217,8 +221,12 @@ class LiveGacha implements GachaService {
 }
 
 export function createGachaService(): GachaService {
-  const apiKey = process.env.GACHA_API_KEY?.trim();
-  if (!apiKey) return new DisabledGacha();
+  // Collector Crypt's public Gacha API doesn't currently enforce
+  // partner keys for the storefront endpoints — sending the literal
+  // string 'API_KEY' is accepted as a pass-through. We default to
+  // that so the storefront works out of the box; set GACHA_API_KEY in
+  // env once a real partner key is issued.
+  const apiKey = process.env.GACHA_API_KEY?.trim() || 'API_KEY';
   const baseUrl = (process.env.GACHA_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, '');
   return new LiveGacha(baseUrl, apiKey);
 }
