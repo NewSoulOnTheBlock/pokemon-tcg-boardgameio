@@ -1157,6 +1157,11 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
             </div>
             <button className="primary-cta" onClick={save} disabled={!deckName.trim()}>Save deck to library</button>
           </section>
+        </div>
+      )}
+
+      {activeTab === 'shop' && (
+        <div className="profile-tab-pane">
           <BurnPackPanel profile={profile} onProfileChange={onProfileChange} />
         </div>
       )}
