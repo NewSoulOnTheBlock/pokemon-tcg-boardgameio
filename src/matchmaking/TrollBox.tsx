@@ -148,7 +148,7 @@ export function TrollBox({ profile }: { profile: ProfileState }) {
     }
   }, [canSend, draft, profile.name, profile.userId]);
 
-  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void send();
@@ -159,10 +159,12 @@ export function TrollBox({ profile }: { profile: ProfileState }) {
     <section className="panel trollbox-panel">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Lobby chat</p>
+          <p className="eyebrow">Lobby chat · global</p>
           <h2>💬 Trollbox</h2>
         </div>
-        <span className="trollbox-count">{messages.length}</span>
+        <span className="trollbox-count" title={`${messages.length} messages cached`}>
+          {messages.length} msg
+        </span>
       </div>
       <div
         className="trollbox-messages"
@@ -200,31 +202,37 @@ export function TrollBox({ profile }: { profile: ProfileState }) {
           void send();
         }}
       >
-        <input
-          type="text"
-          className="trollbox-input"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Say something to the lobby…"
-          maxLength={limits.MAX_LENGTH * 2 /* allow paste; we'll trim on submit */}
-          aria-label="Lobby chat message"
-          disabled={sending}
-        />
+        <div className="trollbox-input-wrapper">
+          <textarea
+            className="trollbox-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={`Say something to the lobby, ${profile.name}…`}
+            maxLength={limits.MAX_LENGTH * 2 /* allow paste; we'll trim on submit */}
+            aria-label="Lobby chat message"
+            disabled={sending}
+            rows={2}
+          />
+          <span
+            className={`trollbox-charcount${remainingChars < 20 ? ' trollbox-charcount-warn' : ''}${remainingChars < 0 ? ' trollbox-charcount-error' : ''}`}
+            aria-live="polite"
+          >
+            {remainingChars}
+          </span>
+        </div>
         <button
           type="submit"
           className="primary-cta trollbox-send"
           disabled={!canSend}
           aria-label="Send message"
         >
-          {sending ? '…' : 'Send'}
+          {sending ? '…' : 'Send ↵'}
         </button>
       </form>
       <div className="trollbox-footer">
-        <span className={`trollbox-charcount${remainingChars < 20 ? ' trollbox-charcount-warn' : ''}${remainingChars < 0 ? ' trollbox-charcount-error' : ''}`}>
-          {remainingChars} chars left
-        </span>
-        {error && <span className="trollbox-error">{error}</span>}
+        <span className="trollbox-hint">↵ to send · Shift+↵ for newline</span>
+        {error && <span className="trollbox-error" role="alert">{error}</span>}
       </div>
     </section>
   );

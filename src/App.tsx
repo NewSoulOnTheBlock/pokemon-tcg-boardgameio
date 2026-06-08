@@ -1990,9 +1990,11 @@ function MatchmakingPage({
               )}
             </ul>
           </section>
-
-          <TrollBox profile={profile} />
         </div>
+      </div>
+
+      <div className="matchmaking-trollbox-row">
+        <TrollBox profile={profile} />
       </div>
       {rewardRevealCards && (
         <PackOpeningCeremony
