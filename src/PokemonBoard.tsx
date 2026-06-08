@@ -341,6 +341,25 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
   const [wagerCopied, setWagerCopied] = useState(false);
   const [wagerDismissed, setWagerDismissed] = useState(false);
   const [prizeDismissed, setPrizeDismissed] = useState(false);
+  // Floating action-result toast. We track the last log length we've
+  // shown so when G.log gains new entries (any move), the newest line
+  // pops up centered for 5s. Critical for coin-flip / search effects
+  // whose result is only visible in the side log otherwise.
+  const [actionToast, setActionToast] = useState<string | null>(null);
+  const lastLogLenRef = useRef<number>(G.log.length);
+  useEffect(() => {
+    if (G.log.length > lastLogLenRef.current) {
+      const newestLine = G.log[0];
+      lastLogLenRef.current = G.log.length;
+      if (newestLine) {
+        setActionToast(newestLine);
+        const timer = window.setTimeout(() => setActionToast(null), 5000);
+        return () => window.clearTimeout(timer);
+      }
+    }
+    lastLogLenRef.current = G.log.length;
+    return undefined;
+  }, [G.log]);
   const playmatImage = PLAYMAT_IMAGE_BY_ID[G.playmatId];
   const visibleDeckCount = player.deckCount ?? player.deck.length;
   const isLoadingSelectedDeck = Boolean(selectedDeck && isSetup && !player.ready && player.hand.length === 0 && visibleDeckCount === 0);
@@ -703,6 +722,12 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
 
   return (
     <main className={battleArenaClass}>
+      {actionToast && (
+        <div className="action-result-toast" role="status" aria-live="polite">
+          <span className="action-result-toast-icon" aria-hidden="true">⚡</span>
+          <span className="action-result-toast-text">{actionToast}</span>
+        </div>
+      )}
       <MatchChatPanel
         chatMessages={chatMessages}
         sendChatMessage={sendChatMessage}
