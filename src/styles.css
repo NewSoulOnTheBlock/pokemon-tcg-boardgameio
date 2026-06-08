@@ -6646,3 +6646,64 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
   filter: blur(10px);
   inset: -15% -10%;
 }
+
+/* ===== Mobile wallet-browser warning (sign-in page) ================== */
+.mobile-wallet-warning {
+  align-items: flex-start;
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.16), rgba(217, 119, 6, 0.08));
+  border: 1.5px solid rgba(251, 191, 36, 0.55);
+  border-radius: 12px;
+  box-shadow: 0 0 22px rgba(251, 191, 36, 0.22);
+  color: #fef3c7;
+  display: flex;
+  gap: 14px;
+  margin: 4px 0 12px;
+  padding: 16px 18px;
+  text-align: left;
+}
+.mobile-wallet-warning-icon {
+  filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.55));
+  font-size: 2rem;
+  line-height: 1;
+}
+.mobile-wallet-warning-body {
+  flex-grow: 1;
+  min-width: 0;
+}
+.mobile-wallet-warning-body strong {
+  color: #fff7cc;
+  display: block;
+  font-size: 0.98rem;
+  line-height: 1.35;
+  margin-bottom: 6px;
+}
+.mobile-wallet-warning-body p {
+  color: #fde68a;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  margin: 6px 0 0;
+}
+.mobile-wallet-warning-steps {
+  color: #fef3c7;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+.mobile-wallet-warning-steps li { margin: 2px 0; }
+.mobile-wallet-warning-steps code {
+  background: rgba(2, 6, 12, 0.55);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 4px;
+  color: #fff7cc;
+  font-family: 'JetBrains Mono', 'Menlo', monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+  padding: 1px 6px;
+  word-break: break-all;
+}
+.mobile-wallet-warning-footer {
+  color: rgba(253, 230, 138, 0.78) !important;
+  font-size: 0.78rem !important;
+  font-style: italic;
+}

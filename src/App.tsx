@@ -663,6 +663,17 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   const nameInvalid = name.length > 0 && isReservedName(name);
   const canEnter = Boolean(effectiveWallet) && name.trim().length >= 2 && !isReservedName(name);
 
+  // Mobile users who open the site in Safari / Chrome / Firefox can't
+  // connect any browser-extension wallet — Phantom + Solflare + Backpack
+  // etc. on mobile only inject window.solana inside their OWN in-app
+  // browser. Without this warning new mobile users hit a dead "Connect
+  // Solana Wallet" button and bounce. We surface the warning only when
+  // both signals match: mobile UA + zero detected wallets + not in
+  // Telegram (which has its own pseudo-wallet path).
+  const isMobile = typeof navigator !== 'undefined'
+    && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const showMobileWalletWarning = !inTelegram && isMobile && solanaWallets.every((w) => !w.installed) && !wallet;
+
   return (
     <main className="signin-page">
       <section className="signin-card">
@@ -679,6 +690,28 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
             <h1>Pokemon TCG Arena</h1>
             <p>Connect a Solana or EVM wallet to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
           </>
+        )}
+        {showMobileWalletWarning && (
+          <div className="mobile-wallet-warning" role="alert">
+            <span className="mobile-wallet-warning-icon" aria-hidden="true">📱</span>
+            <div className="mobile-wallet-warning-body">
+              <strong>On mobile? You MUST open this site inside your wallet's in-app browser.</strong>
+              <p>
+                Mobile wallet extensions (Phantom, Solflare, Backpack, Glow, etc.) only inject
+                their connector when you load the site from <em>inside the wallet app</em> — not
+                from Safari, Chrome, or Firefox.
+              </p>
+              <ol className="mobile-wallet-warning-steps">
+                <li>Open your wallet app (Phantom / Solflare / Backpack / etc.)</li>
+                <li>Tap the in-app browser icon (the globe / compass in the bottom bar)</li>
+                <li>Paste this URL: <code>{typeof window !== 'undefined' ? window.location.href : ''}</code></li>
+              </ol>
+              <p className="mobile-wallet-warning-footer">
+                Once you're inside the wallet's browser the Connect button below will work
+                and you'll be in the arena.
+              </p>
+            </div>
+          </div>
         )}
         <label>
           Trainer name
