@@ -44,16 +44,21 @@ export function BurnPackPanel({
   const [info, setInfo] = useState<string | null>(null);
   const [revealCards, setRevealCards] = useState<string[] | null>(null);
 
+  const [balanceError, setBalanceError] = useState<string | null>(null);
   const refreshBalance = useCallback(async () => {
     if (!wallet?.address) {
       setBalance(null);
+      setBalanceError(null);
       return;
     }
+    setBalanceError(null);
     try {
       const next = await fetchPoketcgBalance(wallet.address);
       setBalance(next);
-    } catch {
+    } catch (err) {
       setBalance(null);
+      const msg = err instanceof Error ? err.message : String(err);
+      setBalanceError(`RPC failed: ${msg}. Set VITE_SOLANA_RPC_URL to a Helius/Quicknode endpoint if this persists.`);
     }
   }, [wallet?.address]);
 
@@ -115,8 +120,9 @@ export function BurnPackPanel({
         </div>
         <div className="burn-pack-balance">
           <span className="burn-pack-balance-label">Your balance</span>
-          <strong>{balance === null ? '—' : `${formatTokens(balance)} $POKETCG`}</strong>
+          <strong>{balance === null ? (balanceError ? '⚠ error' : '—') : `${formatTokens(balance)} $POKETCG`}</strong>
           <button type="button" className="burn-pack-refresh" onClick={() => void refreshBalance()}>↻</button>
+          {balanceError && <span className="burn-pack-balance-error">{balanceError}</span>}
         </div>
       </div>
 

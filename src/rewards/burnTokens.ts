@@ -51,13 +51,34 @@ export async function burnPoketcgForPacks(args: {
   ]);
   const mint = new PublicKey(POKETCG_TOKEN_MINT);
   const buyer = new PublicKey(args.buyerWallet);
-  const ata = Token.getAssociatedTokenAddressSync(mint, buyer, false);
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
 
-  const ataInfo = await connection.getAccountInfo(ata);
-  if (!ataInfo) {
-    throw new Error('No $POKETCG token account found on this wallet. Buy some $POKETCG first.');
+  // Detect the correct token program for the mint (classic SPL Token
+  // vs Token-2022). The mint account's owner IS the program ID. This
+  // matters because createBurnCheckedInstruction defaults to classic
+  // SPL Token and would silently produce an invalid ix for a 2022 mint.
+  const mintInfo = await connection.getAccountInfo(mint);
+  if (!mintInfo) {
+    throw new Error(`$POKETCG mint not found on chain: ${POKETCG_TOKEN_MINT}`);
   }
+  const programId = mintInfo.owner;
+
+  // Resolve the wallet's token account that ACTUALLY holds the
+  // balance (rather than blindly deriving the canonical ATA). This
+  // handles legacy non-ATA accounts and avoids the "ATA doesn't exist
+  // even though there's a balance under a different account" bug.
+  const accounts = await connection.getParsedTokenAccountsByOwner(buyer, { mint, programId });
+  const sourceAccount = accounts.value.find((entry) => {
+    const ui = Number((entry.account.data.parsed?.info as { tokenAmount?: { uiAmount?: number } } | undefined)
+      ?.tokenAmount?.uiAmount ?? 0);
+    return ui > 0;
+  }) ?? accounts.value[0];
+  if (!sourceAccount) {
+    throw new Error(
+      'No $POKETCG token account on this wallet. Buy some $POKETCG on pump.fun first, then refresh.',
+    );
+  }
+  const ata = sourceAccount.pubkey;
 
   const amount = BigInt(tier.costTokens) * BigInt(10 ** POKETCG_DECIMALS);
   // burnChecked is preferred over burn — the cluster validates the
@@ -68,6 +89,8 @@ export async function burnPoketcgForPacks(args: {
     buyer,
     amount,
     POKETCG_DECIMALS,
+    [],
+    programId, // route to whichever token program owns the mint
   );
 
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
@@ -86,22 +109,44 @@ export async function burnPoketcgForPacks(args: {
   });
 }
 
-/** Read the user's current $POKETCG balance from chain. Returns it as
- *  a UI-friendly number (already divided by decimals). Returns 0 if
- *  the wallet has no token account yet. */
+/** Read the user's current $POKETCG balance from chain. Returns the
+ *  UI-friendly value (already divided by decimals). Robust to:
+ *    - non-canonical / legacy SPL token accounts
+ *    - Token-2022 mints (some pump.fun launches use this program)
+ *    - multiple token accounts for the same mint
+ *  by walking every parsed token account on the wallet for our mint
+ *  on BOTH the classic SPL Token program AND Token-2022. Throws on
+ *  RPC failure so the caller can surface the error rather than
+ *  silently showing 0 balance. */
 export async function fetchPoketcgBalance(walletAddress: string): Promise<number> {
-  const [{ PublicKey, Connection }, Token] = await Promise.all([
-    import('@solana/web3.js'),
-    import('@solana/spl-token'),
-  ]);
+  const { PublicKey, Connection } = await import('@solana/web3.js');
   const mint = new PublicKey(POKETCG_TOKEN_MINT);
   const owner = new PublicKey(walletAddress);
-  const ata = Token.getAssociatedTokenAddressSync(mint, owner, false);
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-  try {
-    const balance = await connection.getTokenAccountBalance(ata, 'confirmed');
-    return Number(balance.value.uiAmountString ?? balance.value.uiAmount ?? 0);
-  } catch {
-    return 0;
+
+  // Walk both token programs. pump.fun originally uses TOKEN_PROGRAM_ID
+  // (classic SPL Token) but Token-2022 launches exist too — the wallet
+  // might hold the balance under either program.
+  const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+
+  let totalUi = 0;
+  for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+    try {
+      const accounts = await connection.getParsedTokenAccountsByOwner(
+        owner,
+        { mint, programId },
+      );
+      for (const entry of accounts.value) {
+        const info = entry.account.data.parsed?.info as { tokenAmount?: { uiAmountString?: string; uiAmount?: number } } | undefined;
+        const ui = Number(info?.tokenAmount?.uiAmountString ?? info?.tokenAmount?.uiAmount ?? 0);
+        if (Number.isFinite(ui)) totalUi += ui;
+      }
+    } catch (err) {
+      // Token-2022 may not be queryable on every RPC node; only rethrow
+      // if the classic-program lookup also fails.
+      if (programId === TOKEN_PROGRAM_ID) throw err;
+    }
   }
+  return totalUi;
 }

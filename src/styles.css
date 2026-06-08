@@ -5957,3 +5957,12 @@ button:disabled {
   margin-left: 4px;
 }
 button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
+
+.burn-pack-balance-error {
+  color: #f87171;
+  font-size: 0.7rem;
+  margin-top: 4px;
+  max-width: 280px;
+  text-align: right;
+  white-space: normal;
+}

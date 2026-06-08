@@ -110,7 +110,12 @@ export async function verifyPoketcgBurn(args: {
   let totalRaw = 0;
   for (const ix of ixs) {
     const program = ix.program ?? '';
-    if (program !== 'spl-token') continue;
+    // pump.fun mints can be on either the classic SPL Token program
+    // OR Token-2022. The parsed-tx response labels them differently —
+    // 'spl-token' for the classic program, 'spl-token-2022' for the
+    // new program. Accept either; the on-chain effect is identical
+    // (burn N tokens from the source account).
+    if (program !== 'spl-token' && program !== 'spl-token-2022') continue;
     const parsed = ix.parsed;
     if (!parsed?.info) continue;
     if (parsed.type !== 'burn' && parsed.type !== 'burnChecked') continue;
