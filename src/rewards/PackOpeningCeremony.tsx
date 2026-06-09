@@ -8,7 +8,8 @@
 //   - Summary grid at the end with hover-preview that pops out a
 //     large card image when the user hovers any thumbnail.
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CARD_LIBRARY } from '../game/cards';
 
 type Tier = 'rare' | 'uncommon' | 'common';
@@ -62,11 +63,26 @@ export function PackOpeningCeremony({
 
   const skipToSummary = useCallback(() => setShowSummary(true), []);
 
+  // Lock background scroll while the ceremony is open so the page
+  // can't peek through above/below the modal.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   const currentEntry = cards[idx];
   const tier: Tier = currentEntry?.card ? rarityTier(currentEntry.card.rarity) : 'common';
   const rareReveal = flipped && tier === 'rare';
 
-  return (
+  // CRITICAL: portal to document.body. Several parent panels use
+  // `backdrop-filter: blur(...)` (e.g. `.home-sidebar`, profile
+  // panels) which per CSS spec creates a containing block for any
+  // `position: fixed` descendant — anchoring `inset: 0` to the
+  // panel's 460px column instead of the viewport. The portal lifts
+  // the modal out of every such ancestor so it covers the full screen.
+  const content = (
     <div className="pack-opening-stage" role="dialog" aria-modal="true" aria-label={title}>
       <div className="pack-opening-starfield" aria-hidden="true" />
       <header className="pack-opening-header">
@@ -139,6 +155,9 @@ export function PackOpeningCeremony({
       )}
     </div>
   );
+
+  if (typeof document === 'undefined') return content;
+  return createPortal(content, document.body);
 }
 
 function PackSummary({
