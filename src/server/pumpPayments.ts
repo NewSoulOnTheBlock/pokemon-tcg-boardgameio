@@ -14,7 +14,13 @@
 // on-chain. Memo is random to avoid collisions.
 
 import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
-import { PumpAgent } from '@pump-fun/agent-payments-sdk';
+// Type-only import: erased at compile time, so it never loads the module at
+// runtime. A *value* import here crashes plain `node` on boot — the SDK is ESM
+// and does `import { BN } from '@coral-xyz/anchor'`, but anchor is CommonJS and
+// exposes no such named export. That throws during module evaluation, before
+// the try/catch in server.ts can run. The runtime value is loaded lazily in
+// `getAgent()` so the server boots fine when pump.fun payments are unconfigured.
+import type { PumpAgent } from '@pump-fun/agent-payments-sdk';
 
 export interface PumpPaymentConfig {
   agentMintAddress: string;
@@ -74,7 +80,16 @@ export function createPumpPaymentService(config: PumpPaymentConfig): PumpPayment
   const agentMint = new PublicKey(config.agentMintAddress);
   const currencyMint = new PublicKey(config.currencyMintAddress);
   const connection = new Connection(config.rpcUrl, 'confirmed');
-  const agent = new PumpAgent(agentMint, 'mainnet', connection);
+  // Loaded on first invoice rather than at module load. Memoised so repeated
+  // pack purchases reuse one PumpAgent.
+  let agentPromise: Promise<PumpAgent> | undefined;
+  function getAgent(): Promise<PumpAgent> {
+    if (!agentPromise) {
+      agentPromise = import('@pump-fun/agent-payments-sdk')
+        .then((mod) => new mod.PumpAgent(agentMint, 'mainnet', connection));
+    }
+    return agentPromise;
+  }
   const amount = config.amountSmallestUnit;
   const lifetime = config.invoiceLifetimeSeconds ?? DEFAULT_INVOICE_LIFETIME;
   const mintFeeLamports = Math.max(0, Math.floor(config.mintFeeLamports ?? 0));
@@ -92,7 +107,7 @@ export function createPumpPaymentService(config: PumpPaymentConfig): PumpPayment
     // and stringify everywhere to dodge BigInt JSON serialisation issues.
     const memo = Math.floor(Math.random() * 900_000_000_000) + 100_000;
 
-    const instructions = await agent.buildAcceptPaymentInstructions({
+    const instructions = await (await getAgent()).buildAcceptPaymentInstructions({
       user,
       currencyMint,
       amount: String(amount),
@@ -151,7 +166,7 @@ export function createPumpPaymentService(config: PumpPaymentConfig): PumpPayment
 
     for (let attempt = 0; attempt < VERIFY_RETRIES; attempt += 1) {
       try {
-        const ok = await agent.validateInvoicePayment({
+        const ok = await (await getAgent()).validateInvoicePayment({
           user,
           currencyMint,
           amount,
