@@ -132,7 +132,7 @@ export function ChampionsRowPage({
           <Chip label="Champion" value={championDone ? 'Defeated' : 'Pending'} ready={championDone} />
           <Chip
             label="$POKETCG"
-            value={profile.wallet?.chain === 'solana' ? (status?.youAreEligible ? 'Holding' : 'Required') : 'Wallet?'}
+            value={profile.wallet?.chain === 'evm' ? (status?.youAreEligible ? 'Holding' : 'Required') : 'Wallet?'}
             ready={status?.youAreEligible ?? false}
           />
         </div>
@@ -140,7 +140,7 @@ export function ChampionsRowPage({
           {campaignReady
             ? (status?.youAreEligible
               ? '✅ You are in today\'s pool.'
-              : '⚠ Campaign complete — connect a Solana wallet with > 0 $POKETCG to enter.')
+              : '⚠ Campaign complete — connect an EVM wallet holding > 0 $POKETCG to enter.')
             : '⚔ Defeat the League first to qualify for the daily draw.'}
         </p>
       </section>

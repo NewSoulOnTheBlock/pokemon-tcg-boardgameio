@@ -205,14 +205,12 @@ export const RANKED_MATCH_TYPES: MatchType[] = ['Ranked', 'Wager'];
 
 // Currencies the in-game wager popup knows how to display. The app never
 // escrows funds — it just shows the winner's wallet + amount/currency so
-// the loser can settle off-app. Adding a new currency only needs an entry
-// here, a mint address (if SPL), and a formatter case in formatWager.
-export type WagerCurrency = 'SOL' | 'POKETCG';
-
-// Pump.fun tokenized agent mint for $POKETCG. Used both as the booster
-// payment currency (separately, via PAYMENT_AMOUNT/CURRENCY_MINT env vars)
-// and as the SPL token the loser sends when wagering in $POKETCG.
-export const POKETCG_TOKEN_MINT = 'N9Curnf2ZQWBZWrjBkzP6xBe6n5WRhBhouRfiSqpump';
+// the loser can settle off-app on Robinhood Chain. Adding a new currency
+// only needs an entry here, a token address (if ERC-20), and a formatter
+// case in formatWager.
+//
+// ETH is Robinhood Chain's native currency.
+export type WagerCurrency = 'ETH' | 'POKETCG';
 
 export interface PokemonTCGSetupData {
   deckLabels?: Partial<Record<PlayerID, string>>;
@@ -233,5 +231,5 @@ export function formatWager(amount: number, currency: WagerCurrency): string {
     // no fixed decimals (users type whole-token amounts).
     return `${amount.toLocaleString('en-US')} $POKETCG`;
   }
-  return `${amount} SOL`;
+  return `${amount} ETH`;
 }

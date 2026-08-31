@@ -1,7 +1,7 @@
 // Server-side prize-card rolling. After each multiplayer win the server
 // rolls one random card from the canonical CARD_LIBRARY (weighted toward
-// Common but with a small chance of a Rare) and mints it as a Metaplex
-// Core NFT to the winner's wallet.
+// Common but with a small chance of a Rare) and mints it as an ERC-721
+// on Robinhood Chain to the winner's wallet.
 //
 // Idempotency is enforced at the database layer via the prize_claimed
 // boolean column on app_match_records — only the first call for a given

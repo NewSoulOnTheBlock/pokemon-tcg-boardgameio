@@ -37,7 +37,7 @@ function makeEmptyState(): PokemonTCGState {
     matchName: 'test',
     matchType: 'Casual',
     wagerAmount: 0,
-    wagerCurrency: 'SOL',
+    wagerCurrency: 'ETH',
     playmatId: 'green',
     playOrder: ['0', '1'],
     firstPlayer: '0',

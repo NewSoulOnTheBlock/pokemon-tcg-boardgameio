@@ -21,10 +21,10 @@ runtime and switches to the Telegram-friendly flow.
 
 ## What requires a browser
 
-These features need a real Solana wallet (Phantom / Solflare / Backpack)
-which Telegram's webview can't host:
+These features need a real EVM wallet on Robinhood Chain (MetaMask /
+Rabby / Coinbase Wallet) which Telegram's webview can't host:
 
-- **Booster packs** — pump.fun $6 USDC payments + NFT minting.
+- **Booster packs** — burning $POKETCG + NFT minting.
 - **Wager matches** — wallet address is needed for off-app settlement.
 - **NFT match prizes** — the prize card is still rolled, but the NFT
   mint is skipped (the card lands in the collection without an NFT).

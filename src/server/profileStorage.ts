@@ -34,9 +34,9 @@ export interface ProfileStorage {
   reservePrizeClaim?(userId: string, matchID: string, playerID: string): Promise<{
     eligible: boolean;
     reason?: string;
-    alreadyClaimed?: { cardId: string; mintAddress?: string; signature?: string };
+    alreadyClaimed?: { cardId: string; tokenId?: string; txHash?: string };
   }>;
-  recordPrizeClaim?(userId: string, matchID: string, playerID: string, prize: { cardId: string; mintAddress?: string; signature?: string }): Promise<void>;
+  recordPrizeClaim?(userId: string, matchID: string, playerID: string, prize: { cardId: string; tokenId?: string; txHash?: string }): Promise<void>;
   /** Atomically claim the user's daily-free-pack reward. */
   claimDailyPack?(userId: string, cardIds: string[], cooldownMs: number): Promise<{ profile: StoredProfile; purchase: PackPurchase }>;
   /** Idempotently redeem a token-burn signature for a pack. The
@@ -153,9 +153,9 @@ function mergeProfiles(existing: StoredProfile, incoming: ProfileState): StoredP
   for (const deck of normalized.deckLibrary) {
     deckLibrary.set(deck.id, deck);
   }
-  const imports = new Map((existing.importedNfts ?? []).map((entry) => [entry.mintAddress, entry]));
+  const imports = new Map((existing.importedNfts ?? []).map((entry) => [entry.tokenId, entry]));
   for (const entry of (normalized.importedNfts ?? [])) {
-    imports.set(entry.mintAddress, entry);
+    imports.set(entry.tokenId, entry);
   }
 
   return {
@@ -647,7 +647,7 @@ export class PostgresProfileStorage implements ProfileStorage {
     return rows[0] ? storedProfileFromRow(rows[0]) : undefined;
   }
 
-  // Used by the per-match prize endpoint to map a Solana wallet address
+  // Used by the per-match prize endpoint to map a wallet address
   // back to the StoredProfile (and its userId) so we can look up + update
   // the match record. wallet JSONB looks like `{ chain, address, label }`,
   // so we filter on the address subkey.
@@ -672,7 +672,7 @@ export class PostgresProfileStorage implements ProfileStorage {
   async reservePrizeClaim(userId: string, matchID: string, playerID: string): Promise<{
     eligible: boolean;
     reason?: string;
-    alreadyClaimed?: { cardId: string; mintAddress?: string; signature?: string };
+    alreadyClaimed?: { cardId: string; tokenId?: string; txHash?: string };
   }> {
     const existing = await this.pool.query(
       `SELECT result, prize_claimed, prize_card_id, prize_mint_address, prize_mint_signature
@@ -689,8 +689,8 @@ export class PostgresProfileStorage implements ProfileStorage {
         reason: 'already_claimed',
         alreadyClaimed: row.prize_card_id ? {
           cardId: row.prize_card_id,
-          mintAddress: row.prize_mint_address ?? undefined,
-          signature: row.prize_mint_signature ?? undefined,
+          tokenId: row.prize_mint_address ?? undefined,
+          txHash: row.prize_mint_signature ?? undefined,
         } : undefined,
       };
     }
@@ -706,8 +706,12 @@ export class PostgresProfileStorage implements ProfileStorage {
     userId: string,
     matchID: string,
     playerID: string,
-    prize: { cardId: string; mintAddress?: string; signature?: string },
+    prize: { cardId: string; tokenId?: string; txHash?: string },
   ): Promise<void> {
+    // Column names are legacy (they date from the Metaplex mint that
+    // used to back this); they now hold the ERC-721 token id and the
+    // Robinhood Chain transaction hash. Renaming them would need a
+    // migration for no behavioural gain.
     await this.pool.query(
       `UPDATE ${MATCHES_TABLE}
        SET prize_claimed = TRUE,
@@ -715,7 +719,7 @@ export class PostgresProfileStorage implements ProfileStorage {
            prize_mint_address = $5,
            prize_mint_signature = $6
        WHERE user_id = $1 AND match_id = $2 AND player_id = $3`,
-      [userId, matchID, playerID, prize.cardId, prize.mintAddress ?? null, prize.signature ?? null],
+      [userId, matchID, playerID, prize.cardId, prize.tokenId ?? null, prize.txHash ?? null],
     );
   }
 

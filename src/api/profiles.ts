@@ -177,7 +177,7 @@ export async function fetchLeaderboardHistory(limit = 14): Promise<DailyLeaderbo
 export interface ClaimedPrize {
   alreadyClaimed: boolean;
   card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } } | null;
-  mint: { mintAddress: string; signature: string } | null;
+  mint: { tokenId: string; txHash: string } | null;
 }
 
 export async function claimMatchPrize(input: { matchID: string; walletAddress: string; playerID: string }): Promise<ClaimedPrize> {
@@ -188,7 +188,8 @@ export async function claimMatchPrize(input: { matchID: string; walletAddress: s
 }
 
 export interface ImportCandidate {
-  mintAddress: string;
+  /** Decimal ERC-721 token id. */
+  tokenId: string;
   nftName: string;
   nftImage?: string;
   cardId?: string;

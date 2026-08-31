@@ -11,18 +11,17 @@ import { PokemonTCG } from './game/PokemonTCG';
 import type { Card } from './game/types';
 import { MemoryCardStorage, PostgresCardStorage, type CardStorage } from './server/cardStorage';
 import { createNftMinter, type NftMinter } from './server/nftMinter';
-import { buildSetNameIndex, scanWalletForPokemonNfts } from './server/nftScanner';
+import { scanWalletForPokemonNfts } from './server/nftScanner';
 import { PostgresStorage, postgresSslFromEnv } from './server/postgresStorage';
 import { MemoryProfileStorage, PostgresProfileStorage, DailyPackCooldownError, type ProfileStorage } from './server/profileStorage';
 import { rollPrizeCard } from './server/prizes';
 import { rollDailyPack } from './server/packRoller';
-import { POKETCG_DECIMALS, PoketcgBurnError, findPoketcgTier, verifyPoketcgBurn } from './server/tokenBurn';
-import { createPumpPaymentService, type PumpPaymentService } from './server/pumpPayments';
+import { PoketcgBurnError, findPoketcgTier, rawCostForTier, verifyPoketcgBurn } from './server/tokenBurn';
+import { isAddress, isTxHash } from './server/evmRpc';
+import { CARD_NFT_ADDRESS, RHC_CHAIN_ID, RHC_RPC_URL, hasCardNft, hasPoketcgToken } from './chain/config';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
-import { createGachaService, GachaError, type GachaService } from './server/gachaClient';
 import { championsRowDateKey, describeChampionsRowEligibility, rollChampionsRow } from './server/championsRow';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
-import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
 const require = createRequire(import.meta.url);
 const { FlatFile, Origins, Server } = require('boardgame.io/server') as typeof import('boardgame.io/server');
@@ -52,87 +51,47 @@ const cardStorage: CardStorage = databaseUrl
 const lobbyChat: LobbyChatStore = databaseUrl
   ? new PostgresLobbyChatStore(databaseUrl, postgresSslFromEnv())
   : new MemoryLobbyChatStore();
-const gacha: GachaService = createGachaService();
 const storageLabel = databaseUrl ? 'postgres' : 'flat-file';
 const profileLabel = databaseUrl ? 'postgres' : 'memory';
 const cardStorageLabel = databaseUrl ? 'postgres' : 'memory';
 
-// ----- Solana / NFT minter -----------------------------------------------
+// ----- Robinhood Chain / NFT minter --------------------------------------
 //
-// Server-side mints happen with a treasury keypair so users don't sign N
-// transactions per pack. The treasury is normally the same wallet that
-// receives the 0.1 SOL pack payment. If SOLANA_TREASURY_SECRET_KEY isn't
-// set, the server records pack purchases but skips minting entirely (the
-// /api/boosters/mint endpoint returns 503).
-const solanaRpcUrl = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
-const treasurySecret = process.env.SOLANA_TREASURY_SECRET_KEY?.trim();
+// Server-side mints happen with a treasury key so players don't sign N
+// transactions per pack — they sign one burn, we mint the nine cards.
+// The treasury pays gas for every mint, so keep it funded with ETH on
+// chain 4663. Without RHC_TREASURY_PRIVATE_KEY + CARD_NFT_ADDRESS the
+// server still records pack purchases and grants the cards in-game, it
+// just skips minting; nothing else degrades.
+const treasuryKey = process.env.RHC_TREASURY_PRIVATE_KEY?.trim();
 const publicOrigin = process.env.PUBLIC_ORIGIN ?? allowedOrigins[0] ?? '';
 
 let nftMinter: NftMinter | undefined;
 try {
-  if (treasurySecret) {
-    nftMinter = createNftMinter({ rpcUrl: solanaRpcUrl, treasurySecretKeyBase58: treasurySecret });
-    console.log(`[pokemon-tcg] NFT minter ready (treasury=${nftMinter.treasury})`);
+  if (treasuryKey && hasCardNft()) {
+    nftMinter = createNftMinter({
+      rpcUrl: RHC_RPC_URL,
+      privateKey: treasuryKey,
+      contractAddress: CARD_NFT_ADDRESS,
+    });
+    console.log(`[pokemon-tcg] NFT minter ready (treasury=${nftMinter.treasury}, contract=${CARD_NFT_ADDRESS})`);
   } else {
-    console.log('[pokemon-tcg] NFT minter disabled (SOLANA_TREASURY_SECRET_KEY not set)');
+    const missing = [
+      treasuryKey ? null : 'RHC_TREASURY_PRIVATE_KEY',
+      hasCardNft() ? null : 'CARD_NFT_ADDRESS',
+    ].filter(Boolean).join(' + ');
+    console.log(`[pokemon-tcg] NFT minter disabled (${missing} not set)`);
   }
 } catch (err) {
   console.error(`[pokemon-tcg] NFT minter init failed: ${err instanceof Error ? err.message : String(err)}`);
   nftMinter = undefined;
 }
 
-// ----- Pump.fun payments -------------------------------------------------
-//
-// Booster pack purchases route through pump.fun's tokenized agent payment
-// system. The server builds an unsigned Transaction, the client signs and
-// submits it, and the server then verifies the invoice via pump.fun's
-// HTTP API (with RPC fallback) before minting NFTs. Disabled gracefully
-// if AGENT_TOKEN_MINT_ADDRESS / CURRENCY_MINT / PAYMENT_AMOUNT are unset.
-//
-// MINT_FEE_LAMPORTS env var: when set + nftMinter is configured, the
-// same signed payment tx ALSO transfers this many lamports of SOL to
-// the treasury so the user pays the on-chain mint rent up front. 8
-// Metaplex Core mints at ~0.0015 SOL each plus tx fees ≈ 0.012 SOL,
-// so we default to 15_000_000 lamports (= 0.015 SOL) for a small
-// safety margin. Set to 0 to disable.
-const agentMintEnv = process.env.AGENT_TOKEN_MINT_ADDRESS?.trim();
-const currencyMintEnv = process.env.CURRENCY_MINT?.trim();
-const paymentAmountEnv = process.env.PAYMENT_AMOUNT?.trim();
-const mintFeeLamportsEnv = process.env.MINT_FEE_LAMPORTS?.trim();
-const DEFAULT_MINT_FEE_LAMPORTS = 15_000_000;
-let pumpPayments: PumpPaymentService | undefined;
-try {
-  if (agentMintEnv && currencyMintEnv && paymentAmountEnv) {
-    const amount = Number(paymentAmountEnv);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new Error(`PAYMENT_AMOUNT must be a positive number (got "${paymentAmountEnv}")`);
-    }
-    const mintFeeLamports = mintFeeLamportsEnv === undefined || mintFeeLamportsEnv === ''
-      ? DEFAULT_MINT_FEE_LAMPORTS
-      : Number(mintFeeLamportsEnv);
-    if (!Number.isFinite(mintFeeLamports) || mintFeeLamports < 0) {
-      throw new Error(`MINT_FEE_LAMPORTS must be a non-negative number (got "${mintFeeLamportsEnv}")`);
-    }
-    pumpPayments = createPumpPaymentService({
-      agentMintAddress: agentMintEnv,
-      currencyMintAddress: currencyMintEnv,
-      amountSmallestUnit: amount,
-      rpcUrl: solanaRpcUrl,
-      mintFeeLamports,
-      mintFeeRecipient: nftMinter?.treasury,
-    });
-    if (nftMinter && mintFeeLamports > 0) {
-      console.log(`[pokemon-tcg] pump.fun payments ready (mint=${pumpPayments.agentMint.toBase58()}, amount=${pumpPayments.amount}, mintFee=${mintFeeLamports} lamports -> ${nftMinter.treasury})`);
-    } else {
-      console.log(`[pokemon-tcg] pump.fun payments ready (mint=${pumpPayments.agentMint.toBase58()}, amount=${pumpPayments.amount}; mint-fee reimbursement disabled)`);
-    }
-  } else {
-    console.log('[pokemon-tcg] pump.fun payments disabled (AGENT_TOKEN_MINT_ADDRESS / CURRENCY_MINT / PAYMENT_AMOUNT missing)');
-  }
-} catch (err) {
-  console.error(`[pokemon-tcg] pump.fun payments init failed: ${err instanceof Error ? err.message : String(err)}`);
-  pumpPayments = undefined;
-}
+console.log(
+  hasPoketcgToken()
+    ? `[pokemon-tcg] $POKETCG burn shop ready (token=${process.env.POKETCG_TOKEN_ADDRESS})`
+    : '[pokemon-tcg] $POKETCG burn shop disabled (POKETCG_TOKEN_ADDRESS not set)',
+);
 
 // ----- Card library bootstrap -------------------------------------------
 //
@@ -164,10 +123,6 @@ await lobbyChat.connect();
 // 20k+ entry Proxy on every request. ~8 MB string in memory.
 const cardsJsonCache: string = JSON.stringify(Object.values(CARD_LIBRARY));
 
-// Index sets by name / PTCGO code so the NFT import scanner can resolve
-// "Base Set" / "Scarlet & Violet" / "SVI" etc. -> setId. Built once.
-const setNameIndex = buildSetNameIndex(setsManifest as Array<{ id: string; name: string; ptcgoCode?: string }>);
-
 const server = Server({
   games: [PokemonTCG],
   origins,
@@ -194,11 +149,11 @@ server.app.use(async (ctx: Context, next: Next) => {
 const jsonBody = koaBody({ jsonLimit: '256kb' });
 
 server.router.get('/health', (ctx) => {
-  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize(), nftMinter: Boolean(nftMinter) };
+  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize(), chainId: RHC_CHAIN_ID, nftMinter: Boolean(nftMinter), poketcg: hasPoketcgToken(), cardNft: hasCardNft() };
 });
 
 server.router.get('/api/health', (ctx) => {
-  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize(), nftMinter: Boolean(nftMinter) };
+  ctx.body = { ok: true, storage: storageLabel, profileStorage: profileLabel, cardStorage: cardStorageLabel, cards: cardLibrarySize(), chainId: RHC_CHAIN_ID, nftMinter: Boolean(nftMinter), poketcg: hasPoketcgToken(), cardNft: hasCardNft() };
 });
 
 server.router.get('/api/cards/library', (ctx) => {
@@ -210,9 +165,9 @@ server.router.get('/api/cards/library', (ctx) => {
 });
 
 /**
- * Metaplex-standard NFT metadata for a single card. Used as the `uri` for
- * each Core asset minted in /api/boosters/mint. Phantom / Solflare fetch
- * this URL when displaying the NFT.
+ * ERC-721 metadata for a single card. PokemonCardNFT derives every
+ * token's `tokenURI` from its card id, so this is the URL wallets and
+ * explorers fetch when displaying a card NFT.
  *
  * Example: /api/cards/sv1-13/metadata
  */
@@ -246,120 +201,11 @@ server.router.get('/api/cards/:id/metadata', (ctx) => {
   ctx.set('Cache-Control', 'public, max-age=86400');
   ctx.body = {
     name: card.name,
-    symbol: 'PTCG',
     description,
     image,
     external_url: publicOrigin || `https://images.pokemontcg.io/${setId}/`,
     attributes,
-    properties: {
-      category: 'image',
-      files: image ? [{ uri: image, type: 'image/png' }] : [],
-    },
   };
-});
-
-// ---------------------------------------------------------------------------
-// Collector Crypt Gacha Machine proxy.
-//
-// Browser hits /api/gacha/*; we forward to gacha.collectorcrypt.com with the
-// server-side x-api-key. The key is never sent to the browser. Errors are
-// surfaced with the upstream status code + JSON body so the UI can show
-// useful messages (e.g. machine empty, machine off, retry shortly).
-// ---------------------------------------------------------------------------
-
-function sendGachaError(ctx: Context, err: unknown): void {
-  if (err instanceof GachaError) {
-    ctx.status = err.status >= 400 && err.status < 600 ? err.status : 502;
-    ctx.body = { error: err.message, ...(err.body && typeof err.body === 'object' ? err.body as object : {}) };
-    return;
-  }
-  ctx.status = 502;
-  ctx.body = { error: err instanceof Error ? err.message : String(err) };
-}
-
-server.router.get('/api/gacha/status', async (ctx) => {
-  if (!gacha.enabled) { ctx.status = 503; ctx.body = { enabled: false, error: 'GACHA_API_KEY not configured' }; return; }
-  try { ctx.body = { enabled: true, ...(await gacha.status()) }; }
-  catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.get('/api/gacha/machines', async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  try { ctx.body = await gacha.machines(); }
-  catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.post('/api/gacha/buy', jsonBody, async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const body = ctx.request.body as { playerAddress?: string; packType?: string; turbo?: boolean; altPlayerAddress?: string } | undefined;
-  if (!body?.playerAddress) { ctx.throw(400, 'playerAddress is required'); return; }
-  try {
-    ctx.body = await gacha.generatePack({
-      playerAddress: body.playerAddress,
-      packType: body.packType,
-      turbo: body.turbo,
-      altPlayerAddress: body.altPlayerAddress,
-    });
-  } catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.post('/api/gacha/submit', jsonBody, async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const body = ctx.request.body as { signedTransaction?: string } | undefined;
-  if (!body?.signedTransaction) { ctx.throw(400, 'signedTransaction is required'); return; }
-  try { ctx.body = await gacha.submitTransaction(body.signedTransaction); }
-  catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.post('/api/gacha/open', jsonBody, async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const body = ctx.request.body as { memo?: string } | undefined;
-  if (!body?.memo) { ctx.throw(400, 'memo is required'); return; }
-  try { ctx.body = await gacha.openPack(body.memo); }
-  catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.post('/api/gacha/buyback', jsonBody, async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const body = ctx.request.body as { playerAddress?: string; nftAddress?: string; altRecipient?: string } | undefined;
-  if (!body?.playerAddress || !body?.nftAddress) { ctx.throw(400, 'playerAddress + nftAddress are required'); return; }
-  try {
-    ctx.body = await gacha.buyback({
-      playerAddress: body.playerAddress,
-      nftAddress: body.nftAddress,
-      altRecipient: body.altRecipient,
-    });
-  } catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.get('/api/gacha/buyback/available', async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const wallet = String(ctx.query.wallet ?? '').trim();
-  const nft = String(ctx.query.nft ?? '').trim();
-  if (!wallet || !nft) { ctx.throw(400, 'wallet + nft query params are required'); return; }
-  try { ctx.body = await gacha.buybackAvailable(wallet, nft); }
-  catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.get('/api/gacha/pack-status', async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const memo = String(ctx.query.memo ?? '').trim();
-  if (!memo) { ctx.throw(400, 'memo query param is required'); return; }
-  try { ctx.body = await gacha.packStatus(memo); }
-  catch (err) { sendGachaError(ctx, err); }
-});
-
-server.router.get('/api/gacha/winners', async (ctx) => {
-  if (!gacha.enabled) { ctx.throw(503, 'GACHA_API_KEY not configured'); return; }
-  const opts: Record<string, unknown> = {};
-  for (const k of ['timestamp', 'slug', 'packType'] as const) {
-    const v = ctx.query[k];
-    if (typeof v === 'string' && v) opts[k] = v;
-  }
-  if (typeof ctx.query.epic === 'string') opts.epic = ctx.query.epic === 'true';
-  if (typeof ctx.query.count === 'string') opts.count = Math.min(200, Math.max(1, Number(ctx.query.count) || 10));
-  try { ctx.body = await gacha.getAllWinners(opts as Parameters<GachaService['getAllWinners']>[0]); }
-  catch (err) { sendGachaError(ctx, err); }
 });
 
 server.router.post('/api/login', jsonBody, async (ctx) => {
@@ -476,14 +322,19 @@ server.router.post('/api/rewards/daily-pack/claim/:userId', async (ctx) => {
 // ---------------------------------------------------------------------------
 // $POKETCG burn-to-buy-pack
 //
-// User signs an SPL-token burn ix that destroys 250,000 $POKETCG (per pack)
-// from their own associated token account. Submits the resulting signature
-// + claimed buyer wallet to this endpoint. We:
-//   1. Verify the burn is on-chain, finalized, owned by the buyer, targets
-//      $POKETCG, and is at least N * 250,000 tokens (N = packs claimed).
+// User signs an ERC-20 transfer of the tier's cost to the burn address on
+// Robinhood Chain, then posts the transaction hash + claimed buyer wallet
+// to this endpoint. We:
+//   1. Verify the transaction succeeded on chain, was sent by the buyer,
+//      and burned at least the declared tier's cost of $POKETCG.
 //   2. Roll N independent packs.
 //   3. Idempotently record + persist via storage.redeemBurnPack().
-// Replays of the same signature get the same cards back (no double-grant).
+// Replays of the same tx hash get the same cards back (no double-grant).
+//
+// `signature` is still the wire field name and the storage idempotency
+// key: it holds a transaction hash for burns, but also synthetic keys
+// like `daily-pack:<user>:<ts>` for the free-pack paths, so it stays
+// chain-neutral on purpose.
 // ---------------------------------------------------------------------------
 
 server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
@@ -508,19 +359,19 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
     ctx.throw(400, `packs must be one of: ${[1, 3, 7].join(', ')} (got ${requestedPacks})`);
     return;
   }
-  if (!signature) {
-    ctx.throw(400, 'signature is required');
+  if (!isTxHash(signature)) {
+    ctx.throw(400, 'signature must be a 32-byte transaction hash (0x + 64 hex chars)');
     return;
   }
-  if (!buyerWallet) {
-    ctx.throw(400, 'buyerWallet is required');
+  if (!isAddress(buyerWallet)) {
+    ctx.throw(400, 'buyerWallet must be a 20-byte EVM address');
     return;
   }
   try {
     await verifyPoketcgBurn({
-      signature,
+      txHash: signature,
       buyerWallet,
-      minRawAmount: tier.costTokens * 10 ** POKETCG_DECIMALS,
+      minRawAmount: rawCostForTier(tier),
     });
   } catch (err) {
     if (err instanceof PoketcgBurnError) {
@@ -821,10 +672,10 @@ server.router.post('/api/lobby/chat', jsonBody, async (ctx) => {
 /**
  * Free prize card for the winner of a multiplayer match. Idempotent per
  * (winner profile, match, player slot) — the prize_claimed flag on
- * app_match_records prevents a second roll. Mints the card as a Metaplex
- * Core NFT to the wallet, falling back to a no-mint claim if the
- * treasury minter isn't configured (still records the prize so the user
- * gets it in their collection).
+ * app_match_records prevents a second roll. Mints the card as an ERC-721
+ * on Robinhood Chain, falling back to a no-mint claim if the treasury
+ * minter isn't configured (still records the prize so the user gets it in
+ * their collection).
  */
 server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
   if (typeof profileStorage.findProfileByWallet !== 'function'
@@ -860,9 +711,9 @@ server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
       ctx.body = {
         alreadyClaimed: true,
         card: cachedCard ?? null,
-        mint: reservation.alreadyClaimed.mintAddress ? {
-          mintAddress: reservation.alreadyClaimed.mintAddress,
-          signature: reservation.alreadyClaimed.signature ?? '',
+        mint: reservation.alreadyClaimed.tokenId ? {
+          tokenId: reservation.alreadyClaimed.tokenId,
+          txHash: reservation.alreadyClaimed.txHash ?? '',
         } : null,
       };
       return;
@@ -880,13 +731,11 @@ server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
   }
 
   const { card } = rollPrizeCard();
-  let mint: { mintAddress: string; signature: string } | undefined;
+  let mint: { tokenId: string; txHash: string } | undefined;
   if (nftMinter) {
-    const base = publicOrigin || `${ctx.protocol}://${ctx.host}`;
-    const metadataUri = `${base}/api/cards/${encodeURIComponent(card.id)}/metadata`;
     try {
-      const result = await nftMinter.mintCard(walletAddress, card, metadataUri);
-      mint = { mintAddress: result.mintAddress, signature: result.signature };
+      const result = await nftMinter.mintCard(walletAddress, card);
+      mint = { tokenId: result.tokenId, txHash: result.txHash };
     } catch (err) {
       console.error(`[prize] mint failed for ${card.id} -> ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`);
       // Record the claim without mint info — the user still gets the
@@ -898,8 +747,8 @@ server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
 
   await profileStorage.recordPrizeClaim(profile.userId, matchID, playerID, {
     cardId: card.id,
-    mintAddress: mint?.mintAddress,
-    signature: mint?.signature,
+    tokenId: mint?.tokenId,
+    txHash: mint?.txHash,
   });
 
   ctx.body = {
@@ -910,24 +759,28 @@ server.router.post('/api/matches/:matchID/prize', jsonBody, async (ctx) => {
 });
 
 /**
- * Scan a Solana wallet for Pokemon NFTs (Collector Crypt gacha pulls,
- * propose matches against the local card library. The client uses the
- * returned candidates to populate the Import page.
+ * List the card NFTs a Robinhood Chain wallet holds from this app's
+ * ERC-721 and match them against the local card library. The client uses
+ * the returned candidates to populate the Import page.
  */
 server.router.post('/api/imports/scan', jsonBody, async (ctx) => {
   const body = ctx.request.body as { ownerAddress?: string } | undefined;
   const ownerAddress = body?.ownerAddress?.trim();
-  if (!ownerAddress) {
-    ctx.throw(400, 'ownerAddress (base58 Solana pubkey) is required.');
+  if (!isAddress(ownerAddress)) {
+    ctx.throw(400, 'ownerAddress must be a 20-byte EVM address.');
+    return;
+  }
+  if (!hasCardNft()) {
+    ctx.throw(503, 'Card NFT contract is not configured on this server (set CARD_NFT_ADDRESS).');
     return;
   }
   try {
     const candidates = await scanWalletForPokemonNfts({
-      rpcUrl: solanaRpcUrl,
+      rpcUrl: RHC_RPC_URL,
+      contractAddress: CARD_NFT_ADDRESS,
       ownerAddress,
       publicOrigin,
       cardLibrary: CARD_LIBRARY as unknown as Record<string, Card>,
-      setIdByName: setNameIndex,
     });
     ctx.body = { ownerAddress, candidates };
   } catch (err) {

@@ -2,10 +2,13 @@ import type { ConnectedWallet } from '../wallet';
 import type { MatchType, PlayerID, WagerCurrency } from '../game/types';
 
 export interface PackPurchase {
+  /** Idempotency key. A Robinhood Chain transaction hash for burn
+   *  purchases, or a synthetic key like `daily-pack:<user>:<ts>` for the
+   *  free-pack paths — deliberately chain-neutral. */
   signature: string;
   openedAt: string;
   cardIds: string[];
-  mints?: Array<{ cardId: string; mintAddress: string; signature: string }>;
+  mints?: Array<{ cardId: string; tokenId: string; txHash: string }>;
 }
 
 export interface MatchRecord {
@@ -42,7 +45,8 @@ export interface CustomDeck {
 }
 
 export interface ImportedNftRecord {
-  mintAddress: string;
+  /** Decimal ERC-721 token id on the PokemonCardNFT contract. */
+  tokenId: string;
   cardId: string;
   cardName: string;
   importedAt: string;
@@ -98,7 +102,7 @@ export function collectionSize(collection: Record<string, number>): number {
 
 /**
  * Count of card NFTs the player actually owns on-chain — sum of every
- * Metaplex Core mint from booster pack purchases plus every imported
+ * ERC-721 mint from booster pack purchases plus every imported
  * NFT-backed card. Starter-deck cards are EXCLUDED because those are
  * seeded into ``ownedCards`` for deckbuilding and aren't NFT-backed.
  *
