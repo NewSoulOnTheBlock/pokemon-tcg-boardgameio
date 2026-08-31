@@ -36,22 +36,37 @@ services:
         sync: false
       - key: BGIO_STORAGE_DIR
         value: /tmp/bgio-storage
-      # Collector Crypt Gacha Machine API (gacha.collectorcrypt.com).
-      # GACHA_API_KEY is optional — Collector Crypt currently accepts
-      # the literal string 'API_KEY' as a pass-through, which is the
-      # built-in default. Set to a real partner key once one is issued.
-      # The server-only proxy (/api/gacha/*) forwards calls with the
-      # x-api-key header so the key never reaches the browser.
-      # GACHA_BASE_URL is optional — defaults to mainnet; set to
-      # https://dev-gacha.collectorcrypt.com to point at devnet.
-      - key: GACHA_API_KEY
+      # Public origin of this service. Also becomes the ERC-721 base URI
+      # when you deploy contracts/, so tokenURI resolves to
+      # <PUBLIC_ORIGIN>/api/cards/<cardId>/metadata.
+      - key: PUBLIC_ORIGIN
         sync: false
-      - key: GACHA_BASE_URL
-        value: https://gacha.collectorcrypt.com
-      # Optional: override the Solana RPC the client uses for token
-      # account reads, $POKETCG balance fetches, and burn-tx building.
-      # Helius/Alchemy recommended for higher rate limits.
-      - key: VITE_SOLANA_RPC_URL
+      # ----- Robinhood Chain (EVM, chain id 4663) -------------------------
+      # $POKETCG ERC-20, launched through the Pons v2 factory. Both keys
+      # hold the same value: the server reads POKETCG_TOKEN_ADDRESS at
+      # runtime, and Vite inlines VITE_POKETCG_TOKEN_ADDRESS into the
+      # browser bundle at BUILD time — so the VITE_ one must be set
+      # BEFORE the build, not just before the start command.
+      # Leave both unset to ship with the burn shop disabled.
+      - key: POKETCG_TOKEN_ADDRESS
+        sync: false
+      - key: VITE_POKETCG_TOKEN_ADDRESS
+        sync: false
+      # PokemonCardNFT (ERC-721) from contracts/. Same build-time caveat.
+      - key: CARD_NFT_ADDRESS
+        sync: false
+      - key: VITE_CARD_NFT_ADDRESS
+        sync: false
+      # Treasury key that mints card NFTs and pays their gas. Keep it
+      # funded with ETH on chain 4663. Without it the server still grants
+      # cards in-game, it just skips minting.
+      - key: RHC_TREASURY_PRIVATE_KEY
+        sync: false
+      # Optional: override the Robinhood Chain RPC endpoint. Defaults to
+      # https://rpc.mainnet.chain.robinhood.com on both sides.
+      - key: RHC_RPC_URL
+        sync: false
+      - key: VITE_RHC_RPC_URL
         sync: false
 
 databases:

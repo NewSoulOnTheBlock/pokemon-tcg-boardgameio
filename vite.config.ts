@@ -19,10 +19,10 @@ const config: UserConfig = {
     // The card manifest is a 10 MB JSON parsed as a static array, so we lift
     // it (and a few heavy vendor deps) into separate chunks. That keeps the
     // app shell small and lets browsers cache the data across deploys.
-    // NOTE: do NOT manually chunk @solana/web3.js — it is dynamically imported
-    // from walletPayment.ts only when buying boosters. Letting Rollup create
-    // its own async chunk keeps the critical path tiny and avoids breaking
-    // the dynamic import graph (see Vite issue #3263).
+    // NOTE: there is deliberately no web3 vendor chunk. The Robinhood Chain
+    // client in src/chain/ talks raw JSON-RPC over fetch and hand-encodes the
+    // two ERC-20 calls it needs, so no chain SDK reaches the browser bundle
+    // at all — ethers is server-only.
     chunkSizeWarningLimit: 12_000,
     rollupOptions: {
       output: {

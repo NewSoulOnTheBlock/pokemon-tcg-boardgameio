@@ -7,7 +7,8 @@ import { MatchChatPanel } from './components/MatchChatPanel';
 import { PlayerHUD } from './components/PlayerHUD';
 import { PLAYMAT_IMAGE_BY_ID } from './playmats';
 import type { Card, PlayerID, PlayerState, PokemonInPlay, PokemonTCGState } from './game/types';
-import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
+import { formatWager } from './game/types';
+import { POKETCG_TOKEN_ADDRESS, explorerAddressUrl, explorerTxUrl } from './chain/config';
 import { canPayEnergyCost } from './game/rules';
 
 interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
@@ -18,7 +19,7 @@ interface PokemonBoardProps extends BoardProps<PokemonTCGState> {
   prizeClaim?: {
     alreadyClaimed: boolean;
     card: { id: string; name: string; rarity?: string; images?: { small?: string; large?: string } } | null;
-    mint: { mintAddress: string; signature: string } | null;
+    mint: { tokenId: string; txHash: string } | null;
   } | null;
   selectedDeck?: {
     cardIds: string[];
@@ -821,11 +822,11 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
                   : `You owe ${formatWager(G.wagerAmount, G.wagerCurrency)}.`}
             </h2>
             <p className="wager-modal-sub">
-              The app does not escrow funds — settle the wager off-app by sending {G.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'} to the winner's wallet below.
+              The app does not escrow funds — settle the wager off-app by sending {G.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'} to the winner's wallet below.
             </p>
             {G.wagerCurrency === 'POKETCG' && (
               <p className="wager-modal-sub">
-                <strong>$POKETCG token mint:</strong> <code title={POKETCG_TOKEN_MINT}>{POKETCG_TOKEN_MINT}</code>
+                <strong>$POKETCG token:</strong> <code title={POKETCG_TOKEN_ADDRESS}>{POKETCG_TOKEN_ADDRESS}</code>
               </p>
             )}
             {winnerWallet ? (
@@ -853,11 +854,11 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
               {winnerWallet && (
                 <a
                   className="primary-cta"
-                  href={`https://solscan.io/account/${winnerWallet}`}
+                  href={explorerAddressUrl(winnerWallet)}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  View on Solscan ↗
+                  View on explorer ↗
                 </a>
               )}
               <button onClick={() => setWagerDismissed(true)}>Dismiss</button>
@@ -883,14 +884,14 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
               />
             ) : null}
             <div className="wager-modal-actions">
-              {prizeClaim.mint?.signature && (
+              {prizeClaim.mint?.txHash && (
                 <a
                   className="primary-cta"
-                  href={`https://solscan.io/tx/${prizeClaim.mint.signature}`}
+                  href={explorerTxUrl(prizeClaim.mint.txHash)}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  View mint on Solscan ↗
+                  View mint on explorer ↗
                 </a>
               )}
               <button onClick={() => setPrizeDismissed(true)}>Awesome</button>

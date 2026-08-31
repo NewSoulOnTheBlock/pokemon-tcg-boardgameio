@@ -1,0 +1,24 @@
+{
+  "name": "pokemon-tcg-contracts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PokemonCardNFT (ERC-721) for the Pokemon TCG arena on Robinhood Chain.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network robinhood",
+    "deploy:local": "hardhat run scripts/deploy.js",
+    "grant-minter": "hardhat run scripts/grant-minter.js --network robinhood"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.29.1"
+  },
+  "//": "@openzeppelin/contracts is PINNED with no caret. OZ >= 5.2 emits MCOPY, a Cancun opcode; Robinhood Chain is Shanghai-era.",
+  "dependencies": {
+    "@openzeppelin/contracts": "5.0.2",
+    "dotenv": "^16.4.5"
+  }
+}

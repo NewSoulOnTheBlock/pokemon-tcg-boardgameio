@@ -77,10 +77,11 @@ export async function claimDailyPack(profile: ProfileState): Promise<DailyPackCl
   return res.json() as Promise<DailyPackClaimResult>;
 }
 
-/** Submit a $POKETCG burn signature to the server in exchange for
- *  `packs` rolled card packs. The server verifies the burn was on-chain,
- *  authored by `buyerWallet`, targets the right mint, and is at least
- *  packs * 250,000 tokens. Idempotent on `signature`. */
+/** Submit a $POKETCG burn transaction hash to the server in exchange for
+ *  `packs` rolled card packs. The server verifies the transaction
+ *  succeeded on Robinhood Chain, was sent by `buyerWallet`, and moved at
+ *  least the declared tier's cost of $POKETCG to the burn address.
+ *  Idempotent on `signature` (the transaction hash). */
 export async function redeemBurnPack(args: {
   profile: ProfileState;
   signature: string;

@@ -115,7 +115,7 @@ export const MOCK_ACHIEVEMENTS: Achievement[] = [
     id: 'nft-importer',
     icon: '📥',
     name: 'NFT Importer',
-    description: 'Import at least one Pokemon NFT (Collector Crypt or other) into your collection.',
+    description: 'Import at least one card NFT from your Robinhood Chain wallet into your collection.',
     unlocked: (p) => (p.importedNfts ?? []).length >= 1,
   },
   {

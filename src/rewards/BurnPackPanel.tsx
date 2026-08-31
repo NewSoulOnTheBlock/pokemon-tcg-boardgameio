@@ -1,11 +1,12 @@
 // $POKETCG burn-to-buy-pack panel. Renders below the deckbuilder on the
-// profile page. Lets the connected wallet burn 250,000 $POKETCG per
-// playable booster pack (5C + 3U + 1R) — tokens are permanently
-// destroyed, no treasury, no transfer.
+// profile page. Lets the connected wallet burn $POKETCG for playable
+// booster packs (5C + 3U + 1R each) on Robinhood Chain — tokens go to
+// 0x…dEaD and never come back.
 
 import { useCallback, useEffect, useState } from 'react';
 import type { ProfileState, StoredProfile } from '../shared/profile';
 import { redeemBurnPack } from '../api/rewards';
+import { hasPoketcgToken } from '../chain/config';
 import {
   POKETCG_PACK_TIERS,
   burnPoketcgForPacks,
@@ -51,7 +52,7 @@ export function BurnPackPanel({
     } catch (err) {
       setBalance(null);
       const msg = err instanceof Error ? err.message : String(err);
-      setBalanceError(`RPC failed: ${msg}. Set VITE_SOLANA_RPC_URL to a Helius/Quicknode endpoint if this persists.`);
+      setBalanceError(`RPC failed: ${msg}. Set VITE_RHC_RPC_URL to a different Robinhood Chain endpoint if this persists.`);
     }
   }, [wallet?.address]);
 
@@ -59,11 +60,11 @@ export function BurnPackPanel({
 
   const totalCost = findPoketcgTier(packCount)?.costTokens ?? 0;
   const insufficient = balance !== null && balance < totalCost;
-  const canBuy = !!profile.userId && !!wallet?.address && wallet.chain === 'solana';
+  const canBuy = !!profile.userId && !!wallet?.address && wallet.chain === 'evm' && hasPoketcgToken();
 
   const handleBurn = useCallback(async () => {
-    if (!profile.userId || !wallet?.address || wallet.chain !== 'solana') {
-      setError('Connect a Solana wallet first.');
+    if (!profile.userId || !wallet?.address || wallet.chain !== 'evm') {
+      setError('Connect an EVM wallet first.');
       return;
     }
     setError(null);
@@ -148,8 +149,10 @@ export function BurnPackPanel({
           onClick={handleBurn}
           disabled={!canBuy || busy !== null || insufficient}
         >
-          {!canBuy
-            ? 'Connect Solana wallet'
+          {!hasPoketcgToken()
+            ? '$POKETCG not configured'
+            : !canBuy
+            ? 'Connect wallet'
             : busy === 'sign'
               ? 'Approve burn in wallet…'
               : busy === 'verify'
@@ -159,7 +162,7 @@ export function BurnPackPanel({
                   : `Burn ${formatTokens(totalCost)} $POKETCG → ${packCount} pack${packCount === 1 ? '' : 's'}`}
         </button>
         <p className="burn-pack-disclaimer">
-          ⚠ Tokens are permanently destroyed. Cards added to your collection. Make sure you have at least 0.001 SOL for tx fees.
+          ⚠ Tokens are permanently destroyed (sent to 0x…dEaD). Cards added to your collection. Keep a little ETH on Robinhood Chain for gas.
         </p>
       </div>
 

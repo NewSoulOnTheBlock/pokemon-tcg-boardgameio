@@ -24,7 +24,6 @@ import {
 import { MULTIPLAYER_SERVER } from './api/server';
 import { CardImage } from './components/CardImage';
 import { BackgroundMusicPlayer } from './components/BackgroundMusicPlayer';
-import { PoweredByCollectorCrypt } from './components/PoweredByCollectorCrypt';
 import { PackOpeningCeremony } from './rewards/PackOpeningCeremony';
 import {
   CARD_LIBRARY,
@@ -35,7 +34,7 @@ import {
 } from './game/cards';
 import { PokemonTCG } from './game/PokemonTCG';
 import type { Card, MatchType, PlayerID, PokemonTCGSetupData, PokemonTCGState, WagerCurrency } from './game/types';
-import { POKETCG_TOKEN_MINT, formatWager } from './game/types';
+import { formatWager } from './game/types';
 import { PokemonBoard } from './PokemonBoard';
 import {
   addCardsToCollection,
@@ -52,11 +51,12 @@ import {
   type ProfileState,
 } from './shared/profile';
 import {
-  connectSolana,
-  detectSolanaWallets,
+  connectEvm,
+  detectEvmWallets,
   shortAddr,
   type ConnectedWallet,
 } from './wallet';
+import { POKETCG_TOKEN_ADDRESS, cardNftTokenUrl, explorerTxUrl } from './chain/config';
 import {
   formatCountdown,
   formatWaitTime,
@@ -118,7 +118,6 @@ import {
 import { DailyPackWidget } from './rewards/DailyPackWidget';
 import { BurnPackPanel } from './rewards/BurnPackPanel';
 import { DocsPage } from './docs/DocsPage';
-import { GachaStorefront } from './gacha/GachaStorefront';
 import { ChampionsRowPage } from './champions/ChampionsRowPage';
 import {
   xpForCampaignWin,
@@ -135,7 +134,7 @@ import {
 } from './telegram';
 import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'json' };
 
-type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'boosters' | 'imports' | 'bot' | 'match' | 'docs' | 'champions';
+type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'imports' | 'bot' | 'match' | 'docs' | 'champions';
 
 const NEWS_URL = 'https://x.com/pokemasterstcg';
 const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
@@ -178,12 +177,11 @@ const PROFILE_KEY = 'pokemon-tcg-profile';
 const DECK_SIZE = 60;
 const MAX_CARD_COPIES = 4;
 const PACK_PRICE_LABEL = (import.meta.env.VITE_PACK_PRICE_LABEL?.trim() || '$6 USDC');
-const SOLANA_RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com';
 const GAME_NAME = PokemonTCG.name ?? 'pokemon-tcg';
 const PLAYER_IDS: PlayerID[] = ['0', '1'];
 const MATCH_TYPES: MatchType[] = ['Casual', 'Ranked', 'Wager', 'Theme Deck', 'Unlimited', 'Tournament Practice'];
 const WAGER_CURRENCIES: { value: WagerCurrency; label: string }[] = [
-  { value: 'SOL', label: 'SOL' },
+  { value: 'ETH', label: 'ETH' },
   { value: 'POKETCG', label: '$POKETCG' },
 ];
 const STARTER_COLLECTION = collectionFromCards(Object.values(STARTER_DECKS).flat());
@@ -541,7 +539,7 @@ function wagerForMatch(match: LobbyAPI.Match): number {
 }
 
 function wagerCurrencyForMatch(match: LobbyAPI.Match): WagerCurrency {
-  return setupDataForMatch(match)?.wagerCurrency === 'POKETCG' ? 'POKETCG' : 'SOL';
+  return setupDataForMatch(match)?.wagerCurrency === 'POKETCG' ? 'POKETCG' : 'ETH';
 }
 
 function Shell({
@@ -564,7 +562,7 @@ function Shell({
           <img className="brand-logo" src="/site-logo.png" alt="Pokemon Masters" />
         </button>
         <nav>
-          {(['home', 'profile', 'matchmaking', 'bot', 'boosters', 'champions', 'imports'] as Page[]).map((target) => (
+          {(['home', 'profile', 'matchmaking', 'bot', 'champions', 'imports'] as Page[]).map((target) => (
             <button
               className={page === target ? 'nav-active' : ''}
               key={target}
@@ -613,7 +611,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   const [wallet, setWallet] = useState<ConnectedWallet | null>(() => loadProfile().wallet);
   const [error, setError] = useState('');
   const [signingIn, setSigningIn] = useState(false);
-  const solanaWallets = detectSolanaWallets();
+  const evmWallets = detectEvmWallets();
   const telegramUser = getTelegramUser();
   const inTelegram = Boolean(telegramUser);
   // Inside Telegram, the Telegram user identity replaces the wallet
@@ -625,10 +623,12 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
     ? { chain: 'telegram', address: telegramPseudoAddress(telegramUser) }
     : null);
 
-  async function connect(_kind: 'solana') {
+  async function connect() {
     setError('');
     try {
-      setWallet(await connectSolana());
+      // connectEvm also switches the wallet to Robinhood Chain, so the
+      // user answers both prompts here rather than mid-purchase later.
+      setWallet(await connectEvm());
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     }
@@ -664,15 +664,15 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
   const canEnter = Boolean(effectiveWallet) && name.trim().length >= 2 && !isReservedName(name);
 
   // Mobile users who open the site in Safari / Chrome / Firefox can't
-  // connect any browser-extension wallet — Phantom + Solflare + Backpack
-  // etc. on mobile only inject window.solana inside their OWN in-app
-  // browser. Without this warning new mobile users hit a dead "Connect
-  // Solana Wallet" button and bounce. We surface the warning only when
+  // connect any browser-extension wallet — MetaMask, Rabby, Coinbase
+  // Wallet etc. on mobile only inject window.ethereum inside their OWN
+  // in-app browser. Without this warning new mobile users hit a dead
+  // "Connect Wallet" button and bounce. We surface the warning only when
   // both signals match: mobile UA + zero detected wallets + not in
   // Telegram (which has its own pseudo-wallet path).
   const isMobile = typeof navigator !== 'undefined'
     && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const showMobileWalletWarning = !inTelegram && isMobile && solanaWallets.every((w) => !w.installed) && !wallet;
+  const showMobileWalletWarning = !inTelegram && isMobile && evmWallets.every((w) => !w.installed) && !wallet;
 
   return (
     <main className="signin-page">
@@ -682,13 +682,13 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
           <>
             <p className="eyebrow">Telegram sign-in</p>
             <h1>Pokemon TCG Arena</h1>
-            <p>Signed in as <strong>{telegramDisplayName(telegramUser!)}</strong> via Telegram. You can play Casual matches and CPU games here — connect a Solana wallet from a browser to buy boosters, claim NFT prizes, or play Wager matches.</p>
+            <p>Signed in as <strong>{telegramDisplayName(telegramUser!)}</strong> via Telegram. You can play Casual matches and CPU games here — connect an EVM wallet from a browser to burn $POKETCG for packs, claim NFT prizes, or play Wager matches.</p>
           </>
         ) : (
           <>
             <p className="eyebrow">Wallet sign-in required</p>
             <h1>Pokemon TCG Arena</h1>
-            <p>Connect a Solana or EVM wallet to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
+            <p>Connect an EVM wallet on <strong>Robinhood Chain</strong> to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
           </>
         )}
         {showMobileWalletWarning && (
@@ -697,12 +697,12 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
             <div className="mobile-wallet-warning-body">
               <strong>On mobile? You MUST open this site inside your wallet's in-app browser.</strong>
               <p>
-                Mobile wallet extensions (Phantom, Solflare, Backpack, Glow, etc.) only inject
+                Mobile wallet apps (MetaMask, Rabby, Coinbase Wallet, etc.) only inject
                 their connector when you load the site from <em>inside the wallet app</em> — not
                 from Safari, Chrome, or Firefox.
               </p>
               <ol className="mobile-wallet-warning-steps">
-                <li>Open your wallet app (Phantom / Solflare / Backpack / etc.)</li>
+                <li>Open your wallet app (MetaMask / Rabby / Coinbase Wallet / etc.)</li>
                 <li>Tap the in-app browser icon (the globe / compass in the bottom bar)</li>
                 <li>Paste this URL: <code>{typeof window !== 'undefined' ? window.location.href : ''}</code></li>
               </ol>
@@ -726,10 +726,10 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
         {!inTelegram && (
           <>
             <div className="wallet-actions">
-              <button onClick={() => connect('solana')}>Connect Solana Wallet</button>
+              <button onClick={() => void connect()}>Connect Wallet</button>
             </div>
             <div className="wallet-list">
-              {solanaWallets.map((walletInfo) => (
+              {evmWallets.map((walletInfo) => (
                 <span key={walletInfo.kind}>{walletInfo.label}: {walletInfo.installed ? 'installed' : 'not found'}</span>
               ))}
             </div>
@@ -805,17 +805,13 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
             <strong>Profile + Deckbuilder</strong>
             <span>Manage your profile and custom deck library.</span>
           </button>
-          <button className="home-menu-button" onClick={() => onNavigate('boosters')}>
-            <strong>🎰 Booster Shop</strong>
-            <span>Mystery pack NFTs from Collector Crypt. $50 / $250 packs. Sell back for USDC within 72 hours.</span>
-          </button>
           <button className="home-menu-button" onClick={() => onNavigate('champions')}>
             <strong>👑 Champions Row</strong>
             <span>Daily lottery for trainers who have cleared the campaign AND hold $POKETCG. One major pack per winner per day.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import NFTs</strong>
-            <span>Scan your Solana wallet and pull NFT-backed Pokemon cards into your in-game collection.</span>
+            <span>Scan your Robinhood Chain wallet and pull NFT-backed Pokemon cards into your in-game collection.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('docs')}>
             <strong>📖 Docs</strong>
@@ -1223,7 +1219,7 @@ function ProfilePage({ profile, onProfileChange }: { profile: ProfileState; onPr
                       )}
                     </div>
                     {purchase.signature && (
-                      <a href={`https://solscan.io/tx/${purchase.signature}`} target="_blank" rel="noreferrer">
+                      <a href={explorerTxUrl(purchase.signature)} target="_blank" rel="noreferrer">
                         View tx ↗
                       </a>
                     )}
@@ -1287,7 +1283,7 @@ function MatchmakingPage({
   const [matchName, setMatchName] = useState(`${profile.name}'s Match`);
   const [matchType, setMatchType] = useState<MatchType>('Casual');
   const [wagerAmount, setWagerAmount] = useState<number>(0.1);
-  const [wagerCurrency, setWagerCurrency] = useState<WagerCurrency>('SOL');
+  const [wagerCurrency, setWagerCurrency] = useState<WagerCurrency>('ETH');
   const [isPrivate, setIsPrivate] = useState(false);
   const [matches, setMatches] = useState<LobbyAPI.Match[]>([]);
   const [leaderboard, setLeaderboard] = useState<MatchLeaderboardEntry[]>([]);
@@ -1309,7 +1305,7 @@ function MatchmakingPage({
   const lobby = useMemo(() => new LobbyClient({ server: MULTIPLAYER_SERVER }), []);
   const selectedPlayerDeck = deckOptionById(deckOptions, playerDeckId);
   const selectedAcceptDeck = deckOptionById(deckOptions, acceptDeckId);
-  const playerWallet = profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined;
+  const playerWallet = profile.wallet?.chain === 'evm' ? profile.wallet.address : undefined;
   const trainerStats = useMemo(() => getTrainerStats(profile), [profile]);
   const seasonalEvent = useMemo(() => getCurrentSeasonalEvent(), []);
   const [seasonalTick, setSeasonalTick] = useState(0);
@@ -1532,11 +1528,11 @@ function MatchmakingPage({
     const isWager = matchType === 'Wager';
     if (isWager) {
       if (!playerWallet) {
-        setError('Connect a Solana wallet on sign-in to create a Wager match.');
+        setError('Connect an EVM wallet on sign-in to create a Wager match.');
         return;
       }
       if (!(wagerAmount > 0)) {
-        setError(`Wager matches need a positive ${wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'} amount.`);
+        setError(`Wager matches need a positive ${wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'} amount.`);
         return;
       }
     }
@@ -1579,7 +1575,7 @@ function MatchmakingPage({
         matchName: cleanMatchName,
         matchType,
         wagerAmount: isWager ? wagerAmount : 0,
-        wagerCurrency: isWager ? wagerCurrency : 'SOL',
+        wagerCurrency: isWager ? wagerCurrency : 'ETH',
         playerID,
         playerWallet,
         credentials: joined.playerCredentials,
@@ -1614,7 +1610,7 @@ function MatchmakingPage({
     const matchWager = wagerForMatch(match);
     const matchCurrency = wagerCurrencyForMatch(match);
     if (matchKind === 'Wager' && !playerWallet) {
-      setError('Connect a Solana wallet on sign-in to accept a Wager match.');
+      setError('Connect an EVM wallet on sign-in to accept a Wager match.');
       return;
     }
 
@@ -1739,7 +1735,7 @@ function MatchmakingPage({
                   </select>
                 </label>
                 <label className="wager-field">
-                  Wager ({wagerCurrency === 'POKETCG' ? '$POKETCG' : 'SOL'})
+                  Wager ({wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'})
                   <input
                     type="number"
                     inputMode="decimal"
@@ -1752,8 +1748,8 @@ function MatchmakingPage({
                 </label>
                 <p className="wager-hint">
                   {playerWallet
-                    ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKETCG mint: ${shortAddr(POKETCG_TOKEN_MINT)}` : ''}`
-                    : 'Connect a Solana wallet on sign-in to create or accept a Wager match.'}
+                    ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKETCG token: ${shortAddr(POKETCG_TOKEN_ADDRESS)}` : ''}`
+                    : 'Connect an EVM wallet on sign-in to create or accept a Wager match.'}
                 </p>
               </div>
             )}
@@ -2172,7 +2168,7 @@ function GymChallengePage({ profile, onProfileChange, onExit }: { profile: Profi
     const setupData: MatchSetupData = {
       matchName: `${profile.name} vs ${opponent.name}`,
       matchType: 'Casual',
-      wagerCurrency: 'SOL',
+      wagerCurrency: 'ETH',
       seedDecks: { '0': activeMatch.playerDeck.cardIds, '1': deckForOpponent(opponent.id, opponent.deckType) },
       deckLabels: { '0': activeMatch.playerDeck.label, '1': `${opponent.name} (${opponent.themeLabel})` },
     };
@@ -2249,9 +2245,9 @@ function GymChallengePage({ profile, onProfileChange, onExit }: { profile: Profi
 }
 
 function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onProfileChange: (profile: ProfileState) => void }) {
-  const walletAddress = profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined;
+  const walletAddress = profile.wallet?.chain === 'evm' ? profile.wallet.address : undefined;
   const alreadyImported = useMemo(
-    () => new Set((profile.importedNfts ?? []).map((entry) => entry.mintAddress)),
+    () => new Set((profile.importedNfts ?? []).map((entry) => entry.tokenId)),
     [profile.importedNfts],
   );
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
@@ -2264,7 +2260,7 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
 
   async function scan() {
     if (!walletAddress) {
-      setScanError('Connect a Solana wallet on sign-in before scanning.');
+      setScanError('Connect an EVM wallet on sign-in before scanning.');
       return;
     }
     setScanError('');
@@ -2276,8 +2272,8 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
       setScannedAddress(response.ownerAddress);
       const presets = new Set<string>();
       for (const candidate of response.candidates) {
-        if (candidate.cardId && !alreadyImported.has(candidate.mintAddress) && candidate.confidence !== 'fuzzy-match') {
-          presets.add(candidate.mintAddress);
+        if (candidate.cardId && !alreadyImported.has(candidate.tokenId) && candidate.confidence !== 'fuzzy-match') {
+          presets.add(candidate.tokenId);
         }
       }
       setSelected(presets);
@@ -2291,9 +2287,9 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
 
   async function importSelected() {
     const toImport = candidates.filter((c) =>
-      selected.has(c.mintAddress)
+      selected.has(c.tokenId)
       && c.cardId
-      && !alreadyImported.has(c.mintAddress),
+      && !alreadyImported.has(c.tokenId),
     );
     if (toImport.length === 0) {
       setScanError('Nothing to import. Select at least one matched NFT first.');
@@ -2304,7 +2300,7 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
     try {
       const cardIds = toImport.map((c) => c.cardId!);
       const newRecords: ImportedNftRecord[] = toImport.map((c) => ({
-        mintAddress: c.mintAddress,
+        tokenId: c.tokenId,
         cardId: c.cardId!,
         cardName: c.cardName ?? c.nftName,
         importedAt: new Date().toISOString(),
@@ -2326,17 +2322,17 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
     }
   }
 
-  function toggle(mintAddress: string, cardId: string | undefined) {
+  function toggle(tokenId: string, cardId: string | undefined) {
     if (!cardId) return;
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(mintAddress)) next.delete(mintAddress);
-      else next.add(mintAddress);
+      if (next.has(tokenId)) next.delete(tokenId);
+      else next.add(tokenId);
       return next;
     });
   }
 
-  const importableCount = candidates.filter((c) => c.cardId && !alreadyImported.has(c.mintAddress)).length;
+  const importableCount = candidates.filter((c) => c.cardId && !alreadyImported.has(c.tokenId)).length;
 
   return (
     <main className="content-page imports-page">
@@ -2344,8 +2340,8 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
         <p className="eyebrow">Import</p>
         <h1>Bring your Pokemon NFTs on-chain into the game</h1>
         <p>
-          Scan your connected Solana wallet for Pokemon NFTs (your own booster pulls from this
-          app, Collector Crypt gacha wins, and any other NFT with Pokemon-card metadata). Pick
+          Scan your connected Robinhood Chain wallet for the card NFTs this app has minted to
+          you — booster pulls and match prizes. Pick
           which to import and we'll add them to your in-game collection so they show up in the
           deckbuilder.
         </p>
@@ -2373,7 +2369,7 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
         </div>
         {status && <p className="success">{status}</p>}
         {scanError && <p className="error">{scanError}</p>}
-        {!walletAddress && <p className="action-hint">Sign in with a Solana wallet to enable scanning.</p>}
+        {!walletAddress && <p className="action-hint">Sign in with an EVM wallet to enable scanning.</p>}
       </section>
 
       {candidates.length > 0 && (
@@ -2387,13 +2383,13 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
           </div>
           <div className="imports-grid">
             {candidates.map((candidate) => {
-              const isImported = alreadyImported.has(candidate.mintAddress);
+              const isImported = alreadyImported.has(candidate.tokenId);
               const canImport = Boolean(candidate.cardId) && !isImported;
-              const isSelected = selected.has(candidate.mintAddress);
+              const isSelected = selected.has(candidate.tokenId);
               return (
                 <article
                   className={`imports-card imports-card-${candidate.confidence} ${isImported ? 'imports-card-already' : ''} ${isSelected ? 'imports-card-selected' : ''}`}
-                  key={candidate.mintAddress}
+                  key={candidate.tokenId}
                 >
                   <header className="imports-card-header">
                     <span className={`imports-confidence imports-confidence-${candidate.confidence}`}>
@@ -2418,12 +2414,12 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
                     <span>{candidate.cardId ?? 'No matching card found'}</span>
                     <a
                       className="imports-card-mint"
-                      href={`https://solscan.io/token/${candidate.mintAddress}`}
+                      href={cardNftTokenUrl(candidate.tokenId)}
                       target="_blank"
                       rel="noreferrer"
-                      title={candidate.mintAddress}
+                      title={candidate.tokenId}
                     >
-                      Mint {shortAddr(candidate.mintAddress)} ↗
+                      Token #{candidate.tokenId} ↗
                     </a>
                   </div>
                   <label className="imports-card-toggle">
@@ -2431,7 +2427,7 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
                       type="checkbox"
                       disabled={!canImport}
                       checked={isSelected}
-                      onChange={() => toggle(candidate.mintAddress, candidate.cardId)}
+                      onChange={() => toggle(candidate.tokenId, candidate.cardId)}
                     />
                     <span>{isImported ? 'Already in collection' : canImport ? 'Import this card' : 'Cannot match'}</span>
                   </label>
@@ -2452,12 +2448,12 @@ function ImportPage({ profile, onProfileChange }: { profile: ProfileState; onPro
           </div>
           <ul className="imports-history">
             {[...profile.importedNfts!].reverse().slice(0, 25).map((record) => (
-              <li key={record.mintAddress}>
+              <li key={record.tokenId}>
                 <strong>{record.cardName}</strong>
                 <span>{record.cardId}</span>
                 <span>{new Date(record.importedAt).toLocaleString()}</span>
-                <a href={`https://solscan.io/token/${record.mintAddress}`} target="_blank" rel="noreferrer">
-                  {shortAddr(record.mintAddress)} ↗
+                <a href={cardNftTokenUrl(record.tokenId)} target="_blank" rel="noreferrer">
+                  Token #{record.tokenId} ↗
                 </a>
               </li>
             ))}
@@ -2521,9 +2517,9 @@ function MatchClient({
 
     // Free prize card for winning. Server enforces once-per-match via
     // app_match_records.prize_claimed. Skip if the player didn't sign
-    // in with a Solana wallet — we have nothing to mint to.
+    // in with an EVM wallet — we have nothing to mint to.
     if (result !== 'win') return;
-    const winnerWalletAddress = config.playerWallet ?? (profile.wallet?.chain === 'solana' ? profile.wallet.address : undefined);
+    const winnerWalletAddress = config.playerWallet ?? (profile.wallet?.chain === 'evm' ? profile.wallet.address : undefined);
     if (!winnerWalletAddress) return;
     try {
       const claim = await claimMatchPrize({
@@ -2639,13 +2635,12 @@ export default function App() {
   const musicSrc = isInMatch ? '/battle-music.mp3' : '/menu-music.mp3';
   const musicLabel = isInMatch ? 'battle music' : 'menu music';
   // Global chrome rendered alongside every page: background music
-  // player + the "Powered by Collector Crypt" badge in the bottom-
+  // player in the bottom-
   // right corner. Match screens get a smaller, lower-glow variant so
   // it stays visible without overlapping the playmat / hand fan.
   const globalChrome = (
     <>
       <BackgroundMusicPlayer src={musicSrc} label={musicLabel} paused={false} />
-      <PoweredByCollectorCrypt variant={isInMatch ? 'match' : 'floating'} />
     </>
   );
 
@@ -2697,7 +2692,6 @@ export default function App() {
           />
         )}
         {page === 'imports' && <ImportPage profile={profile} onProfileChange={updateProfile} />}
-        {page === 'boosters' && <GachaStorefront profile={profile} />}
         {page === 'champions' && <ChampionsRowPage profile={profile} onProfileChange={updateProfile} />}
         {page === 'docs' && <DocsPage />}
         {page === 'home' && <HomePage profile={profile} onProfileChange={updateProfile} onNavigate={setPage} />}

@@ -22,17 +22,18 @@ const SECTIONS: DocsSection[] = [
       <>
         <p>
           PokemastersTCG is a Pokemon Trading Card Game playable in your browser, multiplayer
-          over the network, with Solana-backed economy primitives. You can play casual or
-          ranked matches against other players, fight through a Gym campaign of 8 Gym Leaders
-          + Elite Four + Champion, or wager $POKETCG / SOL / USDC on a match.
+          over the network, with an economy running on <strong>Robinhood Chain</strong> (an EVM
+          chain, id 4663). You can play casual or ranked matches against other players, fight
+          through a Gym campaign of 8 Gym Leaders + Elite Four + Champion, or wager $POKETCG /
+          ETH on a match.
         </p>
         <p>
           Cards come from three sources:
         </p>
         <ul>
           <li><strong>Starter decks</strong> — one per energy type (Grass / Fire / Water / etc.), always playable, never NFT-backed.</li>
-          <li><strong>Booster packs</strong> — buy them on the Booster Shop tab with $POKETCG (burned permanently), or claim a free pack every 22 hours.</li>
-          <li><strong>NFT pulls</strong> — buy gacha packs (via Collector Crypt) that drop real graded Pokemon card NFTs into your wallet.</li>
+          <li><strong>Booster packs</strong> — burn $POKETCG for them in the Booster Shop on your Profile page, or claim a free pack every 22 hours.</li>
+          <li><strong>Match prizes</strong> — every multiplayer win rolls one card, minted to your wallet as an ERC-721 on Robinhood Chain.</li>
         </ul>
       </>
     ),
@@ -44,7 +45,7 @@ const SECTIONS: DocsSection[] = [
     content: (
       <>
         <ol>
-          <li><strong>Sign in</strong> with a trainer name (optional) or connect a Solana wallet (required for $POKETCG burns + wagers + NFT pulls).</li>
+          <li><strong>Sign in</strong> with a trainer name and connect an EVM wallet (MetaMask, Rabby, Coinbase Wallet). The app switches it to Robinhood Chain for you.</li>
           <li>From the Home page, click <strong>Profile + Deckbuilder</strong> and either pick a starter deck or build a custom 60-card deck.</li>
           <li>Click <strong>Matchmaking</strong>, then <em>Create match</em>. Share the match link with a friend or wait for someone to accept.</li>
           <li>During setup, drag a Basic Pokemon onto your Active spot and up to 5 more onto your Bench. Click <em>Ready</em>.</li>
@@ -66,7 +67,7 @@ const SECTIONS: DocsSection[] = [
           <tbody>
             <tr><td><strong>Casual</strong></td><td>None</td><td>Practice. Doesn't affect win/loss record.</td></tr>
             <tr><td><strong>Ranked</strong></td><td>None</td><td>Counted toward the leaderboard W/L record.</td></tr>
-            <tr><td><strong>Wager</strong></td><td>$POKETCG / SOL / USDC</td><td>Winner takes the pot. Funds escrowed at match start, released on conclusion.</td></tr>
+            <tr><td><strong>Wager</strong></td><td>$POKETCG / ETH</td><td>Winner takes the pot. The app does <em>not</em> escrow — it shows the winner's address so the loser settles on chain.</td></tr>
             <tr><td><strong>Gym</strong></td><td>None</td><td>Solo campaign vs CPU. 8 Gyms → Elite Four → Champion. Earns XP and badges.</td></tr>
             <tr><td><strong>Bot</strong></td><td>None</td><td>Random-AI sparring partner for warm-up.</td></tr>
           </tbody>
@@ -197,15 +198,19 @@ const SECTIONS: DocsSection[] = [
           The home page has a <strong>Daily Free Pack</strong> widget. Click it every 22 hours
           to claim a free pack with the same composition as a burned pack. No wallet needed.
         </p>
-        <h3>Collector Crypt mystery packs</h3>
+        <h3>How the burn works</h3>
         <p>
-          The <strong>🎰 Booster Shop</strong> page sells real graded Pokemon cards as Solana
-          NFTs via <a href="https://gacha.collectorcrypt.com" target="_blank" rel="noreferrer">Collector Crypt</a>.
-          Pay USDC for a pack (Elite Pack $50, Legendary Pack $250 + others), sign one Solana tx, and
-          the gacha rolls + transfers a random NFT to your wallet weighted by per-machine odds.
-          Buyback any non-turbo pull for ~85% of insured value within <strong>72 hours</strong>
-          (button shows on the My Pulls tab while the window is open). Turbo mode auto-sells
-          any Common pull at open time so you skip the manual buyback round-trip.
+          A "burn" here is an ordinary ERC-20 <code>transfer</code> to
+          <code>0x000000000000000000000000000000000000dEaD</code> — an address with no known
+          private key. Pons-launched tokens have no <code>burn()</code> entry point, so this is
+          how the supply is retired; the tokens are just as unrecoverable, they simply still
+          count toward <code>totalSupply</code>.
+        </p>
+        <p>
+          You sign one transaction. The server then re-reads it from chain and checks it
+          succeeded, came from your wallet, and moved at least the tier's cost of $POKETCG to
+          the burn address — only then does it roll your cards. Replaying the same transaction
+          hash returns the same cards rather than granting new ones.
         </p>
       </>
     ),
@@ -244,27 +249,34 @@ const SECTIONS: DocsSection[] = [
     content: (
       <>
         <p>
-          Most of the game works without a wallet. Connect a Solana wallet (Phantom,
-          Solflare, Backpack) to unlock:
+          Most of the game works without a wallet. Connect an EVM wallet (MetaMask, Rabby,
+          Coinbase Wallet) on Robinhood Chain to unlock:
         </p>
         <ul>
           <li>$POKETCG burn → playable booster packs</li>
-          <li>$POKETCG / SOL / USDC wager matches</li>
-          <li>Collector Crypt gacha pack purchases (real NFT pulls)</li>
+          <li>$POKETCG / ETH wager matches</li>
+          <li>ERC-721 card NFTs minted to you for booster pulls and match prizes</li>
           <li>NFT-backed card imports into your in-game collection</li>
           <li>Persistent profile across devices (login key keyed on your wallet)</li>
         </ul>
+        <h3>Adding Robinhood Chain</h3>
+        <p>
+          You do not have to add the network by hand — clicking <strong>Connect Wallet</strong>
+          prompts your wallet to add and switch to it. For reference: chain id{' '}
+          <code>4663</code>, RPC <code>https://rpc.mainnet.chain.robinhood.com</code>, native
+          currency ETH.
+        </p>
         <h3>Getting $POKETCG</h3>
         <p>
-          $POKETCG is the project token on pump.fun.
-          Mint address: <code>N9Curnf2ZQWBZWrjBkzP6xBe6n5WRhBhouRfiSqpump</code>.
-          Swap SOL for $POKETCG on pump.fun or any Solana DEX (Jupiter routes through it).
+          $POKETCG is the project token on Robinhood Chain, launched through the Pons v2
+          factory. Its contract address is shown in the wager popup and the Booster Shop panel;
+          swap ETH for it on Pons.
         </p>
         <h3>Fees</h3>
         <p>
-          Every Solana transaction needs a small SOL balance for gas. ~0.001 SOL per tx
-          is plenty. Burning $POKETCG only sends a single SPL token instruction so fees are
-          negligible (typically &lt; $0.001).
+          Every transaction needs a small ETH balance on Robinhood Chain for gas. A burn is a
+          single ERC-20 transfer, so it is cheap — but a wallet with zero ETH cannot send it at
+          all, which is the most common reason the Buy button fails.
         </p>
       </>
     ),
