@@ -431,35 +431,6 @@ button:disabled {
   opacity: 0.78;
 }
 
-.home-telegram-button {
-  align-items: flex-start;
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(96, 165, 250, 0.45);
-  color: var(--ink-primary);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px 18px;
-  text-decoration: none;
-}
-
-.home-telegram-button:hover {
-  background: rgba(59, 130, 246, 0.22);
-  border-color: #60a5fa;
-  color: var(--ink-primary);
-}
-
-.home-telegram-button strong {
-  color: #60a5fa;
-}
-
-.home-telegram-button span {
-  color: inherit;
-  font-size: 0.82rem;
-  font-weight: 500;
-  opacity: 0.78;
-}
-
 .bot-setup-page {
   max-width: 720px;
 }
@@ -528,6 +499,72 @@ button:disabled {
   border-color: rgba(251, 113, 133, 0.4);
   color: var(--accent-rose);
   transform: none;
+}
+
+/* ============================================================
+   Token contract address badge
+   ============================================================ */
+
+.ca-badge {
+  align-items: center;
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.14), rgba(251, 191, 36, 0.03));
+  border: 1px solid rgba(251, 191, 36, 0.42);
+  border-radius: var(--r-pill);
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 10px 5px 12px;
+}
+
+.ca-badge-label {
+  color: var(--accent-gold-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.ca-badge-copy {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--ink-secondary);
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+}
+
+.ca-badge-copy code {
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ca-badge-copy:hover:not(:disabled) {
+  color: var(--ink-primary);
+  transform: none;
+}
+
+.ca-badge-copy-state {
+  color: var(--accent-gold-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ca-badge-explorer {
+  color: var(--accent-gold-soft);
+  font-size: 0.9rem;
+  line-height: 1;
+  text-decoration: none;
+}
+
+/* The sign-in card centres its children, so the badge sits as its own row. */
+.signin-card .ca-badge {
+  align-self: center;
 }
 
 /* ============================================================
@@ -2741,6 +2778,12 @@ button:disabled {
   }
 
   .app-topbar nav {
+    justify-content: center;
+  }
+
+  /* Stacked top bar: the badge gets its own centred row instead of
+     competing with the nav for horizontal space. */
+  .app-topbar .ca-badge {
     justify-content: center;
   }
 

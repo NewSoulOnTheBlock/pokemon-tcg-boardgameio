@@ -52,10 +52,17 @@ export const RHC_CHAIN_PARAMS = {
   blockExplorerUrls: [RHC_EXPLORER_URL],
 } as const;
 
-/** $POKETCG ERC-20, launched through the Pons v2 factory on chain 4663.
- *  Empty until the token is launched — every token-gated feature checks
- *  `hasPoketcgToken()` and degrades gracefully rather than throwing. */
-export const POKETCG_TOKEN_ADDRESS = (envVar('POKETCG_TOKEN_ADDRESS') ?? '').toLowerCase();
+/** The launched game token: `Pokemasters` / `POKE`, an 18-decimal ERC-20 on
+ *  chain 4663 (verified against the RPC on 2026-09-01). Hard-coded as the
+ *  default rather than left to `VITE_POKETCG_TOKEN_ADDRESS` because that
+ *  variable is inlined at BUILD time — setting it on the host after a build
+ *  leaves the browser bundle reporting "not configured". The env vars still
+ *  win when present, so a testnet or replacement token needs no code change.
+ *  Every token-gated feature checks `hasPoketcgToken()` and degrades
+ *  gracefully rather than throwing. */
+export const POKETCG_TOKEN_ADDRESS = (
+  envVar('POKETCG_TOKEN_ADDRESS') ?? '0x63be1538875a3ee7937c80ec90a1e1aa5c92ecc7'
+).toLowerCase();
 /** Pons v2 launches 18-decimal ERC-20s (config[0] supply is 1e27 raw = 1e9 whole tokens). */
 export const POKETCG_DECIMALS = 18;
 

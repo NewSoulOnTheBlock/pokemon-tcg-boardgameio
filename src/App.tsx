@@ -57,6 +57,7 @@ import {
   type ConnectedWallet,
 } from './wallet';
 import { POKETCG_TOKEN_ADDRESS, cardNftTokenUrl, explorerTxUrl } from './chain/config';
+import { ContractAddressBadge } from './components/ContractAddressBadge';
 import {
   formatCountdown,
   formatWaitTime,
@@ -136,8 +137,7 @@ import setsManifest from './data/pokemon-tcg-data/sets/en.json' with { type: 'js
 
 type Page = 'signin' | 'home' | 'profile' | 'matchmaking' | 'imports' | 'bot' | 'match' | 'docs' | 'champions';
 
-const NEWS_URL = 'https://x.com/pokemasterstcg';
-const TELEGRAM_URL = 'https://t.me/PokemastersTCGBot/Play';
+const NEWS_URL = 'https://x.com/pokemastersrh';
 
 interface MatchConfig {
   matchID: string;
@@ -579,6 +579,7 @@ function Shell({
           ))}
           <a className="nav-news" href={NEWS_URL} target="_blank" rel="noreferrer">News ↗</a>
         </nav>
+        <ContractAddressBadge compact />
         <div className="account-pill">
           <span>{profile.wallet ? shortAddr(profile.wallet.address) : profile.name}</span>
           <button onClick={onLogout}>Sign out</button>
@@ -691,6 +692,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
             <p>Connect an EVM wallet on <strong>Robinhood Chain</strong> to enter. Your profile, collection, pack history, and match records are tied to your wallet so they follow you across browsers and devices.</p>
           </>
         )}
+        <ContractAddressBadge />
         {showMobileWalletWarning && (
           <div className="mobile-wallet-warning" role="alert">
             <span className="mobile-wallet-warning-icon" aria-hidden="true">📱</span>
@@ -824,16 +826,7 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
             rel="noreferrer"
           >
             <strong>News ↗</strong>
-            <span>Patch notes and announcements on x.com/pokemasterstcg.</span>
-          </a>
-          <a
-            className="home-menu-button home-telegram-button"
-            href={TELEGRAM_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <strong>Telegram ↗</strong>
-            <span>Play inside Telegram via @PokemastersTCGBot — one-tap sign-in, no wallet required for Casual + CPU matches.</span>
+            <span>Patch notes and announcements on x.com/pokemastersrh.</span>
           </a>
         </div>
       </section>

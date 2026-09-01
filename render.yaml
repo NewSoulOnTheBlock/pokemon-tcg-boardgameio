@@ -42,12 +42,14 @@ services:
       - key: PUBLIC_ORIGIN
         sync: false
       # ----- Robinhood Chain (EVM, chain id 4663) -------------------------
-      # $POKETCG ERC-20, launched through the Pons v2 factory. Both keys
-      # hold the same value: the server reads POKETCG_TOKEN_ADDRESS at
-      # runtime, and Vite inlines VITE_POKETCG_TOKEN_ADDRESS into the
-      # browser bundle at BUILD time — so the VITE_ one must be set
-      # BEFORE the build, not just before the start command.
-      # Leave both unset to ship with the burn shop disabled.
+      # $POKETCG ERC-20, launched through the Pons v2 factory. The live
+      # token (Pokemasters / POKE) is now the hard-coded default in
+      # src/chain/config.ts, so these two are OPTIONAL overrides — set them
+      # only to point a deployment at a different token. Both hold the same
+      # value: the server reads POKETCG_TOKEN_ADDRESS at runtime, and Vite
+      # inlines VITE_POKETCG_TOKEN_ADDRESS into the browser bundle at BUILD
+      # time — so the VITE_ one must be set BEFORE the build, not just
+      # before the start command.
       - key: POKETCG_TOKEN_ADDRESS
         sync: false
       - key: VITE_POKETCG_TOKEN_ADDRESS

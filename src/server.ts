@@ -18,7 +18,7 @@ import { rollPrizeCard } from './server/prizes';
 import { rollDailyPack } from './server/packRoller';
 import { PoketcgBurnError, findPoketcgTier, rawCostForTier, verifyPoketcgBurn } from './server/tokenBurn';
 import { isAddress, isTxHash } from './server/evmRpc';
-import { CARD_NFT_ADDRESS, RHC_CHAIN_ID, RHC_RPC_URL, hasCardNft, hasPoketcgToken } from './chain/config';
+import { CARD_NFT_ADDRESS, POKETCG_TOKEN_ADDRESS, RHC_CHAIN_ID, RHC_RPC_URL, hasCardNft, hasPoketcgToken } from './chain/config';
 import { LOBBY_CHAT_LIMITS, MemoryLobbyChatStore, PostgresLobbyChatStore, RateLimitError, ValidationError, type LobbyChatStore } from './server/lobbyChat';
 import { championsRowDateKey, describeChampionsRowEligibility, rollChampionsRow } from './server/championsRow';
 import type { MatchRecord, PackPurchase, ProfileState } from './shared/profile';
@@ -89,7 +89,7 @@ try {
 
 console.log(
   hasPoketcgToken()
-    ? `[pokemon-tcg] $POKETCG burn shop ready (token=${process.env.POKETCG_TOKEN_ADDRESS})`
+    ? `[pokemon-tcg] $POKETCG burn shop ready (token=${POKETCG_TOKEN_ADDRESS})`
     : '[pokemon-tcg] $POKETCG burn shop disabled (POKETCG_TOKEN_ADDRESS not set)',
 );
 
