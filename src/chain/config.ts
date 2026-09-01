@@ -70,8 +70,16 @@ export function hasPoketcgToken(): boolean {
   return /^0x[0-9a-f]{40}$/.test(POKETCG_TOKEN_ADDRESS);
 }
 
-/** PokemonCardNFT (ERC-721) deployed from `contracts/`. Empty disables minting. */
-export const CARD_NFT_ADDRESS = (envVar('CARD_NFT_ADDRESS') ?? '').toLowerCase();
+/** PokemonCardNFT (ERC-721) deployed from `contracts/` on 2026-09-01, with
+ *  baseURI https://pokemastersrh.xyz/api/cards/. Hard-coded for the same
+ *  reason as the token above: VITE_CARD_NFT_ADDRESS is inlined at build
+ *  time, so a host-set value never reaches an already-built bundle. Env
+ *  still overrides. Server-side minting additionally needs
+ *  RHC_TREASURY_PRIVATE_KEY, and that key's address must be a minter on
+ *  this contract (the deployer is one automatically). */
+export const CARD_NFT_ADDRESS = (
+  envVar('CARD_NFT_ADDRESS') ?? '0x1F81bbF8b49bA05d8CEB22fc03dD4FAdC2A5e785'
+).toLowerCase();
 
 export function hasCardNft(): boolean {
   return /^0x[0-9a-f]{40}$/.test(CARD_NFT_ADDRESS);
