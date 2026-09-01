@@ -29,7 +29,19 @@ export interface NftMinter {
   treasury: string;
   contractAddress: string;
   mintCard(recipient: string, card: Card): Promise<NftMintResult>;
+  /**
+   * Mint a batch of card ids in as few transactions as possible. Used by
+   * the burn-to-buy shop, where one purchase is 9 cards per pack and up to
+   * 7 packs. Returns one result per successfully minted card, in order.
+   */
+  mintCards(recipient: string, cardIds: string[]): Promise<NftMintResult[]>;
 }
+
+/** Cards per mintPack transaction. One booster is 9 cards, and batching a
+ *  whole 7-pack tier into a single call would push 63 _safeMint calls into
+ *  one transaction — well past a comfortable gas budget. One pack per
+ *  transaction keeps each send small and bounds the damage if one fails. */
+const MINT_BATCH_SIZE = 9;
 
 export interface NftMinterOptions {
   rpcUrl: string;
@@ -40,6 +52,7 @@ export interface NftMinterOptions {
 /** Only the pieces of PokemonCardNFT the server calls. */
 const CARD_NFT_ABI = [
   'function mintCard(address to, string cardId) returns (uint256)',
+  'function mintPack(address to, string[] cardIds) returns (uint256[])',
   'event CardMinted(address indexed to, uint256 indexed tokenId, string cardId)',
 ] as const;
 
@@ -97,6 +110,40 @@ export function createNftMinter({ rpcUrl, privateKey, contractAddress }: NftMint
 
         return { cardId: card.id, tokenId, txHash: tx.hash };
       });
+    },
+
+    async mintCards(recipient: string, cardIds: string[]): Promise<NftMintResult[]> {
+      const minted: NftMintResult[] = [];
+      for (let i = 0; i < cardIds.length; i += MINT_BATCH_SIZE) {
+        const batch = cardIds.slice(i, i + MINT_BATCH_SIZE);
+        // Each batch goes through the same queue as mintCard so a pack
+        // purchase and a concurrent prize claim can't collide on a nonce.
+        const results = await enqueue(async () => {
+          const tx = await contract.mintPack(recipient, batch);
+          const receipt = await tx.wait();
+          if (!receipt || receipt.status !== 1) {
+            throw new Error(`mintPack of ${batch.length} cards to ${recipient} reverted (tx ${tx.hash}).`);
+          }
+
+          // Pair each CardMinted event with its token id. The contract
+          // emits them in the order it was given, but we read the ids off
+          // the events rather than assuming a contiguous range.
+          const out: NftMintResult[] = [];
+          for (const log of receipt.logs ?? []) {
+            try {
+              const parsed = contract.interface.parseLog({ topics: [...log.topics], data: log.data });
+              if (parsed?.name === 'CardMinted') {
+                out.push({ cardId: String(parsed.args.cardId), tokenId: String(parsed.args.tokenId), txHash: tx.hash });
+              }
+            } catch {
+              // Log from another contract in the same tx; skip it.
+            }
+          }
+          return out;
+        });
+        minted.push(...results);
+      }
+      return minted;
     },
   };
 }

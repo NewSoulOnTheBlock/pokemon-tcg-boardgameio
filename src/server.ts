@@ -388,7 +388,33 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
     signature,
     cardIds,
   );
-  ctx.body = { profile, purchase, alreadyRedeemed, packs: tier.packs };
+
+  // Mint the pulled cards as ERC-721s to the buyer. Gated on
+  // !alreadyRedeemed so a retry of the same burn signature — which
+  // returns the previously stored cards — can't mint a second set.
+  //
+  // Failure here is deliberately non-fatal, matching the prize-claim
+  // path: the cards are already in the player's collection, the NFT is
+  // the bonus. Burning tokens and receiving nothing would be the worse
+  // outcome, so a mint failure is logged and the purchase still stands.
+  let mints: Array<{ cardId: string; tokenId: string; txHash: string }> | undefined;
+  if (nftMinter && !alreadyRedeemed) {
+    try {
+      mints = await nftMinter.mintCards(buyerWallet!, purchase.cardIds);
+      console.log(`[burn-pack] minted ${mints.length} card NFTs to ${buyerWallet} for ${signature}`);
+    } catch (err) {
+      console.error(
+        `[burn-pack] mint failed for ${buyerWallet} (${signature}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  ctx.body = {
+    profile,
+    purchase: mints?.length ? { ...purchase, mints } : purchase,
+    alreadyRedeemed,
+    packs: tier.packs,
+  };
 });
 
 // ---------------------------------------------------------------------------
