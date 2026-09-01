@@ -227,9 +227,9 @@ export interface PokemonTCGSetupData {
 
 export function formatWager(amount: number, currency: WagerCurrency): string {
   if (currency === 'POKETCG') {
-    // $POKETCG amounts can be large — format with thousands separators and
+    // $POKE amounts can be large — format with thousands separators and
     // no fixed decimals (users type whole-token amounts).
-    return `${amount.toLocaleString('en-US')} $POKETCG`;
+    return `${amount.toLocaleString('en-US')} $POKE`;
   }
   return `${amount} ETH`;
 }

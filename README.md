@@ -80,7 +80,7 @@ the feature disabled.
 
 | Var | Purpose |
 |---|---|
-| `POKETCG_TOKEN_ADDRESS` / `VITE_POKETCG_TOKEN_ADDRESS` | $POKETCG ERC-20. Unset ⇒ burn shop and the Champions Row token gate are disabled, everything else still works. |
+| `POKETCG_TOKEN_ADDRESS` / `VITE_POKETCG_TOKEN_ADDRESS` | $POKE ERC-20. Unset ⇒ burn shop and the Champions Row token gate are disabled, everything else still works. |
 | `CARD_NFT_ADDRESS` / `VITE_CARD_NFT_ADDRESS` | `PokemonCardNFT` from `contracts/`. Unset ⇒ cards are granted in-game but not minted. |
 | `RHC_TREASURY_PRIVATE_KEY` | Server-side minter key. Needs ETH on chain 4663 for gas. Server-only — never exposed to the browser. |
 | `RHC_RPC_URL` / `VITE_RHC_RPC_URL` | Override the RPC endpoint. Defaults to `https://rpc.mainnet.chain.robinhood.com`. |
@@ -112,9 +112,9 @@ Writes always go through the injected EIP-1193 wallet, and every write first
 calls `ensureRobinhoodChain()` — sending a burn while the wallet sits on
 another network would destroy real tokens on the wrong chain.
 
-### $POKETCG burn shop
+### $POKE burn shop
 
-Packs are bought by burning $POKETCG. Pons v2 tokens expose no `burn()`, so a
+Packs are bought by burning $POKE. Pons v2 tokens expose no `burn()`, so a
 burn is an ERC-20 `transfer` to `0x…dEaD`. The client signs one transaction and
 posts the hash to `POST /api/rewards/burn-pack/:userId`; the server re-reads the
 receipt from chain and checks it succeeded, was sent by the claiming wallet, and

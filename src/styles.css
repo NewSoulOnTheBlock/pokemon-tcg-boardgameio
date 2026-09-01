@@ -5952,7 +5952,7 @@ button[disabled] .attack-locked { color: rgba(248, 113, 113, 0.7); }
 
 /* ===== Pack-opening ceremony (in-game playable boosters) ===================== */
 /* Full-bleed dark stage that takes over the screen when a daily-pack or
-   $POKETCG burn-pack is opened. Replaces the old grid-of-tiny-flip-cards
+   $POKE burn-pack is opened. Replaces the old grid-of-tiny-flip-cards
    with a one-card-at-a-time reveal designed to FEEL like opening a real
    booster: anticipation, click-to-flip, holographic shine, gold burst
    for rare-or-better pulls. */

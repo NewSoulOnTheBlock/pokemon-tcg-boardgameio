@@ -24,7 +24,7 @@ const SECTIONS: DocsSection[] = [
           PokemastersTCG is a Pokemon Trading Card Game playable in your browser, multiplayer
           over the network, with an economy running on <strong>Robinhood Chain</strong> (an EVM
           chain, id 4663). You can play casual or ranked matches against other players, fight
-          through a Gym campaign of 8 Gym Leaders + Elite Four + Champion, or wager $POKETCG /
+          through a Gym campaign of 8 Gym Leaders + Elite Four + Champion, or wager $POKE /
           ETH on a match.
         </p>
         <p>
@@ -32,7 +32,7 @@ const SECTIONS: DocsSection[] = [
         </p>
         <ul>
           <li><strong>Starter decks</strong> — one per energy type (Grass / Fire / Water / etc.), always playable, never NFT-backed.</li>
-          <li><strong>Booster packs</strong> — burn $POKETCG for them in the Booster Shop on your Profile page, or claim a free pack every 22 hours.</li>
+          <li><strong>Booster packs</strong> — burn $POKE for them in the Booster Shop on your Profile page, or claim a free pack every 22 hours.</li>
           <li><strong>Match prizes</strong> — every multiplayer win rolls one card, minted to your wallet as an ERC-721 on Robinhood Chain.</li>
         </ul>
       </>
@@ -67,7 +67,7 @@ const SECTIONS: DocsSection[] = [
           <tbody>
             <tr><td><strong>Casual</strong></td><td>None</td><td>Practice. Doesn't affect win/loss record.</td></tr>
             <tr><td><strong>Ranked</strong></td><td>None</td><td>Counted toward the leaderboard W/L record.</td></tr>
-            <tr><td><strong>Wager</strong></td><td>$POKETCG / ETH</td><td>Winner takes the pot. The app does <em>not</em> escrow — it shows the winner's address so the loser settles on chain.</td></tr>
+            <tr><td><strong>Wager</strong></td><td>$POKE / ETH</td><td>Winner takes the pot. The app does <em>not</em> escrow — it shows the winner's address so the loser settles on chain.</td></tr>
             <tr><td><strong>Gym</strong></td><td>None</td><td>Solo campaign vs CPU. 8 Gyms → Elite Four → Champion. Earns XP and badges.</td></tr>
             <tr><td><strong>Bot</strong></td><td>None</td><td>Random-AI sparring partner for warm-up.</td></tr>
           </tbody>
@@ -175,17 +175,17 @@ const SECTIONS: DocsSection[] = [
     icon: '💰',
     content: (
       <>
-        <h3>$POKETCG burn</h3>
+        <h3>$POKE burn</h3>
         <p>
-          Buy playable booster packs on the <strong>Profile → 🔥 Booster Shop</strong> tab by burning $POKETCG tokens.
+          Buy playable booster packs on the <strong>Profile → 🔥 Booster Shop</strong> tab by burning $POKE tokens.
           Tokens are permanently destroyed — no treasury, no buyback. Tiered pricing:
         </p>
         <table className="docs-table">
           <thead><tr><th>Bundle</th><th>Cost</th><th>Per pack</th><th>Save</th></tr></thead>
           <tbody>
-            <tr><td>1 pack</td><td>100,000 $POKETCG</td><td>100K</td><td>—</td></tr>
-            <tr><td>3 packs</td><td>250,000 $POKETCG</td><td>~83K</td><td>17%</td></tr>
-            <tr><td>7 packs</td><td>500,000 $POKETCG</td><td>~71K</td><td>29%</td></tr>
+            <tr><td>1 pack</td><td>100,000 $POKE</td><td>100K</td><td>—</td></tr>
+            <tr><td>3 packs</td><td>250,000 $POKE</td><td>~83K</td><td>17%</td></tr>
+            <tr><td>7 packs</td><td>500,000 $POKE</td><td>~71K</td><td>29%</td></tr>
           </tbody>
         </table>
         <p>
@@ -208,7 +208,7 @@ const SECTIONS: DocsSection[] = [
         </p>
         <p>
           You sign one transaction. The server then re-reads it from chain and checks it
-          succeeded, came from your wallet, and moved at least the tier's cost of $POKETCG to
+          succeeded, came from your wallet, and moved at least the tier's cost of $POKE to
           the burn address — only then does it roll your cards. Replaying the same transaction
           hash returns the same cards rather than granting new ones.
         </p>
@@ -253,8 +253,8 @@ const SECTIONS: DocsSection[] = [
           Coinbase Wallet) on Robinhood Chain to unlock:
         </p>
         <ul>
-          <li>$POKETCG burn → playable booster packs</li>
-          <li>$POKETCG / ETH wager matches</li>
+          <li>$POKE burn → playable booster packs</li>
+          <li>$POKE / ETH wager matches</li>
           <li>ERC-721 card NFTs minted to you for booster pulls and match prizes</li>
           <li>NFT-backed card imports into your in-game collection</li>
           <li>Persistent profile across devices (login key keyed on your wallet)</li>
@@ -266,9 +266,9 @@ const SECTIONS: DocsSection[] = [
           <code>4663</code>, RPC <code>https://rpc.mainnet.chain.robinhood.com</code>, native
           currency ETH.
         </p>
-        <h3>Getting $POKETCG</h3>
+        <h3>Getting $POKE</h3>
         <p>
-          $POKETCG is the project token on Robinhood Chain, launched through the Pons v2
+          $POKE is the project token on Robinhood Chain, launched through the Pons v2
           factory. Its contract address is shown in the wager popup and the Booster Shop panel;
           swap ETH for it on Pons.
         </p>
@@ -299,7 +299,7 @@ const SECTIONS: DocsSection[] = [
           It flips one coin per Energy attached. Attach more Energy to scale the damage:
           4 attached Energy = 4 coins, up to 80 damage. Confirm in the gold toast that pops up.
         </p>
-        <h3>Why was my $POKETCG burn rejected?</h3>
+        <h3>Why was my $POKE burn rejected?</h3>
         <p>
           Most likely insufficient balance. Check your wallet has at least the tier amount
           (100K / 250K / 500K) AND a tiny bit of SOL for gas (~0.001 SOL).

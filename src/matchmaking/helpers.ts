@@ -84,7 +84,7 @@ export function rankFromLeaderboard(wins: number): TrainerRank {
 export const MATCH_TYPE_OPTIONS: Array<{ value: MatchType; label: string; description: string }> = [
   { value: 'Casual', label: 'Casual', description: 'Counts toward W/L record. Just for fun.' },
   { value: 'Ranked', label: 'Ranked', description: 'Counts toward W/L record. Same as Casual.' },
-  { value: 'Wager', label: 'Wager', description: 'SOL or $POKETCG payout — settle off-app.' },
+  { value: 'Wager', label: 'Wager', description: 'SOL or $POKE payout — settle off-app.' },
   { value: 'Theme Deck', label: 'Theme Deck', description: 'Practice format with thematic decks.' },
   { value: 'Unlimited', label: 'Unlimited', description: 'Anything-goes practice.' },
   { value: 'Tournament Practice', label: 'Tournament Practice', description: 'Tournament-style warm-up.' },

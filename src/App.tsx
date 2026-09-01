@@ -182,7 +182,7 @@ const PLAYER_IDS: PlayerID[] = ['0', '1'];
 const MATCH_TYPES: MatchType[] = ['Casual', 'Ranked', 'Wager', 'Theme Deck', 'Unlimited', 'Tournament Practice'];
 const WAGER_CURRENCIES: { value: WagerCurrency; label: string }[] = [
   { value: 'ETH', label: 'ETH' },
-  { value: 'POKETCG', label: '$POKETCG' },
+  { value: 'POKETCG', label: '$POKE' },
 ];
 const STARTER_COLLECTION = collectionFromCards(Object.values(STARTER_DECKS).flat());
 const DEFAULT_PROFILE: ProfileState = {
@@ -683,7 +683,7 @@ function SignInPage({ onSignIn }: { onSignIn: (profile: ProfileState) => void })
           <>
             <p className="eyebrow">Telegram sign-in</p>
             <h1>Pokemon TCG Arena</h1>
-            <p>Signed in as <strong>{telegramDisplayName(telegramUser!)}</strong> via Telegram. You can play Casual matches and CPU games here — connect an EVM wallet from a browser to burn $POKETCG for packs, claim NFT prizes, or play Wager matches.</p>
+            <p>Signed in as <strong>{telegramDisplayName(telegramUser!)}</strong> via Telegram. You can play Casual matches and CPU games here — connect an EVM wallet from a browser to burn $POKE for packs, claim NFT prizes, or play Wager matches.</p>
           </>
         ) : (
           <>
@@ -809,7 +809,7 @@ function HomePage({ profile, onProfileChange, onNavigate }: { profile: ProfileSt
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('champions')}>
             <strong>👑 Champions Row</strong>
-            <span>Daily lottery for trainers who have cleared the campaign AND hold $POKETCG. One major pack per winner per day.</span>
+            <span>Daily lottery for trainers who have cleared the campaign AND hold $POKE. One major pack per winner per day.</span>
           </button>
           <button className="home-menu-button" onClick={() => onNavigate('imports')}>
             <strong>Import NFTs</strong>
@@ -1525,7 +1525,7 @@ function MatchmakingPage({
         return;
       }
       if (!(wagerAmount > 0)) {
-        setError(`Wager matches need a positive ${wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'} amount.`);
+        setError(`Wager matches need a positive ${wagerCurrency === 'POKETCG' ? '$POKE' : 'ETH'} amount.`);
         return;
       }
     }
@@ -1728,7 +1728,7 @@ function MatchmakingPage({
                   </select>
                 </label>
                 <label className="wager-field">
-                  Wager ({wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'})
+                  Wager ({wagerCurrency === 'POKETCG' ? '$POKE' : 'ETH'})
                   <input
                     type="number"
                     inputMode="decimal"
@@ -1741,7 +1741,7 @@ function MatchmakingPage({
                 </label>
                 <p className="wager-hint">
                   {playerWallet
-                    ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKETCG token: ${shortAddr(POKETCG_TOKEN_ADDRESS)}` : ''}`
+                    ? `Your wallet (${shortAddr(playerWallet)}) goes in the match so the loser knows where to send winnings. The app does NOT escrow funds — settle off-app after the popup appears.${wagerCurrency === 'POKETCG' ? ` $POKE token: ${shortAddr(POKETCG_TOKEN_ADDRESS)}` : ''}`
                     : 'Connect an EVM wallet on sign-in to create or accept a Wager match.'}
                 </p>
               </div>

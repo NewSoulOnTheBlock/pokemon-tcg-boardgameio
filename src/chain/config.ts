@@ -8,7 +8,7 @@
 //     why the block below spells each variable out instead of indexing
 //     `import.meta.env` with a computed key. A computed key survives into
 //     the bundle and evaluates to undefined in production, so the app would
-//     work in `npm run dev` and then report "$POKETCG not configured" on a
+//     work in `npm run dev` and then report "$POKE not configured" on a
 //     real deploy. Consequence worth remembering: every VITE_ value must be
 //     present at build time, not just at boot.
 //

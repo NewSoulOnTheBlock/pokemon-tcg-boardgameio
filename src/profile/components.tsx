@@ -307,7 +307,7 @@ export function MatchHistory({ records }: { records: MatchRecord[] }) {
               <span className={`match-type-badge match-type-badge-${(record.matchType ?? 'Casual').replace(/\s+/g, '-')}`}>{record.matchType ?? 'Casual'}</span>
               <span className="match-id-chip">#{record.matchID.slice(0, 8)}</span>
               {record.wagerAmount && record.wagerAmount > 0 && (
-                <span className="wager-chip">{record.wagerAmount} {record.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'}</span>
+                <span className="wager-chip">{record.wagerAmount} {record.wagerCurrency === 'POKETCG' ? '$POKE' : 'ETH'}</span>
               )}
             </div>
             <strong>{record.playerDeckLabel} <em style={{ opacity: 0.6 }}>vs</em> {record.opponentDeckLabel}</strong>

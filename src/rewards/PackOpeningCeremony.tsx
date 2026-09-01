@@ -1,5 +1,5 @@
 // Shared dramatic pack-opening reveal. Used by both DailyPackWidget
-// (free daily) and BurnPackPanel ($POKETCG burn). Full-screen takeover:
+// (free daily) and BurnPackPanel ($POKE burn). Full-screen takeover:
 //
 //   - HUGE single card center stage (uses up to 85vh tall)
 //   - Click to flip → click again to advance (NO auto-timers)

@@ -1,12 +1,12 @@
 // Champions Row — daily lottery for trainers who have completed the
 // full campaign (8 gym badges + Elite Four + Champion) AND hold any
-// $POKETCG. One winner is drawn each UTC midnight and receives a
+// $POKE. One winner is drawn each UTC midnight and receives a
 // premium 10-card pack (3C + 3U + 4 chase-rares).
 //
 // The page itself is informational — buttons only show up if the
 // signed-in user is the winner. Everyone else sees:
 //   - the 8-step explainer (Pokemasters-flavoured)
-//   - their eligibility chips (Badges / E4 / Champion / $POKETCG)
+//   - their eligibility chips (Badges / E4 / Champion / $POKE)
 //   - a count of how many trainers are in today's pool
 //   - a live countdown to the next draw
 
@@ -21,17 +21,17 @@ import { PackOpeningCeremony } from '../rewards/PackOpeningCeremony';
 
 const STEPS: Array<{ n: string; title: string; body: string }> = [
   { n: '01', title: 'Defeat the League', body: 'Earn all 8 Gym Badges, sweep the Elite Four, then beat the Champion. Your campaign progress is your eligibility — no sign-up, no claim form.' },
-  { n: '02', title: 'Hold $POKETCG', body: 'Any wallet balance counts as your entry into the daily draw. There is no staking transaction, claim form, or manual sign-up to join.' },
-  { n: '03', title: 'Pool snapshots at midnight', body: 'At UTC midnight the engine reads every trainer who has cleared the campaign AND holds $POKETCG. Zero-balance and unverified wallets are removed from eligibility.' },
+  { n: '02', title: 'Hold $POKE', body: 'Any wallet balance counts as your entry into the daily draw. There is no staking transaction, claim form, or manual sign-up to join.' },
+  { n: '03', title: 'Pool snapshots at midnight', body: 'At UTC midnight the engine reads every trainer who has cleared the campaign AND holds $POKE. Zero-balance and unverified wallets are removed from eligibility.' },
   { n: '04', title: 'Premium pack rolls', body: 'A 10-card major pack is rolled server-side: 3 commons, 3 uncommons, and 4 chase-rare slots weighted toward Hyper Rare, Special Illustration Rare, and Ultra Rare pulls.' },
   { n: '05', title: 'Champion seed', body: 'A 32-byte server seed plus the draw date are run through HMAC-SHA-256. The first four bytes pick a winner modulo the eligible-pool size — weighted equally, not by manual choice.' },
   { n: '06', title: 'The winner is up', body: 'The signed-in winner sees a CLAIM button on this page. Open the pack as a full-screen ceremony and the 10 cards are added to your in-game collection immediately.' },
   { n: '07', title: 'Proof exposed', body: 'After the draw closes the seed and HMAC digest are recorded server-side so the result is verifiable later. The same draw can never be replayed — the date key is unique.' },
-  { n: '08', title: 'New draw at UTC midnight', body: 'A fresh draw opens automatically every 24 hours. Keep your $POKETCG balance positive and keep clearing campaigns on new wallets to multiply your chances.' },
+  { n: '08', title: 'New draw at UTC midnight', body: 'A fresh draw opens automatically every 24 hours. Keep your $POKE balance positive and keep clearing campaigns on new wallets to multiply your chances.' },
 ];
 
 const BASICS: Array<[string, string]> = [
-  ['Entry', 'Defeat campaign + hold $POKETCG'],
+  ['Entry', 'Defeat campaign + hold $POKE'],
   ['Draw window', '24h (UTC)'],
   ['Draw engine', 'HMAC-SHA-256 commit'],
   ['Eligibility check', 'Server scan + on-chain RPC'],
@@ -112,7 +112,7 @@ export function ChampionsRowPage({
           <p className="eyebrow">Champions Row</p>
           <h1>One major pack per day. One winner.</h1>
           <p>
-            Earn every Gym Badge, defeat the Elite Four and the Champion, hold $POKETCG, and you're
+            Earn every Gym Badge, defeat the Elite Four and the Champion, hold $POKE, and you're
             in the daily pool. No sign-up. No claim form. The engine rolls one winner each UTC
             midnight and credits the major pack to their collection.
           </p>
@@ -131,7 +131,7 @@ export function ChampionsRowPage({
           <Chip label="Elite Four" value={`${e4Done} / 4`} ready={e4Done >= 4} />
           <Chip label="Champion" value={championDone ? 'Defeated' : 'Pending'} ready={championDone} />
           <Chip
-            label="$POKETCG"
+            label="$POKE"
             value={profile.wallet?.chain === 'evm' ? (status?.youAreEligible ? 'Holding' : 'Required') : 'Wallet?'}
             ready={status?.youAreEligible ?? false}
           />
@@ -140,7 +140,7 @@ export function ChampionsRowPage({
           {campaignReady
             ? (status?.youAreEligible
               ? '✅ You are in today\'s pool.'
-              : '⚠ Campaign complete — connect an EVM wallet holding > 0 $POKETCG to enter.')
+              : '⚠ Campaign complete — connect an EVM wallet holding > 0 $POKE to enter.')
             : '⚔ Defeat the League first to qualify for the daily draw.'}
         </p>
       </section>
@@ -154,7 +154,7 @@ export function ChampionsRowPage({
               {loading
                 ? 'Loading draw…'
                 : status
-                  ? `${status.eligibility.totalEligible} eligible trainers · ${status.eligibility.campaignComplete} cleared the campaign · ${status.eligibility.withPoketcg} hold $POKETCG`
+                  ? `${status.eligibility.totalEligible} eligible trainers · ${status.eligibility.campaignComplete} cleared the campaign · ${status.eligibility.withPoketcg} hold $POKE`
                   : 'Draw not available.'}
             </p>
           </div>

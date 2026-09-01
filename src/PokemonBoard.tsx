@@ -822,11 +822,11 @@ export function PokemonBoard({ chatMessages, G, ctx, moves, onMatchComplete, pla
                   : `You owe ${formatWager(G.wagerAmount, G.wagerCurrency)}.`}
             </h2>
             <p className="wager-modal-sub">
-              The app does not escrow funds — settle the wager off-app by sending {G.wagerCurrency === 'POKETCG' ? '$POKETCG' : 'ETH'} to the winner's wallet below.
+              The app does not escrow funds — settle the wager off-app by sending {G.wagerCurrency === 'POKETCG' ? '$POKE' : 'ETH'} to the winner's wallet below.
             </p>
             {G.wagerCurrency === 'POKETCG' && (
               <p className="wager-modal-sub">
-                <strong>$POKETCG token:</strong> <code title={POKETCG_TOKEN_ADDRESS}>{POKETCG_TOKEN_ADDRESS}</code>
+                <strong>$POKE token:</strong> <code title={POKETCG_TOKEN_ADDRESS}>{POKETCG_TOKEN_ADDRESS}</code>
               </p>
             )}
             {winnerWallet ? (

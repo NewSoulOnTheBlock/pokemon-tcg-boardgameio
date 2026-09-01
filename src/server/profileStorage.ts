@@ -48,7 +48,7 @@ export interface ProfileStorage {
   // ----- Champions Row daily lottery ---------------------------------------
   /** Return every stored profile that has the campaign-complete badge set
    *  (8 gym badges + 4 elite four + champion defeated). The server still
-   *  re-checks live $POKETCG balance per profile before drawing. */
+   *  re-checks live $POKE balance per profile before drawing. */
   listCampaignCompleteProfiles?(): Promise<StoredProfile[]>;
   /** Atomically read or roll today's Champions Row draw. Returns the
    *  existing draw if one already exists for today's date_key, otherwise

@@ -1,4 +1,4 @@
-// Server-side verifier for the $POKETCG burn-to-buy-pack flow.
+// Server-side verifier for the $POKE burn-to-buy-pack flow.
 //
 // The browser sends an ERC-20 `transfer` of the tier's cost to 0x…dEaD
 // and posts back the transaction hash. We re-read that transaction from
@@ -8,7 +8,7 @@
 // What gets checked, in order:
 //   1. The receipt exists and the transaction succeeded (status 0x1).
 //   2. It was sent by the wallet claiming the packs.
-//   3. It contains Transfer log(s) on the $POKETCG contract, from that
+//   3. It contains Transfer log(s) on the $POKE contract, from that
 //      wallet, to the burn address, totalling at least the tier cost.
 //
 // Note on amounts: an 18-decimal token at 100 000 whole units is 1e23 raw,
@@ -54,7 +54,7 @@ export class PoketcgBurnError extends Error {
 }
 
 /**
- * Verify a $POKETCG burn transaction was authored by `buyerWallet`, moved
+ * Verify a $POKE burn transaction was authored by `buyerWallet`, moved
  * the right token to the burn address, and cleared at least
  * `minRawAmount`. Returns the amount actually burned so the caller can
  * decide how many packs to award. Throws PoketcgBurnError on any failure.
@@ -67,7 +67,7 @@ export async function verifyPoketcgBurn(args: {
   minRawAmount: bigint;
 }): Promise<{ rawAmount: bigint; uiAmount: number }> {
   if (!hasPoketcgToken()) {
-    throw new PoketcgBurnError(503, '$POKETCG is not configured on this server (set POKETCG_TOKEN_ADDRESS).');
+    throw new PoketcgBurnError(503, '$POKE is not configured on this server (set POKETCG_TOKEN_ADDRESS).');
   }
 
   const receipt = await getReceipt(args.txHash);
@@ -101,13 +101,13 @@ export async function verifyPoketcgBurn(args: {
   if (totalRaw === 0n) {
     throw new PoketcgBurnError(
       402,
-      `No $POKETCG burn found from ${buyer} to ${DEAD_ADDRESS} in transaction ${args.txHash}.`,
+      `No $POKE burn found from ${buyer} to ${DEAD_ADDRESS} in transaction ${args.txHash}.`,
     );
   }
   if (totalRaw < args.minRawAmount) {
     throw new PoketcgBurnError(
       402,
-      `Burned ${fromRawUnits(totalRaw, POKETCG_DECIMALS).toLocaleString('en-US')} $POKETCG, below the required ${fromRawUnits(args.minRawAmount, POKETCG_DECIMALS).toLocaleString('en-US')}.`,
+      `Burned ${fromRawUnits(totalRaw, POKETCG_DECIMALS).toLocaleString('en-US')} $POKE, below the required ${fromRawUnits(args.minRawAmount, POKETCG_DECIMALS).toLocaleString('en-US')}.`,
     );
   }
 

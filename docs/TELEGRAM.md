@@ -24,7 +24,7 @@ runtime and switches to the Telegram-friendly flow.
 These features need a real EVM wallet on Robinhood Chain (MetaMask /
 Rabby / Coinbase Wallet) which Telegram's webview can't host:
 
-- **Booster packs** — burning $POKETCG + NFT minting.
+- **Booster packs** — burning $POKE + NFT minting.
 - **Wager matches** — wallet address is needed for off-app settlement.
 - **NFT match prizes** — the prize card is still rolled, but the NFT
   mint is skipped (the card lands in the collection without an NFT).

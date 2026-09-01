@@ -1,4 +1,4 @@
-// Browser-side helper for the $POKETCG burn-to-buy-pack flow on
+// Browser-side helper for the $POKE burn-to-buy-pack flow on
 // Robinhood Chain.
 //
 // Pons v2 launches a plain ERC-20 with no `burn()` entry point, so a burn
@@ -35,14 +35,14 @@ export function findPoketcgTier(packs: number): PoketcgPackTier | undefined {
 function requireToken(): string {
   if (!hasPoketcgToken()) {
     throw new Error(
-      '$POKETCG is not configured on this deployment. Set VITE_POKETCG_TOKEN_ADDRESS to the Pons-launched token address.',
+      '$POKE is not configured on this deployment. Set VITE_POKETCG_TOKEN_ADDRESS to the Pons-launched token address.',
     );
   }
   return POKETCG_TOKEN_ADDRESS;
 }
 
 /**
- * Send the tier's `costTokens` of $POKETCG to the burn address and wait
+ * Send the tier's `costTokens` of $POKE to the burn address and wait
  * for the receipt. Returns the transaction hash.
  */
 export async function burnPoketcgForPacks(args: {
@@ -59,7 +59,7 @@ export async function burnPoketcgForPacks(args: {
   const balance = await erc20BalanceOf(token, args.buyerWallet);
   if (balance < amount) {
     throw new Error(
-      `Not enough $POKETCG: you hold ${fromRawUnits(balance, POKETCG_DECIMALS).toLocaleString('en-US')} but this tier costs ${tier.costTokens.toLocaleString('en-US')}.`,
+      `Not enough $POKE: you hold ${fromRawUnits(balance, POKETCG_DECIMALS).toLocaleString('en-US')} but this tier costs ${tier.costTokens.toLocaleString('en-US')}.`,
     );
   }
 
@@ -71,7 +71,7 @@ export async function burnPoketcgForPacks(args: {
   return receipt.transactionHash;
 }
 
-/** Current $POKETCG balance in whole tokens. Throws on RPC failure so the
+/** Current $POKE balance in whole tokens. Throws on RPC failure so the
  *  caller can surface the error rather than silently showing 0. */
 export async function fetchPoketcgBalance(walletAddress: string): Promise<number> {
   const token = requireToken();

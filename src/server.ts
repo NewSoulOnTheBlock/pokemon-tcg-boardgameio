@@ -89,8 +89,8 @@ try {
 
 console.log(
   hasPoketcgToken()
-    ? `[pokemon-tcg] $POKETCG burn shop ready (token=${POKETCG_TOKEN_ADDRESS})`
-    : '[pokemon-tcg] $POKETCG burn shop disabled (POKETCG_TOKEN_ADDRESS not set)',
+    ? `[pokemon-tcg] $POKE burn shop ready (token=${POKETCG_TOKEN_ADDRESS})`
+    : '[pokemon-tcg] $POKE burn shop disabled (POKETCG_TOKEN_ADDRESS not set)',
 );
 
 // ----- Card library bootstrap -------------------------------------------
@@ -320,13 +320,13 @@ server.router.post('/api/rewards/daily-pack/claim/:userId', async (ctx) => {
 });
 
 // ---------------------------------------------------------------------------
-// $POKETCG burn-to-buy-pack
+// $POKE burn-to-buy-pack
 //
 // User signs an ERC-20 transfer of the tier's cost to the burn address on
 // Robinhood Chain, then posts the transaction hash + claimed buyer wallet
 // to this endpoint. We:
 //   1. Verify the transaction succeeded on chain, was sent by the buyer,
-//      and burned at least the declared tier's cost of $POKETCG.
+//      and burned at least the declared tier's cost of $POKE.
 //   2. Roll N independent packs.
 //   3. Idempotently record + persist via storage.redeemBurnPack().
 // Replays of the same tx hash get the same cards back (no double-grant).
@@ -397,7 +397,7 @@ server.router.post('/api/rewards/burn-pack/:userId', jsonBody, async (ctx) => {
 // Eligibility (server-validated):
 //   1. Profile has earnedBadges.length >= 8 AND championDefeated === true
 //      (synced from per-wallet localStorage via /api/profiles/:userId PUT).
-//   2. Wallet has > 0 $POKETCG balance (live RPC check).
+//   2. Wallet has > 0 $POKE balance (live RPC check).
 //
 // GET /api/champions-row/status/:userId
 //   Returns today's draw + per-user view (eligible, isWinner, claimed).

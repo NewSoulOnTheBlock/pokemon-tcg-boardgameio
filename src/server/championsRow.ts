@@ -3,7 +3,7 @@
 //   1. List every profile flagged as campaign-complete (8 badges +
 //      Champion defeated). This is server-trusted because the client
 //      pushes a campaignProgress snapshot on every win.
-//   2. For each candidate, check the on-chain $POKETCG balance.
+//   2. For each candidate, check the on-chain $POKE balance.
 //      Anyone with > 0 stays in the pool.
 //   3. Roll an HMAC-SHA-256 seed (server-side, daily-keyed) and pick
 //      one winner uniformly at random from the surviving pool.
@@ -61,7 +61,7 @@ export function buildChampionsRowResolver(storage: ProfileStorage, dateKey: stri
     const candidates = storage.listCampaignCompleteProfiles
       ? await storage.listCampaignCompleteProfiles()
       : [];
-    // Filter by live $POKETCG balance.
+    // Filter by live $POKE balance.
     const survivors: StoredProfile[] = [];
     await Promise.all(candidates.map(async (p) => {
       const wallet = p.wallet?.address;

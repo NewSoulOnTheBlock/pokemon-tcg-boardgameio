@@ -1,5 +1,5 @@
-// $POKETCG burn-to-buy-pack panel. Renders below the deckbuilder on the
-// profile page. Lets the connected wallet burn $POKETCG for playable
+// $POKE burn-to-buy-pack panel. Renders below the deckbuilder on the
+// profile page. Lets the connected wallet burn $POKE for playable
 // booster packs (5C + 3U + 1R each) on Robinhood Chain — tokens go to
 // 0x…dEaD and never come back.
 
@@ -90,7 +90,7 @@ export function BurnPackPanel({
       setInfo(
         result.alreadyRedeemed
           ? `That burn was already redeemed — re-showing the same ${result.purchase.cardIds.length} cards.`
-          : `Burned ${formatTokens(totalCost)} $POKETCG. ${result.purchase.cardIds.length} cards added.`,
+          : `Burned ${formatTokens(totalCost)} $POKE. ${result.purchase.cardIds.length} cards added.`,
       );
       await refreshBalance();
     } catch (err) {
@@ -104,17 +104,17 @@ export function BurnPackPanel({
     <section className="panel burn-pack-panel">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Booster Shop · $POKETCG burn</p>
+          <p className="eyebrow">Booster Shop · $POKE burn</p>
           <h2>Buy Playable Packs</h2>
           <p className="section-subtitle">
             Each pack: 5 commons + 3 uncommons + 1 rare-or-better. Cheapest tier:{' '}
-            <strong>{formatTokens(POKETCG_PACK_TIERS[0]!.costTokens)} $POKETCG</strong>{' '}
+            <strong>{formatTokens(POKETCG_PACK_TIERS[0]!.costTokens)} $POKE</strong>{' '}
             for 1 pack — bulk tiers below are discounted. Tokens are permanently burned.
           </p>
         </div>
         <div className="burn-pack-balance">
           <span className="burn-pack-balance-label">Your balance</span>
-          <strong>{balance === null ? (balanceError ? '⚠ error' : '—') : `${formatTokens(balance)} $POKETCG`}</strong>
+          <strong>{balance === null ? (balanceError ? '⚠ error' : '—') : `${formatTokens(balance)} $POKE`}</strong>
           <button type="button" className="burn-pack-refresh" onClick={() => void refreshBalance()}>↻</button>
           {balanceError && <span className="burn-pack-balance-error">{balanceError}</span>}
         </div>
@@ -133,7 +133,7 @@ export function BurnPackPanel({
               onClick={() => setPackCount(tier.packs)}
             >
               <strong>{tier.packs} pack{tier.packs === 1 ? '' : 's'}</strong>
-              <span>{formatTokens(tier.costTokens)} $POKETCG</span>
+              <span>{formatTokens(tier.costTokens)} $POKE</span>
               {discountPct > 0 && (
                 <span className="burn-pack-option-discount">SAVE {discountPct}%</span>
               )}
@@ -150,7 +150,7 @@ export function BurnPackPanel({
           disabled={!canBuy || busy !== null || insufficient}
         >
           {!hasPoketcgToken()
-            ? '$POKETCG not configured'
+            ? '$POKE not configured'
             : !canBuy
             ? 'Connect wallet'
             : busy === 'sign'
@@ -158,8 +158,8 @@ export function BurnPackPanel({
               : busy === 'verify'
                 ? 'Verifying burn…'
                 : insufficient
-                  ? `Need ${formatTokens(totalCost - (balance ?? 0))} more $POKETCG`
-                  : `Burn ${formatTokens(totalCost)} $POKETCG → ${packCount} pack${packCount === 1 ? '' : 's'}`}
+                  ? `Need ${formatTokens(totalCost - (balance ?? 0))} more $POKE`
+                  : `Burn ${formatTokens(totalCost)} $POKE → ${packCount} pack${packCount === 1 ? '' : 's'}`}
         </button>
         <p className="burn-pack-disclaimer">
           ⚠ Tokens are permanently destroyed (sent to 0x…dEaD). Cards added to your collection. Keep a little ETH on Robinhood Chain for gas.
@@ -173,7 +173,7 @@ export function BurnPackPanel({
         <PackOpeningCeremony
           cardIds={revealCards}
           title={`Pack opened — ${revealCards.length} cards`}
-          eyebrow="$POKETCG BURN"
+          eyebrow="$POKE BURN"
           onClose={() => setRevealCards(null)}
         />
       )}
